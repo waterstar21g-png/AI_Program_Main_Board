@@ -1,10 +1,15 @@
 # AI_Program_Main_Board (로컬 실행)
 
-## Windows — 가장 쉬운 방법
+## Windows — 로컬 실행 (권장)
 
-1. **Node.js LTS** 설치: https://nodejs.org  
-2. 이 폴더에서 **`setup.bat`** 더블클릭 (최초 1회)  
-3. **`start.bat`** 더블클릭 → 브라우저가 `http://localhost:3000` 으로 열립니다.
+| 파일 | 설명 |
+|------|------|
+| `setup.bat` | 최초 1회 설치 |
+| `start.bat` | 개발 모드 실행 |
+| `build.bat` | 프로덕션 빌드 |
+| `start-prod.bat` | 빌드 후 로컬 실행 |
+
+자세한 내용: [WINDOWS_SETUP.md](./WINDOWS_SETUP.md)
 
 ## Mac / Linux
 
