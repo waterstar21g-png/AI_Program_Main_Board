@@ -34,7 +34,7 @@ function externalPages(page: Page): Page[] {
     .filter(p => p !== page && !p.isClosed() && !p.url().includes(TMG_ADMIN_HOST));
 }
 
-/** 남은 외부 팝업이 스스로 닫힐 때까지 — 망고/입력필드 일절 건드리지 않음 */
+/** 외부 팝업 close만 대기 — 망고 DOM/입력/포커스 일절 금지 */
 async function waitExternalPopupsGone(page: Page) {
   while (externalPages(page).length > 0) {
     const open = externalPages(page);
@@ -43,54 +43,35 @@ async function waitExternalPopupsGone(page: Page) {
 }
 
 /**
- * URL검색 클릭 후: 입력필드·망고 창 절대 건드리지 않고
- * 팝업(close 이벤트)만 기다림
+ * URL검색 클릭 직후 호출.
+ * 규칙: 팝업이 스스로 닫힐 때까지
+ *  - URL 입력필드 수정 금지
+ *  - 망고 bringToFront / maximize 금지
+ *  - 망고 DOM 조회(모두저장 버튼 등) 금지
+ *  - 팝업 bringToFront / close 금지
+ * → context의 page close 이벤트만 대기
  */
-async function waitSearchPopupClosedNaturally(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(
-    ctx,
-    'wait-search-popup',
-    '[3] 검색 팝업 닫힘 대기 — 입력필드/망고 미터치',
-    rowIndex,
-  );
+async function waitSearchPopupClosedNaturally(
+  page: Page,
+  ctx: LogCtx,
+  rowIndex: number,
+  popupPromise: Promise<Page>,
+) {
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘만 대기 (완전 미터치)', rowIndex);
 
-  // 이미 떠 있는 외부 팝업이 있으면 그것만 close 대기
+  // 이미 떠 있으면 close만
   if (externalPages(page).length > 0) {
     await waitExternalPopupsGone(page);
     pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
     return;
   }
 
-  // 팝업이 곧 뜨는지 대기 (뜨면 close까지, 안 뜨고 모두저장만 보이면 통과)
-  const opened = await new Promise<Page | 'inpage' | null>(resolve => {
-    let done = false;
-    const finish = (v: Page | 'inpage' | null) => {
-      if (done) return;
-      done = true;
-      page.context().off('page', onPage);
-      resolve(v);
-    };
-    const onPage = (p: Page) => {
-      void p.bringToFront().catch(() => undefined);
-      finish(p);
-    };
-    page.context().on('page', onPage);
-
-    // 창 팝업 없이 화면 내 결과만 나오는 경우
-    void saveAllButton(page)
-      .first()
-      .waitFor({ state: 'visible' })
-      .then(() => finish('inpage'))
-      .catch(() => undefined);
-  });
-
-  if (opened && opened !== 'inpage') {
-    // 이 팝업 + 추가 외부 창이 모두 스스로 닫힐 때까지 — 망고 DOM/입력 접근 금지
-    if (!opened.isClosed()) {
-      await opened.waitForEvent('close').catch(() => undefined);
-    }
-    await waitExternalPopupsGone(page);
+  // 클릭 전에 걸어둔 popupPromise — 팝업이 뜰 때까지 (망고 미조회)
+  const popup = await popupPromise.catch(() => null);
+  if (popup && !popup.isClosed()) {
+    await popup.waitForEvent('close').catch(() => undefined);
   }
+  await waitExternalPopupsGone(page);
 
   pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
 }
@@ -403,7 +384,6 @@ async function readInputValue(locator: Locator): Promise<string> {
 }
 
 async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) {
-  // 이전 행 팝업이 남아 있으면 — 입력 전에 닫힐 때까지 대기 (필드 건드리지 않음)
   if (externalPages(page).length > 0) {
     pushLog(ctx, 'paste-url', '[2] 이전 팝업 닫힘 대기 후 URL 입력', rowIndex);
     await waitExternalPopupsGone(page);
@@ -415,25 +395,22 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
   await pasteField(page, input, normalized);
   const fieldValue = (await readInputValue(input)) || normalized;
   pushLog(ctx, 'paste-url', '[2] URL 입력', rowIndex, fieldValue);
-  // 이후 검색 팝업 닫힐 때까지 이 필드를 다시 수정하지 않음
 }
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
 
-  // 클릭 전: 팝업 없을 때만 망고 포커스
-  if (externalPages(page).length === 0) {
-    await page.bringToFront().catch(() => undefined);
-  }
+  // 클릭 전에 popup 리스너만 등록 (망고·입력 추가 조작 없음)
+  const popupPromise = page.context().waitForEvent('page');
 
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
 
-  // ★ 클릭 후 ~ 팝업 닫힘: URL 입력필드·CLEAR·망고 bringToFront/maximize 절대 금지
-  await waitSearchPopupClosedNaturally(page, ctx, rowIndex);
+  // ★ 1행·2행 공통: 클릭 후 팝업 닫힐 때까지 완전 손 뗌
+  await waitSearchPopupClosedNaturally(page, ctx, rowIndex, popupPromise);
 
-  // 팝업이 닫힌 뒤에만 망고 복귀
+  // 닫힌 뒤에만 망고 복귀
   await focusMangoBulk(page);
 }
 
@@ -453,7 +430,7 @@ async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
     await hardClick(page, btn);
   });
 
-  await focusMangoBulk(page);
+  // 상품저장설정 모달 — 망고 페이지 안 레이어 (외부 창 아님)
   pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 대기', rowIndex);
   await waitSaveSettingsOpen(page);
   if (!(await isSaveSettingsOpen(page))) {
@@ -463,7 +440,6 @@ async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
   if (!(await isSaveSettingsOpen(page))) {
     throw new Error(`#${rowIndex} 모두저장 클릭 후 상품저장설정 모달이 안 떴습니다.`);
   }
-  await focusMangoBulk(page);
   pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 열림', rowIndex);
 }
 
