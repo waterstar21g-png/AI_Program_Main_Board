@@ -2,75 +2,35 @@
 
 AI 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등
 
-**배포 URL (현재 사용):** https://sangpum-capture-price.vercel.app  
-**목표 URL:** https://ai-program-main-board.vercel.app (Vercel Domains에서 연결 후 사용)
-
-## 주요 기능
-
-| 기능 | 설명 |
-|------|------|
-| 상품 캡처 | 카메라 촬영 / 갤러리 이미지 선택 |
-| 상품 인식 | OpenAI Vision API로 상품명·키워드 자동 추출 |
-| 시중 최저가 | 쇼핑몰별 최저가격 목록 |
-| 경쟁 강도 | 키워드 분석 기반 0~100 지표 |
-| 1주 조회수 | 최근 1주간 검색·조회 수 |
-| 경쟁 상품수 | 등록된 경쟁 상품 수 |
-| 1주 판매량 | 최근 1주 판매량 추정 |
-| 조회 추세 | 최근 7일 조회 추세 그래프 |
-
-## 데이터 출처
-
-- [아이템스카우트](https://itemscout.io) — B2B API ([신청](https://itemscout.io/api))
+**배포 URL:** https://ai-program-main-board.vercel.app
 
 ## 시작하기
 
 ```bash
-cd sangpum-capture-price
-cp .env.example .env.local
+cd AI_Program_Main_Board
+cp .env.example .env.local   # 필요 시
 npm install
 npm run dev
 ```
 
 브라우저에서 http://localhost:3000 접속
 
+## 프로그램 추가
+
+`lib/programs/registry.tsx` 의 `PROGRAMS` 배열에 항목을 추가합니다.
+
 ## 환경 변수
 
 ```bash
-# 상품 이미지 인식 (사진 분석 시)
-OPENAI_API_KEY=sk-...
-
-# 아이템스카우트 B2B API (미설정 시 데모 데이터)
-ITEMSCOUT_API_KEY=발급받은_키
-
-# 선택: API 엔드포인트 커스터마이즈
-# ITEMSCOUT_API_BASE_URL=https://api.itemscout.io
-# ITEMSCOUT_KEYWORD_PATH=/api/open/v1/keyword
+OPENAI_API_KEY=sk-...          # 상품 이미지 인식
+ITEMSCOUT_API_KEY=...          # 아이템스카우트 API
+BLOB_READ_WRITE_TOKEN=...      # Vercel Blob (이미지 저장)
 ```
 
-## 기술 스택
+## 배포
 
-- Next.js 15 (App Router)
-- React 19
-- TypeScript
-- Tailwind CSS 4
-
-## 프로젝트 구조
-
-```
-sangpum-capture-price/
-├── app/
-│   ├── api/analyze/route.ts   # 분석 API
-│   ├── layout.tsx
-│   ├── page.tsx
-│   └── globals.css
-├── components/
-│   ├── ProductCaptureApp.tsx  # 메인 UI
-│   └── ViewTrendChart.tsx     # 조회 추세 차트
-└── lib/
-    ├── product-vision.ts      # OpenAI 상품 인식
-    └── itemscout/             # 아이템스카우트 클라이언트
+```bash
+npm run vercel:deploy
 ```
 
-## 라이선스
-
-Private
+Vercel 프로젝트명: `AI_Program_Main_Board`

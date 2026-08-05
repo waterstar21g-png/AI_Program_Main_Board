@@ -22,7 +22,7 @@
 
 - 로컬 PC: `/workspace`
 - GitHub: `waterstar21g-png/sangpum-capture-price` (main)
-- Vercel: https://sangpum-capture-price.vercel.app
+- Vercel: https://ai-program-main-board.vercel.app
 
 ## 5. 사용자 작성 원문 전체
 
@@ -34,4 +34,4 @@ OK?
 
 - `lib/app-name.ts` → `AI_Program_Main_Board`
 - 화면 헤더·메타데이터·PWA·package.json 반영
-- Vercel URL은 기존 `sangpum-capture-price.vercel.app` 유지
+- Vercel URL: `ai-program-main-board.vercel.app`

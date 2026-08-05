@@ -21,7 +21,7 @@ export const PROGRAMS: ProgramEntry[] = [
     component: CategoryExtractorApp,
   },
   {
-    id: 'sangpum-capture-price',
+    id: 'product-capture-price',
     name: '상품캡처 및 가격조회',
     description: '사진으로 상품 인식 · 가격 조회',
     summaryLine: '사진·키워드 입력 → 상품 인식·가격·시장 정보 조회',
