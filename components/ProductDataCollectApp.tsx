@@ -156,14 +156,14 @@ export function ProductDataCollectApp() {
         {rows.length > 0 && (
           <div className="excel-preview" style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
             <p className="panel__hint" style={{ marginBottom: '0.35rem' }}>
-              엑셀에서 읽은 값 (상위 최종 카테고리명 → 검색필터명 / 최종 카테고리 URL주소 → URL입력)
+              엑셀 입력 필드값 확인 — 이 값이 그대로 망고 입력칸에 들어갑니다
             </p>
             <table className="data-table" style={{ fontSize: '0.8rem', width: '100%' }}>
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>상위 최종 카테고리명</th>
-                  <th>최종 카테고리 URL주소</th>
+                  <th>행</th>
+                  <th>상위 최종 카테고리명 → 검색필터명</th>
+                  <th>최종 카테고리 URL주소 → URL입력</th>
                 </tr>
               </thead>
               <tbody>

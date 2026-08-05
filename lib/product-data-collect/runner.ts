@@ -343,21 +343,22 @@ async function resolveBulkPageOrThrow(context: BrowserContext, logCtx: LogCtx): 
 
 async function findUrlInput(page: Page): Promise<Locator> {
   await assertBulkCollectPage(page);
-  const btn = urlSearchButton(page).first();
-  const nearBtn = btn.locator(
-    'xpath=preceding::textarea[1]|preceding::input[@type="text"][not(@name="login_id")][1]',
-  );
-  if (await nearBtn.isVisible().catch(() => false)) return nearBtn;
 
+  // URL상품검색하기 버튼이 있는 영역 안의 입력칸만 (다른 텍스트 필드와 섞지 않음)
   const area = urlSearchArea(page);
-  const inArea = area.locator('textarea:visible, input[type="text"]:visible').first();
-  if (await inArea.isVisible().catch(() => false)) return inArea;
+  const ta = area.locator('textarea:visible');
+  if ((await ta.count()) > 0) return ta.last();
 
-  const textareas = page.locator('textarea:visible');
-  const count = await textareas.count();
-  if (count >= 2) return textareas.nth(1);
-  if (count === 1) return textareas.first();
-  throw new Error('URL상품검색하기 좌측 입력 그리드를 찾지 못했습니다.');
+  const textInputs = area.locator(
+    'input[type="text"]:visible:not([name="login_id"]):not([name="login_passwd"])',
+  );
+  if ((await textInputs.count()) > 0) return textInputs.last();
+
+  const btn = urlSearchButton(page).first();
+  const prevTa = btn.locator('xpath=preceding::textarea[1]');
+  if (await prevTa.isVisible().catch(() => false)) return prevTa;
+
+  throw new Error('URL상품검색하기 좌측 「최종 카테고리 URL주소」 입력칸을 찾지 못했습니다.');
 }
 
 function saveSettingsModal(page: Page) {
@@ -603,21 +604,25 @@ async function fillSaveForm(
     // 큰 부모 div가 잡히면 첫 input(=검색필터명)에 3이 덮어써짐 → tr 행 단위로만 찾음
     const filterRow = modal.locator('tr').filter({ hasText: '검색필터명' }).first();
     const filterInput = filterRow.locator('input[type="text"], input:not([type="hidden"])').first();
-    pushLog(ctx, 'fill-save-form', '[5] 엑셀 상위최종카테고리명 → 검색필터명', rowIndex, filterName);
+    // 검색필터명 입력칸 ← 엑셀「상위 최종 카테고리명」값만
     await pasteField(page, filterInput, filterName);
-    const filterWritten = await readInputValue(filterInput);
-    pushLog(ctx, 'fill-save-form', '[5] 검색필터명 확인', rowIndex, filterWritten || filterName);
+    let filterWritten = await readInputValue(filterInput);
+    if (filterWritten !== filterName) {
+      await pasteField(page, filterInput, filterName);
+      filterWritten = await readInputValue(filterInput);
+    }
+    pushLog(ctx, 'fill-save-form', '[5] 검색필터명←상위 최종 카테고리명', rowIndex, filterWritten);
 
     const countRow = modal.locator('tr').filter({ hasText: '저장상품수' }).first();
     const countInput = countRow.locator('input[type="text"], input[type="number"], input:not([type="hidden"])').first();
     await pasteField(page, countInput, String(saveCount));
     pushLog(ctx, 'fill-save-form', '[5] 저장상품수', rowIndex, String(saveCount));
 
-    // 필터명에 숫자가 들어갔으면 즉시 복구
+    // 저장상품수가 검색필터명을 덮어쓰면 엑셀 라벨로 복구
     const filterNow = await readInputValue(filterInput);
-    if (filterNow === String(saveCount) || /^\d+$/.test(filterNow)) {
+    if (filterNow !== filterName) {
       await pasteField(page, filterInput, filterName);
-      pushLog(ctx, 'fill-save-form', '[5] 검색필터명 복구', rowIndex, filterName);
+      pushLog(ctx, 'fill-save-form', '[5] 검색필터명 복구←엑셀값', rowIndex, filterName);
     }
   }, rowIndex);
 
@@ -642,6 +647,15 @@ async function processOneRow(
 ) {
   const { rowIndex, finalCategoryUrl, topFinalLabel } = row;
   pushLog(ctx, 'next-row', `━━━ 엑셀 #${rowIndex} 행 ━━━`, rowIndex);
+  pushLog(ctx, 'paste-url', '엑셀[최종 카테고리 URL주소]', rowIndex, finalCategoryUrl);
+  pushLog(ctx, 'fill-save-form', '엑셀[상위 최종 카테고리명]', rowIndex, topFinalLabel);
+
+  if (!finalCategoryUrl || !/^https?:\/\//i.test(finalCategoryUrl)) {
+    throw new Error(`#${rowIndex} 엑셀 URL 값 오류: ${finalCategoryUrl || '(비어있음)'}`);
+  }
+  if (!topFinalLabel.trim()) {
+    throw new Error(`#${rowIndex} 엑셀 「상위 최종 카테고리명」이 비어 있습니다.`);
+  }
 
   /*
    * 필수 순서 (고정):
@@ -657,7 +671,7 @@ async function processOneRow(
   // 매 행 시작: 상품데이터수집 → 상품데이터 대량수집 (초기화)
   await resetViaMenu(page, ctx, rowIndex);
 
-  // URL 필드 입력
+  // 입력칸 ← 엑셀「최종 카테고리 URL주소」값만
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
 
   // 3) 검색 클릭 → 모달 종료 대기
