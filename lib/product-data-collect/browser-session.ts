@@ -211,7 +211,8 @@ async function jsClickBulkSubmenu(page: Page): Promise<string> {
  * (이미 대량수집 화면이어도 다시 클릭 — 초기화 효과)
  */
 export async function clickBulkCollectMenu(page: Page): Promise<void> {
-  await page.bringToFront().catch(() => undefined);
+  // bringToFront 금지: ABC/수집 팝업이 뒤로 밀리면 수동과 다르게 결과 실패함
+  // (이미 대량수집 탭에서 메뉴만 클릭)
 
   // 1) Playwright 가시 클릭 시도
   const visibleSub = page

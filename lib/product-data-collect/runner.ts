@@ -83,7 +83,6 @@ async function waitAbcPopupsGoneNaturally(page: Page, deadlineMs: number): Promi
 
 /** 검색 결과 상품이 하단에 보이는가 */
 async function hasProductResults(page: Page): Promise<boolean> {
-  // 「검색된 상품 0개」는 결과 없음
   if (await page.getByText(/검색된\s*상품\s*[1-9]\d*/).first().isVisible().catch(() => false)) {
     return true;
   }
@@ -92,22 +91,39 @@ async function hasProductResults(page: Page): Promise<boolean> {
 }
 
 /**
- * 하단부 검색결과 없음 문구 (사용자 화면 그대로)
- * [검색하신 검색에 대한 검색결과가 없습니다.]
- * [정확한 검색어인지 다시한번 확인하시고 검색해 주세요.]
+ * 망고 빨간 로딩 레이어 (스크린샷)
+ * "load product .." / "상품정보를 불러오는 중입니다." / "잠시만 기다려주세요."
+ * ※ 이 동안 망고 창 bringToFront 금지 — ABC 팝업이 뒤로 밀리면 수집 실패
+ */
+async function mangoIsCollecting(page: Page): Promise<boolean> {
+  return page
+    .evaluate(() => {
+      const t = (document.body?.innerText || '').replace(/\s+/g, ' ');
+      // 빨간 로딩 팝업 문구만 (다른 「중입니다」 오탐 금지)
+      return (
+        /load\s*product/i.test(t) ||
+        /상품정보를\s*불러오는\s*중/i.test(t) ||
+        /상품\s*정보를\s*불러오는\s*중/i.test(t) ||
+        /잠시만\s*기다려\s*주세요/i.test(t)
+      );
+    })
+    .catch(() => false);
+}
+
+/**
+ * 하단부 검색결과 없음 — 로딩이 끝난 뒤에만 유효
+ * (결과 있는 카테고리인데 로딩 중 오판하면 안 됨)
  */
 async function hasNoSearchResults(page: Page): Promise<boolean> {
   const patterns = [
-    /검색결과가\s*없습니다/,
-    /검색\s*결과가\s*없습니다/,
     /검색하신\s*검색에\s*대한\s*검색결과가\s*없습니다/,
+    /검색결과가\s*없습니다/,
     /정확한\s*검색어인지\s*다시한번\s*확인/,
     /정확한\s*검색어인지\s*다시\s*한번\s*확인/,
   ];
   for (const re of patterns) {
     if (await page.getByText(re).first().isVisible().catch(() => false)) return true;
   }
-  // 「검색된 상품 0개」
   if (await page.getByText(/검색된\s*상품\s*0\s*개/).first().isVisible().catch(() => false)) {
     return true;
   }
@@ -117,8 +133,8 @@ async function hasNoSearchResults(page: Page): Promise<boolean> {
 type SearchOutcome = 'products' | 'empty';
 
 /**
- * [1] URL검색 후: 팝업이 없어지고 + (상품 있음 | 결과없음 문구) 보일 때까지
- * (팝업은 건드리지 않음)
+ * [1] URL검색 후 대기 — 팝업/포커스/창순서 절대 건드리지 않음
+ * 완료: ABC팝업 없음 + load product 로딩 끝 + 상품 그리드 보임
  */
 async function waitSearchFinished(
   page: Page,
@@ -126,29 +142,44 @@ async function waitSearchFinished(
   rowIndex: number,
   popupPromise: Promise<Page | null>,
 ): Promise<SearchOutcome> {
-  pushLog(ctx, 'wait-search-popup', '[1] 팝업 종료·검색결과 대기', rowIndex);
-  void popupPromise.catch(() => undefined);
+  pushLog(ctx, 'wait-search-popup', '[1] 수집 대기 (팝업·창순서 미터치)', rowIndex);
 
   const deadline = Date.now() + 300_000;
+  let sawPopup = false;
+  let sawCollecting = false;
+  let emptySince = 0;
   let lastBeat = 0;
 
+  void popupPromise
+    .then(p => {
+      if (p && !p.isClosed() && isAbcSearchPopup(p)) sawPopup = true;
+    })
+    .catch(() => undefined);
+
   while (Date.now() < deadline) {
+    // 대기 중에는 bringToFront / maximize / 클릭 일절 금지
     const pops = abcSearchPopups(page);
+    if (pops.length > 0) sawPopup = true;
+
+    const collecting = await mangoIsCollecting(page);
+    if (collecting) {
+      sawCollecting = true;
+      emptySince = 0;
+    }
 
     if (Date.now() - lastBeat > 10_000) {
       lastBeat = Date.now();
       const results = await hasProductResults(page);
-      const empty = await hasNoSearchResults(page);
       pushLog(
         ctx,
         'wait-search-popup',
         '[1] 대기중…',
         rowIndex,
-        `popup=${pops.length} results=${results} empty=${empty}`,
+        `popup=${pops.length} collecting=${collecting} results=${results} sawCollect=${sawCollecting}`,
       );
     }
 
-    // 팝업 있으면 닫힐 때만 기다림
+    // ABC 팝업 열려 있으면: 닫힐 때만 기다림 (포커스/뒤로보내기 금지)
     if (pops.length > 0) {
       await Promise.race([
         ...pops.map(p => p.waitForEvent('close').catch(() => undefined)),
@@ -157,27 +188,35 @@ async function waitSearchFinished(
       continue;
     }
 
-    // 팝업 없고 하단 「검색결과 없음」이면 저장 단계로 가지 않음
-    if (await hasNoSearchResults(page)) {
-      pushLog(
-        ctx,
-        'wait-search-popup',
-        '[1] 검색결과 없음 (하단 문구 확인) — 저장 스킵',
-        rowIndex,
-      );
-      return 'empty';
+    // 빨간 load product 로딩 중이면 결과 판정하지 않음
+    if (collecting) {
+      await sleep(500);
+      continue;
     }
 
-    // 팝업 없고 상품 결과 보이면 완료
+    // 상품이 보이면 성공 (결과 있는 카테고리 정상 경로)
     if (await hasProductResults(page)) {
-      pushLog(ctx, 'wait-search-popup', '[1] 팝업 종료 + 검색결과 확인', rowIndex);
+      pushLog(ctx, 'wait-search-popup', '[1] 수집 완료 · 검색결과 확인', rowIndex);
       return 'products';
+    }
+
+    // 로딩이 끝난 뒤에만 «결과 없음» 인정 (5초 유지)
+    if (await hasNoSearchResults(page)) {
+      if (!emptySince) emptySince = Date.now();
+      if (Date.now() - emptySince >= 5_000) {
+        pushLog(ctx, 'wait-search-popup', '[1] 검색결과 없음 확정 — 저장 스킵', rowIndex);
+        return 'empty';
+      }
+    } else {
+      emptySince = 0;
     }
 
     await sleep(500);
   }
 
-  throw new Error(`#${rowIndex} [1] 팝업 종료/검색결과 대기 시간 초과`);
+  throw new Error(
+    `#${rowIndex} [1] 수집 대기 시간 초과 (popup=${sawPopup}, collecting=${sawCollecting})`,
+  );
 }
 
 async function pasteField(page: Page, locator: Locator, text: string) {
@@ -237,9 +276,9 @@ async function waitSaveSettingsOpen(page: Page): Promise<void> {
   ]);
 }
 
-/** 단계 로그 — ABC 검색 팝업이 있으면 bringToFront 금지(팝업 미터치) */
+/** 단계 로그 — bringToFront 금지 (ABC 팝업이 뒤로 밀림) */
 async function actStep(
-  page: Page,
+  _page: Page,
   ctx: LogCtx,
   step: WorkflowStepLog['step'],
   label: string,
@@ -247,9 +286,6 @@ async function actStep(
   rowIndex?: number,
   message?: string,
 ) {
-  if (abcSearchPopups(page).length === 0) {
-    await page.bringToFront().catch(() => undefined);
-  }
   pushLog(ctx, step, label, rowIndex, message);
   await run();
   pushLog(ctx, step, `${label} — 완료`, rowIndex, message);
@@ -316,7 +352,7 @@ async function findBulkReadyPage(context: BrowserContext): Promise<Page | null> 
   for (const p of context.pages()) {
     if (p.isClosed()) continue;
     if (isBulkCollectPageUrl(p.url())) {
-      await p.bringToFront().catch(() => undefined);
+      // bringToFront 하지 않음 — ABC 수집 팝업이 뒤로 밀리면 실패함
       return p;
     }
   }
@@ -326,8 +362,7 @@ async function findBulkReadyPage(context: BrowserContext): Promise<Page | null> 
 async function resolveBulkPageOrThrow(context: BrowserContext, logCtx: LogCtx): Promise<Page> {
   const ready = await findBulkReadyPage(context);
   if (ready) {
-    await ready.bringToFront();
-    pushLog(logCtx, 'open-page', '[1] 대량수집 메인 화면 확인', undefined, ready.url().split('?')[0]);
+    pushLog(logCtx, 'open-page', '[0] 대량수집 메인 화면 확인', undefined, ready.url().split('?')[0]);
     return ready;
   }
 
