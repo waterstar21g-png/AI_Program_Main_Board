@@ -24,8 +24,8 @@ npm run dev:fast
 
 | 좌측 목록 | 설명 |
 |-----------|------|
-| **상품데이터수집** › 상품데이터 대량수집 | 더망고 엑셀 URL 자동 수집 (Playwright, 로컬) |
-| Category_Item_Url_List | 카테고리 URL 엑셀 추출 (API 키 불필요) |
+| **Category_Item_Url_List** | 카테고리 URL 엑셀 추출 (기존 프로그램, API 키 불필요) |
+| **상품데이터수집** | 더망고 엑셀 URL 자동 수집 (신규, Playwright, 로컬) |
 | 상품캡처 및 가격조회 | 사진·키워드 가격 조회 (`.env.local` API 키 필요) |
 
 ## 프로그램 추가

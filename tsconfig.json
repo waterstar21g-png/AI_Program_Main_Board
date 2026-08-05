@@ -36,6 +36,7 @@
     ".next-dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "카테고리별_상품목록_URL_LIST추출"
   ]
 }

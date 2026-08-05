@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { APP_NAME } from '@/lib/app-name';
-import { DEFAULT_PROGRAM_ID, PROGRAM_SECTIONS, PROGRAMS } from '@/lib/programs/registry';
+import { DEFAULT_PROGRAM_ID, PROGRAMS } from '@/lib/programs/registry';
 
 export function ProgramBoardApp() {
   const [activeId, setActiveId] = useState(DEFAULT_PROGRAM_ID);
@@ -18,33 +18,22 @@ export function ProgramBoardApp() {
       <div className="program-board__body">
         <aside className="program-board__sidebar">
           <div className="program-board__sidebar-title">프로그램 목록</div>
-          <div className="program-board__nav" role="listbox" aria-label="프로그램 목록">
-            {PROGRAM_SECTIONS.map((section, sectionIndex) => (
-              <div key={section.title ?? `section-${sectionIndex}`} className="program-board__section">
-                {section.title && (
-                  <div className="program-board__section-title">{section.title}</div>
-                )}
-                <ul className="program-board__list">
-                  {section.programs.map(program => (
-                    <li key={program.id}>
-                      <button
-                        type="button"
-                        role="option"
-                        aria-selected={program.id === activeId}
-                        className={`program-board__item${program.id === activeId ? ' is-active' : ''}${
-                          section.title ? ' program-board__item--nested' : ''
-                        }`}
-                        onClick={() => setActiveId(program.id)}
-                      >
-                        <span className="program-board__item-name">{program.name}</span>
-                        <span className="program-board__item-desc">{program.description}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </div>
+          <ul className="program-board__list" role="listbox" aria-label="프로그램 목록">
+            {PROGRAMS.map(program => (
+              <li key={program.id}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={program.id === activeId}
+                  className={`program-board__item${program.id === activeId ? ' is-active' : ''}`}
+                  onClick={() => setActiveId(program.id)}
+                >
+                  <span className="program-board__item-name">{program.name}</span>
+                  <span className="program-board__item-desc">{program.description}</span>
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
         </aside>
 
         <main className="program-board__main">

@@ -842,34 +842,12 @@ html.is-touch .btn:active:not(:disabled) {
   border-bottom: 1px solid #1d4ed8;
 }
 
-.program-board__nav {
-  overflow-y: auto;
-  flex: 1;
-  padding: 0.35rem;
-}
-
-.program-board__section + .program-board__section {
-  margin-top: 0.25rem;
-  padding-top: 0.25rem;
-  border-top: 1px solid #b8b8b8;
-}
-
-.program-board__section-title {
-  font-size: 0.78rem;
-  font-weight: 800;
-  color: #1e3a5f;
-  padding: 0.35rem 0.5rem 0.2rem;
-  letter-spacing: 0.02em;
-}
-
 .program-board__list {
   list-style: none;
   margin: 0;
-  padding: 0;
-}
-
-.program-board__item--nested {
-  margin-left: 0.35rem;
+  padding: 0.35rem;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .program-board__item {
@@ -915,13 +893,6 @@ html.is-touch .btn:active:not(:disabled) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-}
-
-.program-unit__breadcrumb {
-  margin: 0 0 0.5rem;
-  font-size: 0.72rem;
-  color: #cbd5e1;
-  font-weight: 600;
 }
 
 .program-board__main-inner {
@@ -1179,6 +1150,60 @@ html.is-touch .btn:active:not(:disabled) {
 .category-app .notice p { margin: 0; }
 .category-app .more { margin: 0.5rem 0.75rem; font-size: 0.8rem; color: #64748b; }
 
+/* ── 상품데이터수집 (신규 독립 프로그램) ── */
+.product-data-collect-app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0.5rem 0.25rem 2rem;
+}
+
+.product-data-collect-app .panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.product-data-collect-app .panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.product-data-collect-app .panel__title { margin: 0; font-size: 1.05rem; }
+.product-data-collect-app .panel__hint { margin: 0 0 0.75rem; font-size: 0.85rem; color: #64748b; }
+.product-data-collect-app .panel__footer { margin-top: 1rem; display: flex; justify-content: flex-end; }
+.product-data-collect-app .badge {
+  display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.45rem;
+  border-radius: 999px; background: #e2e8f0; font-size: 0.75rem; font-weight: 600; color: #64748b;
+}
+.product-data-collect-app .form-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 0.75rem; }
+.product-data-collect-app .field { display: flex; flex-direction: column; gap: 0.35rem; }
+.product-data-collect-app .field__label { font-size: 0.85rem; font-weight: 600; color: #64748b; }
+.product-data-collect-app .input,
+.product-data-collect-app .field .input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  font: inherit;
+  background: #fff;
+  color: #0f172a;
+}
+.product-data-collect-app .btn {
+  border: none; border-radius: 0.5rem; padding: 0.55rem 1rem; font: inherit; font-weight: 600; cursor: pointer;
+}
+.product-data-collect-app .btn--primary { background: #2563eb; color: #fff; }
+.product-data-collect-app .btn--primary:hover:not(:disabled) { background: #1d4ed8; }
+.product-data-collect-app .notice { padding: 0.85rem 1rem; border-radius: 0.75rem; margin-bottom: 1rem; font-size: 0.875rem; }
+.product-data-collect-app .notice--error { background: #fef2f2; border: 1px solid #fca5a5; }
+.product-data-collect-app .notice p { margin: 0; }
+
 .workflow-steps {
   margin: 0;
   padding-left: 1.1rem;
@@ -1211,5 +1236,6 @@ html.is-touch .btn:active:not(:disabled) {
   .program-unit__summary { white-space: normal; }
   .program-board__main-inner .program-unit .form-grid--compact { grid-template-columns: 1fr; }
   .category-app .form-grid { grid-template-columns: 1fr; }
+  .product-data-collect-app .form-grid { grid-template-columns: 1fr; }
 }
 
