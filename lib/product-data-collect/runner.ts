@@ -19,49 +19,72 @@ function pushLog(
   ctx.onLog?.(entry);
 }
 
-async function highlight(page: Page, locator: Locator) {
-  try {
-    const handle = await locator.first().elementHandle();
-    if (!handle) return;
-    await handle.evaluate(el => {
-      const node = el as HTMLElement;
-      node.style.outline = '3px solid #ef4444';
-      node.style.outlineOffset = '2px';
-      node.style.boxShadow = '0 0 14px rgba(239,68,68,0.75)';
-    });
-  } catch {
-    /* skip */
-  }
+async function grantClipboard(page: Page) {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => undefined);
 }
 
-/** 단계 로그만 남기고 즉시 실행 */
-async function actStep(
-  page: Page,
-  ctx: LogCtx,
-  step: WorkflowStepLog['step'],
-  label: string,
-  run: () => Promise<void>,
-  rowIndex?: number,
-) {
-  await page.bringToFront();
-  pushLog(ctx, step, label, rowIndex, page.url());
-  await run();
-  pushLog(ctx, step, `${label} — 완료`, rowIndex);
+async function writeClipboard(page: Page, text: string) {
+  await grantClipboard(page);
+  await page.evaluate(async t => {
+    await navigator.clipboard.writeText(t);
+  }, text);
 }
 
-/** 엑셀 copy → 필드 paste (기계적 속도) */
+/** 엑셀 copy → 필드 Ctrl+V 붙여넣기 (그리드는 fill()이 안 먹는 경우가 많음) */
 async function pasteField(page: Page, locator: Locator, text: string) {
   const el = locator.first();
   await el.scrollIntoViewIfNeeded().catch(() => undefined);
-  await highlight(page, el);
-  await el.fill(text);
+  await el.click({ force: true });
+
+  if (!text) {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Backspace');
+    return;
+  }
+
+  await writeClipboard(page, text);
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Control+v');
+}
+
+async function readFieldText(locator: Locator): Promise<string> {
+  const el = locator.first();
+  const tag = await el.evaluate(node => node.tagName.toLowerCase()).catch(() => '');
+  if (tag === 'textarea' || tag === 'input') {
+    return el.inputValue().catch(() => '');
+  }
+  return el.innerText().catch(() => '');
+}
+
+function urlCore(url: string): string {
+  return normalizeCategoryUrl(url).replace(/^https?:\/\//i, '').trim();
+}
+
+async function assertUrlPasted(page: Page, input: Locator, url: string, rowIndex: number) {
+  const normalized = normalizeCategoryUrl(url);
+  const core = urlCore(normalized);
+  const fieldText = await readFieldText(input);
+  const areaText = await urlSearchArea(page).innerText().catch(() => '');
+
+  const pasted =
+    fieldText.includes(core) ||
+    fieldText.includes(normalized) ||
+    areaText.includes(core) ||
+    areaText.includes(normalized);
+
+  if (!pasted) {
+    throw new Error(
+      `#${rowIndex} URL 붙여넣기 실패 — URL상품검색하기 좌측 그리드에 URL이 들어가지 않았습니다.\n` +
+        `엑셀 URL: ${normalized}\n` +
+        `그리드 내용: ${fieldText.slice(0, 120) || '(비어 있음)'}`,
+    );
+  }
 }
 
 /** 클릭 즉시 */
 async function fastClick(page: Page, locator: Locator) {
   const el = locator.first();
   await el.scrollIntoViewIfNeeded().catch(() => undefined);
-  await highlight(page, el);
   await el.click();
 }
 
@@ -137,13 +160,23 @@ async function resolveBulkPageOrThrow(context: BrowserContext, logCtx: LogCtx): 
 async function findUrlInput(page: Page): Promise<Locator> {
   await assertBulkCollectPage(page);
   const btn = urlSearchButton(page).first();
+  const area = urlSearchArea(page);
+
+  const afterClear = area.locator(
+    'input[type="button"][value*="CLEAR"], input[type="button"][value="CLEAR"]',
+  ).locator(
+    'xpath=following::textarea[1]|following::input[@type="text"][1]|following::*[@contenteditable="true"][1]',
+  );
+  if (await afterClear.first().isVisible().catch(() => false)) return afterClear.first();
+
   const nearBtn = btn.locator(
-    'xpath=preceding::textarea[1]|preceding::input[@type="text"][not(@name="login_id")][1]',
+    'xpath=preceding::textarea[1]|preceding::input[@type="text"][not(@name="login_id")][1]|preceding::*[@contenteditable="true"][1]',
   );
   if (await nearBtn.isVisible().catch(() => false)) return nearBtn;
 
-  const area = urlSearchArea(page);
-  const inArea = area.locator('textarea:visible, input[type="text"]:visible').first();
+  const inArea = area.locator(
+    'textarea:visible, input[type="text"]:visible, [contenteditable="true"]:visible',
+  ).first();
   if (await inArea.isVisible().catch(() => false)) return inArea;
 
   const textareas = page.locator('textarea:visible');
@@ -218,17 +251,67 @@ function catchInPagePopupHidden(page: Page, skipContains = ''): Promise<void> {
   }, skipContains);
 }
 
-/** [3] 검색 팝업 닫힘 캐치 */
-async function waitForSearchPopupClosed(page: Page, windowClosed: Promise<void>): Promise<void> {
+/** 단계 로그만 남기고 즉시 실행 */
+async function actStep(
+  page: Page,
+  ctx: LogCtx,
+  step: WorkflowStepLog['step'],
+  label: string,
+  run: () => Promise<void>,
+  rowIndex?: number,
+) {
+  await page.bringToFront();
+  pushLog(ctx, step, label, rowIndex, page.url());
+  await run();
+  pushLog(ctx, step, `${label} — 완료`, rowIndex);
+}
+
+function normalizeCategoryUrl(url: string): string {
+  const t = url.trim();
+  if (!t) return t;
+  if (/^https?:\/\//i.test(t)) return t;
+  return `https://${t}`;
+}
+
+function noSearchResultsLocator(page: Page) {
+  return page.getByText(/검색결과가\s*없습니다/);
+}
+
+function idleSearchPromptLocator(page: Page) {
+  return page.getByText(/상품명 또는 검색 URL을 입력/);
+}
+
+/** 검색 완료 = 팝업 닫힘 + 결과 영역 문구 변경 */
+async function waitForSearchFinished(page: Page, windowClosed: Promise<void>): Promise<void> {
   await Promise.race([
     windowClosed,
     catchInPagePopupHidden(page, '상품저장설정'),
-    saveAllButton(page)
-      .first()
-      .waitFor({ state: 'visible' })
-      .then(() => undefined),
+    page.waitForFunction(() => {
+      const text = document.body.innerText;
+      if (text.includes('검색결과가 없습니다')) return true;
+      if (text.includes('실시간 검색한 결과') && !text.includes('상품명 또는 검색 URL을 입력')) {
+        return true;
+      }
+      return false;
+    }),
   ]);
-  await saveAllButton(page).first().waitFor({ state: 'visible' });
+}
+
+/** 「검색결과가 없습니다」= URL 붙여넣기 실패로 간주 */
+async function assertHasSearchResults(page: Page, rowIndex: number, url: string) {
+  const normalized = normalizeCategoryUrl(url);
+  if (await noSearchResultsLocator(page).isVisible().catch(() => false)) {
+    throw new Error(
+      `#${rowIndex} 「검색결과가 없습니다」— URL 붙여넣기 오류로 판단합니다.\n` +
+        `URL상품검색하기 좌측 그리드에 URL이 안 들어갔을 가능성이 큽니다.\n` +
+        `엑셀 URL: ${normalized}`,
+    );
+  }
+  if (await idleSearchPromptLocator(page).isVisible().catch(() => false)) {
+    throw new Error(
+      `#${rowIndex} URL 붙여넣기 실패 — 그리드가 비어 있습니다.\n엑셀 URL: ${normalized}`,
+    );
+  }
 }
 
 /** [6] 상품저장설정 팝업 닫힘 캐치 */
@@ -260,22 +343,40 @@ async function clearGrid(page: Page, ctx: LogCtx, rowIndex: number) {
 }
 
 async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) {
-  await actStep(page, ctx, 'paste-url', '[2] 최종 카테고리 URL 붙여넣기', async () => {
-    const input = await findUrlInput(page);
-    await pasteField(page, input, url);
-  }, rowIndex);
+  const normalized = normalizeCategoryUrl(url);
+  await page.bringToFront();
+  pushLog(ctx, 'paste-url', '[2] URL 붙여넣기', rowIndex, normalized);
+
+  const input = await findUrlInput(page);
+  await pasteField(page, input, normalized);
+  await assertUrlPasted(page, input, normalized, rowIndex);
+
+  const gridText = (await readFieldText(input)).trim();
+  pushLog(
+    ctx,
+    'paste-url',
+    '[2] URL 붙여넣기 — 완료',
+    rowIndex,
+    gridText || normalized,
+  );
 }
 
-async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
+async function clickUrlSearchAndWaitPopup(
+  page: Page,
+  ctx: LogCtx,
+  rowIndex: number,
+  categoryUrl: string,
+) {
+  pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex, normalizeCategoryUrl(categoryUrl));
   const windowClosed = catchWindowPopupClose(page);
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
 
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
   pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 감지', rowIndex);
-  await waitForSearchPopupClosed(page, windowClosed);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
+  await waitForSearchFinished(page, windowClosed);
+  await assertHasSearchResults(page, rowIndex, categoryUrl);
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 완료 (결과 있음)', rowIndex);
 }
 
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
@@ -341,7 +442,7 @@ async function processOneRow(
   await openBulkPage(page, ctx, rowIndex);
   await clearGrid(page, ctx, rowIndex);
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
-  await clickUrlSearchAndWaitPopup(page, ctx, rowIndex);
+  await clickUrlSearchAndWaitPopup(page, ctx, rowIndex, finalCategoryUrl);
   await clickSaveAll(page, ctx, rowIndex);
   await fillSaveForm(page, topFinalLabel, saveCount, ctx, rowIndex);
   await waitSavePopupDone(page, ctx, rowIndex);
