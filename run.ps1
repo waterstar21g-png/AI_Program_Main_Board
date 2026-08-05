@@ -68,6 +68,8 @@ $files = @(
   @("lib\product-data-collect\steps.ts", "lib/product-data-collect/steps.ts"),
   @("lib\product-data-collect\types.ts", "lib/product-data-collect/types.ts"),
   @("lib\product-data-collect\excel-import.ts", "lib/product-data-collect/excel-import.ts"),
+  @("lib\excel-export.ts", "lib/excel-export.ts"),
+  @("lib\top-final-label.ts", "lib/top-final-label.ts"),
   @("components\ProgramBoardApp.tsx", "components/ProgramBoardApp.tsx"),
   @("components\ProductDataCollectApp.tsx", "components/ProductDataCollectApp.tsx"),
   @("app\layout.tsx", "app/layout.tsx"),
