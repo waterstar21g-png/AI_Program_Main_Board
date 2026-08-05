@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { getOrOpenBrowserContext } from '@/lib/product-data-collect/browser-session';
+import { getOrOpenBrowserContext, requireExistingBrowserContext } from '@/lib/product-data-collect/browser-session';
 import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -359,7 +359,10 @@ export async function runTmgCollectWorkflow(
   );
 
   const headless = req.headless ?? false;
-  const context = await getOrOpenBrowserContext(headless);
+  const useExisting = req.useExistingBrowser !== false;
+  const context = useExisting
+    ? await requireExistingBrowserContext()
+    : await getOrOpenBrowserContext(headless);
 
   let processedCount = 0;
   try {
