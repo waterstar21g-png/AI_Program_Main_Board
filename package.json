@@ -1,6 +1,6 @@
 {
   "name": "ai-program-main-board",
-  "version": "1.4.4",
+  "version": "1.4.5",
   "private": true,
   "description": "AI_Program_Main_Board — 단위 프로그램 실행 보드",
   "scripts": {
@@ -12,8 +12,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "vercel:link": "vercel link --yes --scope nutrifarmer-front --project sangpum-capture-price",
-    "vercel:deploy": "vercel --prod --yes --scope nutrifarmer-front"
+    "vercel:link": "vercel link --yes --scope nutrifarmer-front --project AI_Program_Main_Board",
+    "vercel:deploy": "vercel --prod --yes --scope nutrifarmer-front --name AI_Program_Main_Board"
   },
   "dependencies": {
     "@vercel/blob": "^2.5.0",

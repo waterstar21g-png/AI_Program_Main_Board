@@ -2,8 +2,8 @@
 
 AI 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등
 
-**배포 URL:** https://sangpum-capture-price.vercel.app  
-(실행 프로그램명: `AI_Program_Main_Board`)
+**배포 URL:** https://ai-program-main-board.vercel.app  
+(Vercel 프로젝트명: `AI_Program_Main_Board` · 기존 `sangpum-capture-price.vercel.app`는 리다이렉트)
 
 ## 주요 기능
 

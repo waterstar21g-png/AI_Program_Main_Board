@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "name": "AI_Program_Main_Board",
   "framework": "nextjs",
   "git": {
     "deploymentEnabled": {
