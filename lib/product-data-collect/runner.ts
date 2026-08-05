@@ -164,7 +164,23 @@ async function findClearButton(page: Page): Promise<Locator | null> {
 }
 
 function saveSettingsModal(page: Page) {
-  return page.locator('body').locator('table, div, form').filter({ hasText: '상품저장설정' }).last();
+  // 팝업 전체(하단 저장하기·취소하기 포함) — 안쪽 작은 div만 잡히지 않게
+  return page
+    .locator('div, form, table')
+    .filter({ hasText: '상품저장설정' })
+    .filter({ hasText: '저장하기' })
+    .filter({ hasText: '취소하기' })
+    .last();
+}
+
+function saveSubmitButton(page: Page) {
+  const modal = saveSettingsModal(page);
+  return modal
+    .locator('input[type="button"][value="저장하기"], input[type="submit"][value="저장하기"]')
+    .or(modal.locator('a, button, span, div').filter({ hasText: /^저장하기$/ }))
+    .or(page.getByRole('button', { name: '저장하기' }))
+    .or(page.locator('input[type="button"][value="저장하기"], input[type="submit"][value="저장하기"]'))
+    .or(page.locator('a, button').filter({ hasText: /^저장하기$/ }));
 }
 
 /** 새 창 팝업 close 이벤트 캐치 */
@@ -300,11 +316,12 @@ async function fillSaveForm(
     const modal = saveSettingsModal(page);
     await modal.waitFor({ state: 'visible' });
 
+    // 요건: 검색결과상위(저장상품수)=3 먼저 → 검색필터명
     const countInput = modal
       .locator('tr, div')
-      .filter({ hasText: /검색결과\s*상위/ })
+      .filter({ hasText: /저장상품수|검색결과\s*상위/ })
       .first()
-      .locator('input')
+      .locator('input[type="text"], input[type="number"], input:not([type])')
       .first();
     await pasteField(page, countInput, String(saveCount));
 
@@ -312,18 +329,15 @@ async function fillSaveForm(
       .locator('tr, div')
       .filter({ hasText: '검색필터명' })
       .first()
-      .locator('input')
+      .locator('input[type="text"], input:not([type])')
       .first();
     await pasteField(page, filterInput, filterName);
   }, rowIndex);
 
   pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭', rowIndex);
-  const modal = saveSettingsModal(page);
-  const saveBtn = modal
-    .locator('input[type="button"][value="저장하기"], input[type="submit"][value="저장하기"]')
-    .or(modal.getByText(/^저장하기$/));
-  const ok = await clickFirstVisible(page, [saveBtn]);
-  if (!ok) throw new Error('저장하기 버튼을 찾지 못했습니다.');
+  const saveBtn = saveSubmitButton(page).first();
+  await saveBtn.waitFor({ state: 'visible' });
+  await fastClick(page, saveBtn);
   pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭 — 완료', rowIndex);
 }
 
