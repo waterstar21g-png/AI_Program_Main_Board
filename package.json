@@ -1,0 +1,28 @@
+{
+  "name": "category-product-url-list",
+  "version": "0.1.0",
+  "private": true,
+  "description": "카테고리별 상품목록 URL LIST 추출 — 네이버 쇼핑 카테고리별 대표 URL·상품 URL을 엑셀로보냅니다.",
+  "scripts": {
+    "dev": "next dev -p 3001",
+    "build": "next build",
+    "start": "next start -p 3001",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "next": "^15.3.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "^15.3.3",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
