@@ -206,7 +206,7 @@ export function CategoryExtractorApp() {
               </button>
             </div>
             <p className="panel__hint">
-              엑셀 양식: 상위 · 중위 · 하위 · 최종 · 상위+최종 · 최종 카테고리 URL
+              엑셀 양식: 상위 · 중위 · 하위 · 최종 · 상위 최종 · 최종 카테고리 URL
             </p>
             <div className="table-wrap">
               <table className="result-table">
@@ -216,7 +216,7 @@ export function CategoryExtractorApp() {
                     <th>중위</th>
                     <th>하위</th>
                     <th>최종</th>
-                    <th>상위+최종</th>
+                    <th>상위 최종</th>
                     <th>최종 카테고리 URL</th>
                   </tr>
                 </thead>

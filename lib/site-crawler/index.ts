@@ -1,4 +1,5 @@
 import type { CrawlRequest, CrawlResult, HierarchyRow, LeafCategory } from '@/lib/types';
+import { buildTopFinalLabel } from '@/lib/top-final-label';
 import { filterLeavesByTop, sanitizeTopCategories } from '@/lib/top-category-filter';
 import { fetchHtml, normalizeSiteUrl } from '@/lib/site-crawler/fetch';
 import { isArtPlatform, parseArtPlatformGnb } from '@/lib/site-crawler/art-platform';
@@ -74,7 +75,7 @@ function toRow(siteName: string, leaf: LeafCategory): HierarchyRow {
     mid: leaf.mid,
     low: leaf.low,
     final: leaf.final,
-    topFinalLabel: `${leaf.top.trim()} ${leaf.final.trim()}`.trim(),
+    topFinalLabel: buildTopFinalLabel(leaf.top, leaf.final),
     finalCategoryUrl: leaf.categoryUrl,
   };
 }
