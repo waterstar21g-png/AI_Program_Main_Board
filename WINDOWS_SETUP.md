@@ -14,15 +14,17 @@ D:\함께온라인\AI_Program_Main_Board\
 
 ## 2. 실행
 
-**`run.bat`** 더블클릭
+**`run.bat`** 또는 **`start.bat`** 더블클릭 (내용 동일)
 
-최초 실행 시 자동으로:
+파일이 없다고 나오면:
 
-1. `npm install` (패키지)
-2. Playwright Chromium (상품데이터수집용)
-3. 개발 서버 시작 + 브라우저 열기
+```cmd
+cd /d C:\Users\water\AI_Program_Main_Board
+dir *.bat
+git pull
+```
 
-이후에는 바로 서버만 시작합니다.
+`run.bat`이 목록에 없으면 GitHub에서 최신 소스를 다시 받거나, `start.bat`을 실행하세요.
 
 - 주소: **http://localhost:3000**
 - 종료: 명령 창에서 **Ctrl+C**
