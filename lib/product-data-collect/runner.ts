@@ -2,6 +2,11 @@ import type { BrowserContext, Locator, Page } from 'playwright';
 import { requireExistingBrowserContext } from '@/lib/product-data-collect/browser-session';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
+/**
+ * 속도 정책
+ * - 필드 입력·버튼 클릭: 기계적 속도 (붙여넣기·즉시 클릭)
+ * - 대기: 버튼 클릭 후 망고 팝업이 닫힐 때만 ([3] 검색 팝업, [6] 저장 팝업)
+ */
 type LogCtx = {
   logs: WorkflowStepLog[];
   onLog?: (entry: WorkflowStepLog) => void;
@@ -49,12 +54,11 @@ async function actStep(
   pushLog(ctx, step, `${label} — 완료`, rowIndex);
 }
 
-/** 엑셀 copy → 필드 paste (한 번에) */
+/** 엑셀 copy → 필드 paste (기계적 속도) */
 async function pasteField(page: Page, locator: Locator, text: string) {
   const el = locator.first();
   await el.scrollIntoViewIfNeeded().catch(() => undefined);
   await highlight(page, el);
-  await el.click();
   await el.fill(text);
 }
 
@@ -211,7 +215,6 @@ async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: num
   }
 
   await saveAllButton(page).first().waitFor({ state: 'visible', timeout: 300000 });
-  await page.waitForLoadState('networkidle', { timeout: 300000 }).catch(() => undefined);
 
   pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 — 완료', rowIndex);
 }
@@ -231,7 +234,7 @@ async function fillSaveForm(
   ctx: LogCtx,
   rowIndex: number,
 ) {
-  await actStep(page, ctx, 'fill-save-form', '[5] 상품저장설정 입력', async () => {
+  await actStep(page, ctx, 'fill-save-form', '[5] 상품저장설정 입력 (즉시)', async () => {
     const modal = saveSettingsModal(page);
     await modal.waitFor({ state: 'visible', timeout: 60000 });
 
@@ -250,19 +253,22 @@ async function fillSaveForm(
       .locator('input')
       .first();
     await pasteField(page, filterInput, filterName);
-
-    const saveBtn = modal
-      .locator('input[type="button"][value="저장하기"], input[type="submit"][value="저장하기"]')
-      .or(modal.getByText(/^저장하기$/));
-    const ok = await clickFirstVisible(page, [saveBtn]);
-    if (!ok) throw new Error('저장하기 버튼을 찾지 못했습니다.');
   }, rowIndex);
+
+  pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭', rowIndex);
+  const modal = saveSettingsModal(page);
+  const saveBtn = modal
+    .locator('input[type="button"][value="저장하기"], input[type="submit"][value="저장하기"]')
+    .or(modal.getByText(/^저장하기$/));
+  const ok = await clickFirstVisible(page, [saveBtn]);
+  if (!ok) throw new Error('저장하기 버튼을 찾지 못했습니다.');
+  pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭 — 완료', rowIndex);
 }
 
+/** [6] 저장하기 클릭 후 — 팝업 닫힐 때까지만 대기 */
 async function waitSavePopupDone(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 대기', rowIndex, '망고 처리 대기');
-  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: 300000 }).catch(() => undefined);
-  await page.waitForLoadState('networkidle', { timeout: 300000 }).catch(() => undefined);
+  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 대기', rowIndex, '망고 팝업 닫힘 대기');
+  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: 300000 });
   pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 — 완료', rowIndex);
 }
 
@@ -297,7 +303,7 @@ export async function runTmgCollectWorkflow(
     return { ok: false, logs, processedCount: 0, message: '처리할 엑셀 행이 없습니다.' };
   }
 
-  pushLog(ctx, 'open-page', '메인 화면에서 1~6단계', undefined, '붙여넣기·즉시클릭 · 망고 팝업만 대기');
+  pushLog(ctx, 'open-page', '메인 화면 1~6단계', undefined, '입력·클릭 즉시 / 팝업 닫힘만 대기');
 
   const context = await requireExistingBrowserContext();
   const headless = req.headless ?? false;

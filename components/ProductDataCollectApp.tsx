@@ -121,7 +121,7 @@ export function ProductDataCollectApp() {
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
             <strong>① 메인 URL 열기</strong> → 로그인 → <strong>② 수집 시작</strong>.
-            입력은 엑셀 항목 <strong>붙여넣기</strong>, 클릭 즉시 — 망고 팝업 처리만 대기.
+            필드·클릭은 <strong>즉시</strong>, 망고 <strong>팝업 닫힐 때만</strong> 대기.
           </p>
         </div>
         <div className="form-grid form-grid--compact">

@@ -7,9 +7,9 @@ export const TMG_BULK_URL =
 export const WORKFLOW_STEPS: { id: WorkflowStepId; label: string }[] = [
   { id: 'open-page', label: '[1] 상품데이터 대량수집 메인 (getGoodsNew.php)' },
   { id: 'clear-grid', label: '[2] 입력 그리드 CLEAR → URL 입력 → URL상품검색하기' },
-  { id: 'wait-search-popup', label: '[3] 검색 팝업 종료 대기' },
+  { id: 'wait-search-popup', label: '[3] 검색 팝업 닫힘 대기 (망고 속도)' },
   { id: 'save-all', label: '[4] 검색된 상품 모두 저장 클릭' },
   { id: 'fill-save-form', label: '[5] 상품저장설정 (검색결과상위·검색필터명·저장하기)' },
-  { id: 'wait-save-popup', label: '[6] 저장 팝업 종료 대기' },
+  { id: 'wait-save-popup', label: '[6] 저장 팝업 닫힘 대기 (망고 속도)' },
   { id: 'next-row', label: '[7~8] 다음 엑셀 행으로 1번부터 반복' },
 ];
