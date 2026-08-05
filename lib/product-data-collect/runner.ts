@@ -202,12 +202,12 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
 
-  const popupPromise = page.waitForEvent('popup', { timeout: 300000 }).catch(() => null);
+  const popupPromise = page.waitForEvent('popup', { timeout: 10000 }).catch(() => null);
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
 
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 대기', rowIndex, '망고 처리 대기');
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 대기', rowIndex, '망고 팝업 닫힘 대기');
 
   const popup = await popupPromise;
   if (popup) {
@@ -305,7 +305,7 @@ export async function runTmgCollectWorkflow(
 
   pushLog(ctx, 'open-page', '메인 화면 1~6단계', undefined, '입력·클릭 즉시 / 팝업 닫힘만 대기');
 
-  const context = await requireExistingBrowserContext();
+  const context = await attachBrowser();
   const headless = req.headless ?? false;
   let processedCount = 0;
 
