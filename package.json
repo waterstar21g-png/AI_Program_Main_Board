@@ -1,6 +1,6 @@
 {
   "name": "category-product-url-list",
-  "version": "0.1.0",
+  "version": "0.2.1",
   "private": true,
   "description": "카테고리별 상품목록 URL LIST 추출 — 네이버 쇼핑 카테고리별 대표 URL·상품 URL을 엑셀로보냅니다.",
   "scripts": {
@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "cheerio": "^1.0.0",
     "next": "^15.3.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -1,37 +1,37 @@
 import * as XLSX from 'xlsx';
-import type { ProductUrlRow } from '@/lib/types';
+import type { HierarchyRow } from '@/lib/types';
 
-const HEADERS = ['카테고리', '카테고리대표URL', '순번', '상품명', '상품URL', '가격', '쇼핑몰'] as const;
+const HEADERS = [
+  '상위 카테고리명',
+  '중위 카테고리명',
+  '하위 카테고리명',
+  '최종 카테고리명',
+  '최종 카테고리의 대표상품 URL주소',
+] as const;
 
-export function rowsToSheetData(rows: ProductUrlRow[]): string[][] {
+export function hierarchyToSheetData(rows: HierarchyRow[]): string[][] {
   const data: string[][] = [HEADERS.slice()];
   for (const r of rows) {
-    data.push([
-      r.category,
-      r.categoryUrl,
-      String(r.rank),
-      r.title,
-      r.productUrl,
-      r.price > 0 ? String(r.price) : '',
-      r.mallName,
-    ]);
+    data.push([r.top, r.mid, r.low, r.final, r.productUrl]);
   }
   return data;
 }
 
-/** 브라우저에서 엑셀 파일 다운로드 */
-export function downloadExcel(rows: ProductUrlRow[], filename = '카테고리별_상품URL_LIST.xlsx'): void {
+export function downloadHierarchyExcel(rows: HierarchyRow[], siteName: string): void {
+  const safeName = (siteName || '사이트').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40);
+  const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  const filename = `${safeName}_카테고리URL_LIST_${stamp}.xlsx`;
+
   const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet(rowsToSheetData(rows));
-  ws['!cols'] = [{ wch: 16 }, { wch: 52 }, { wch: 6 }, { wch: 40 }, { wch: 52 }, { wch: 10 }, { wch: 14 }];
-  XLSX.utils.book_append_sheet(wb, ws, 'URL_LIST');
+  const ws = XLSX.utils.aoa_to_sheet(hierarchyToSheetData(rows));
+  ws['!cols'] = [{ wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 56 }];
+  XLSX.utils.book_append_sheet(wb, ws, '카테고리표');
   XLSX.writeFile(wb, filename);
 }
 
-/** 서버 응답용 Buffer */
-export function buildExcelBuffer(rows: ProductUrlRow[]): Buffer {
+export function buildHierarchyExcelBuffer(rows: HierarchyRow[]): Buffer {
   const wb = XLSX.utils.book_new();
-  const ws = XLSX.utils.aoa_to_sheet(rowsToSheetData(rows));
-  XLSX.utils.book_append_sheet(wb, ws, 'URL_LIST');
+  const ws = XLSX.utils.aoa_to_sheet(hierarchyToSheetData(rows));
+  XLSX.utils.book_append_sheet(wb, ws, '카테고리표');
   return Buffer.from(XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' }));
 }

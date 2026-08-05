@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { buildExcelBuffer } from '@/lib/excel-export';
-import type { ProductUrlRow } from '@/lib/types';
+import { buildHierarchyExcelBuffer } from '@/lib/excel-export';
+import type { HierarchyRow } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest) {
-  let body: { rows?: ProductUrlRow[] };
+  let body: { rows?: HierarchyRow[]; siteName?: string };
   try {
     body = await req.json();
   } catch {
@@ -17,8 +17,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, message: '추출된 데이터가 없습니다.' }, { status: 400 });
   }
 
-  const buffer = buildExcelBuffer(rows);
-  const filename = encodeURIComponent('카테고리별_상품URL_LIST.xlsx');
+  const buffer = buildHierarchyExcelBuffer(rows);
+  const safe = (body.siteName || '카테고리').replace(/[\\/:*?"<>|]/g, '_');
+  const filename = encodeURIComponent(`${safe}_카테고리URL_LIST.xlsx`);
 
   return new NextResponse(new Uint8Array(buffer), {
     status: 200,

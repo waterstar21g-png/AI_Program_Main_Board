@@ -1,26 +1,44 @@
-export interface CategoryInput {
-  id: string;
-  name: string;
-  /** 네이버 쇼핑 catId (선택) */
-  catId?: string;
-  /** 카테고리 목록 URL 직접 입력 (선택, catId 없을 때) */
-  listUrl?: string;
-  /** 카테고리당 추출할 상품 수 (1~100) */
-  count: number;
+export const MAX_TOP_CATEGORIES = 15;
+
+export interface CrawlRequest {
+  siteName: string;
+  siteUrl: string;
+  /** 사용자 지정 상위 카테고리 (1~15개, 이 목록에 해당하는 것만 추출) */
+  topCategories: string[];
+  fetchProducts?: boolean;
+  productLimit?: number;
 }
 
-export interface ProductUrlRow {
-  category: string;
-  categoryUrl: string;
-  rank: number;
-  title: string;
+export interface HierarchyRow {
+  siteName: string;
+  top: string;
+  mid: string;
+  low: string;
+  final: string;
   productUrl: string;
-  price: number;
-  mallName: string;
+  categoryUrl: string;
 }
 
-export interface ExtractResult {
-  rows: ProductUrlRow[];
-  errors: { category: string; message: string }[];
-  usedNaverApi: boolean;
+export interface CrawlResult {
+  ok: boolean;
+  siteName: string;
+  siteUrl: string;
+  platform: string;
+  appliedTopCategories: string[];
+  rows: HierarchyRow[];
+  totalCategories: number;
+  productsFetched: number;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface LeafCategory {
+  top: string;
+  mid: string;
+  low: string;
+  final: string;
+  categoryUrl: string;
+  ctgrNo?: string;
+  brandNo?: string;
+  kind: 'category' | 'brand';
 }

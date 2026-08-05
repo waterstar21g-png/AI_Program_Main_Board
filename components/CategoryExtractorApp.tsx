@@ -1,267 +1,280 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { DEFAULT_CATEGORIES, parseCatId, resolveCategoryUrl } from '@/lib/category-url';
-import { downloadExcel } from '@/lib/excel-export';
-import type { CategoryInput, ExtractResult, ProductUrlRow } from '@/lib/types';
+import { downloadHierarchyExcel } from '@/lib/excel-export';
+import { MAX_TOP_CATEGORIES } from '@/lib/types';
+import type { CrawlResult, HierarchyRow } from '@/lib/types';
 
-function newId(): string {
-  return `c-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+const DEFAULT_SITE = {
+  siteName: 'ABC마트',
+  siteUrl: 'https://abcmart.a-rt.com/?track=W0009',
+};
+
+/** ABC마트 기본 상위 카테고리 */
+const DEFAULT_TOP_CATEGORIES = ['MEN', 'WOMEN', 'KIDS'];
+
+function newTopId(): string {
+  return `top-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-function emptyRow(): CategoryInput {
-  return { id: newId(), name: '', catId: '', listUrl: '', count: 20 };
+function makeTopRows(values: string[]): { id: string; value: string }[] {
+  const rows = values.map(v => ({ id: newTopId(), value: v }));
+  if (!rows.length) rows.push({ id: newTopId(), value: '' });
+  return rows;
 }
 
 export function CategoryExtractorApp() {
-  const [categories, setCategories] = useState<CategoryInput[]>([emptyRow()]);
-  const [rows, setRows] = useState<ProductUrlRow[]>([]);
-  const [errors, setErrors] = useState<ExtractResult['errors']>([]);
-  const [usedNaverApi, setUsedNaverApi] = useState<boolean | null>(null);
+  const [siteName, setSiteName] = useState(DEFAULT_SITE.siteName);
+  const [siteUrl, setSiteUrl] = useState(DEFAULT_SITE.siteUrl);
+  const [topRows, setTopRows] = useState(() => makeTopRows(DEFAULT_TOP_CATEGORIES));
+  const [fetchProducts, setFetchProducts] = useState(true);
+  const [productLimit, setProductLimit] = useState(0);
   const [loading, setLoading] = useState(false);
-  const [bulkText, setBulkText] = useState('');
+  const [result, setResult] = useState<CrawlResult | null>(null);
+  const [error, setError] = useState('');
 
-  const validCount = useMemo(() => categories.filter(c => c.name.trim()).length, [categories]);
+  const filledTopCount = useMemo(
+    () => topRows.filter(r => r.value.trim()).length,
+    [topRows],
+  );
 
-  const updateRow = useCallback((id: string, patch: Partial<CategoryInput>) => {
-    setCategories(prev => prev.map(c => (c.id === id ? { ...c, ...patch } : c)));
+  const updateTop = useCallback((id: string, value: string) => {
+    setTopRows(prev => prev.map(r => (r.id === id ? { ...r, value } : r)));
   }, []);
 
-  const addRow = () => setCategories(prev => [...prev, emptyRow()]);
-
-  const removeRow = (id: string) => {
-    setCategories(prev => (prev.length <= 1 ? prev : prev.filter(c => c.id !== id)));
+  const addTopRow = () => {
+    if (topRows.length >= MAX_TOP_CATEGORIES) return;
+    setTopRows(prev => [...prev, { id: newTopId(), value: '' }]);
   };
 
-  const loadDefaults = () => {
-    setCategories(
-      DEFAULT_CATEGORIES.map(d => ({
-        id: newId(),
-        name: d.name,
-        catId: d.catId,
-        listUrl: '',
-        count: 20,
-      })),
-    );
+  const removeTopRow = (id: string) => {
+    setTopRows(prev => (prev.length <= 1 ? prev : prev.filter(r => r.id !== id)));
   };
 
-  const applyBulk = () => {
-    const lines = bulkText
-      .split(/\r?\n/)
-      .map(l => l.trim())
-      .filter(Boolean);
-    if (!lines.length) return;
-
-    const parsed: CategoryInput[] = lines.map(line => {
-      const parts = line.split(/[\t,|]/).map(p => p.trim());
-      const name = parts[0] ?? '';
-      const second = parts[1] ?? '';
-      const count = Number(parts[2]) || 20;
-      const catId = parseCatId(second) ?? (/^\d+$/.test(second) ? second : '');
-      const listUrl = catId ? '' : second;
-      return { id: newId(), name, catId, listUrl, count };
-    });
-
-    setCategories(parsed);
+  const loadAbcDefaults = () => {
+    setSiteName(DEFAULT_SITE.siteName);
+    setSiteUrl(DEFAULT_SITE.siteUrl);
+    setTopRows(makeTopRows(DEFAULT_TOP_CATEGORIES));
   };
 
-  const runExtract = async () => {
+  const runCrawl = async () => {
     setLoading(true);
-    setErrors([]);
+    setError('');
+    setResult(null);
+    const topCategories = topRows.map(r => r.value.trim()).filter(Boolean);
     try {
-      const payload = categories.filter(c => c.name.trim());
-      const res = await fetch('/api/extract', {
+      const res = await fetch('/api/crawl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ categories: payload }),
+        body: JSON.stringify({
+          siteName: siteName.trim(),
+          siteUrl: siteUrl.trim(),
+          topCategories,
+          fetchProducts,
+          productLimit: productLimit > 0 ? productLimit : 0,
+        }),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.message ?? '추출 실패');
-      setRows(data.rows ?? []);
-      setErrors(data.errors ?? []);
-      setUsedNaverApi(data.usedNaverApi ?? false);
+      if (!data.ok) throw new Error(data.message ?? '수집 실패');
+      setResult(data as CrawlResult);
     } catch (e) {
-      setErrors([{ category: '-', message: e instanceof Error ? e.message : '추출 실패' }]);
+      setError(e instanceof Error ? e.message : '수집 실패');
     } finally {
       setLoading(false);
     }
   };
 
   const handleDownload = () => {
-    if (!rows.length) return;
-    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
-    downloadExcel(rows, `카테고리별_상품URL_LIST_${stamp}.xlsx`);
+    if (!result?.rows.length) return;
+    downloadHierarchyExcel(result.rows, siteName.trim() || '사이트');
   };
+
+  const rows: HierarchyRow[] = result?.rows ?? [];
+  const canSubmit = siteName.trim() && siteUrl.trim() && filledTopCount > 0;
 
   return (
     <div className="app">
       <header className="app__header">
-        <p className="app__eyebrow">웹 · 엑셀보내기</p>
+        <p className="app__eyebrow">웹 · 계층 카테고리 · 엑셀 저장</p>
         <h1 className="app__title">카테고리별 상품목록 URL LIST 추출</h1>
         <p className="app__desc">
-          카테고리명·catId(또는 목록 URL)를 입력하면 카테고리 대표 URL과 상품 URL을 모아 엑셀 파일로
-          저장합니다. 네이버 검색 API 키가 있으면 카테고리별 상품 URL까지 추출합니다.
+          사이트명·URL과 <strong>상위 카테고리</strong>를 지정하면, 해당 상위만 골라 중위→하위→최종
+          카테고리와 대표 상품 URL을 엑셀로 저장합니다. (ABC마트 / A-RT 계열 지원)
         </p>
       </header>
 
       <section className="panel">
         <div className="panel__head">
-          <h2>카테고리 입력</h2>
-          <div className="panel__actions">
-            <button type="button" className="btn btn--ghost" onClick={loadDefaults}>
-              대분류 10개 불러오기
-            </button>
-            <button type="button" className="btn btn--ghost" onClick={addRow}>
-              + 행 추가
-            </button>
-          </div>
-        </div>
-
-        <div className="bulk">
-          <label className="bulk__label" htmlFor="bulk-input">
-            일괄 붙여넣기 (한 줄: <code>카테고리명, catId 또는 URL, 추출개수</code>)
-          </label>
-          <textarea
-            id="bulk-input"
-            className="bulk__input"
-            rows={3}
-            placeholder={'식품, 50000006, 30\n화장품/미용, https://search.shopping.naver.com/search/category?catId=50000002'}
-            value={bulkText}
-            onChange={e => setBulkText(e.target.value)}
-          />
-          <button type="button" className="btn btn--ghost" onClick={applyBulk}>
-            일괄 적용
+          <h2 className="panel__title">1. 사이트 입력</h2>
+          <button type="button" className="btn btn--ghost" onClick={loadAbcDefaults}>
+            ABC마트 기본값
           </button>
         </div>
-
-        <div className="table-wrap">
-          <table className="cat-table">
-            <thead>
-              <tr>
-                <th>카테고리명</th>
-                <th>catId</th>
-                <th>목록 URL (선택)</th>
-                <th>추출 수</th>
-                <th>대표 URL 미리보기</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {categories.map(cat => (
-                <tr key={cat.id}>
-                  <td>
-                    <input
-                      className="input"
-                      value={cat.name}
-                      placeholder="예: 식품"
-                      onChange={e => updateRow(cat.id, { name: e.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="input input--sm"
-                      value={cat.catId ?? ''}
-                      placeholder="50000006"
-                      onChange={e => updateRow(cat.id, { catId: e.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="input"
-                      value={cat.listUrl ?? ''}
-                      placeholder="catId 없을 때 URL"
-                      onChange={e => updateRow(cat.id, { listUrl: e.target.value })}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      className="input input--xs"
-                      type="number"
-                      min={1}
-                      max={100}
-                      value={cat.count}
-                      onChange={e => updateRow(cat.id, { count: Number(e.target.value) || 20 })}
-                    />
-                  </td>
-                  <td className="preview-url">
-                    {cat.name.trim()
-                      ? resolveCategoryUrl(cat.name, cat.catId, cat.listUrl)
-                      : '—'}
-                  </td>
-                  <td>
-                    <button type="button" className="btn btn--icon" onClick={() => removeRow(cat.id)} aria-label="삭제">
-                      ×
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="form-grid">
+          <label className="field">
+            <span className="field__label">사이트명</span>
+            <input
+              className="input"
+              value={siteName}
+              onChange={e => setSiteName(e.target.value)}
+              placeholder="예: ABC마트"
+            />
+          </label>
+          <label className="field field--wide">
+            <span className="field__label">사이트 URL</span>
+            <input
+              className="input"
+              value={siteUrl}
+              onChange={e => setSiteUrl(e.target.value)}
+              placeholder="https://abcmart.a-rt.com/?track=W0009"
+            />
+          </label>
         </div>
+      </section>
 
+      <section className="panel">
+        <div className="panel__head">
+          <h2 className="panel__title">
+            상위 카테고리 지정 <span className="badge">{filledTopCount}/{MAX_TOP_CATEGORIES}</span>
+          </h2>
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={addTopRow}
+            disabled={topRows.length >= MAX_TOP_CATEGORIES}
+          >
+            + 항목 추가
+          </button>
+        </div>
+        <p className="panel__hint">
+          사이트명·URL과 별도로 상위 카테고리를 입력합니다. <strong>입력한 상위만</strong> 추출됩니다.
+          ABC마트 예: MEN, WOMEN, KIDS (BRAND 등은 제외)
+        </p>
+        <ul className="top-list">
+          {topRows.map((row, idx) => (
+            <li key={row.id} className="top-list__item">
+              <span className="top-list__num">{idx + 1}</span>
+              <input
+                className="input"
+                value={row.value}
+                onChange={e => updateTop(row.id, e.target.value)}
+                placeholder="예: MEN"
+              />
+              <button
+                type="button"
+                className="btn btn--icon"
+                onClick={() => removeTopRow(row.id)}
+                disabled={topRows.length <= 1}
+                aria-label="삭제"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="panel">
+        <h2 className="panel__title">2. 수집 옵션</h2>
+        <div className="options">
+          <label className="check">
+            <input
+              type="checkbox"
+              checked={fetchProducts}
+              onChange={e => setFetchProducts(e.target.checked)}
+            />
+            최종 카테고리별 대표 상품 URL 수집
+          </label>
+          <label className="field field--inline">
+            <span className="field__label">상품 수집 제한 (0=전체)</span>
+            <input
+              className="input input--xs"
+              type="number"
+              min={0}
+              value={productLimit}
+              onChange={e => setProductLimit(Number(e.target.value) || 0)}
+            />
+          </label>
+        </div>
         <div className="panel__footer">
-          <button type="button" className="btn btn--primary" disabled={loading || validCount === 0} onClick={runExtract}>
-            {loading ? '추출 중…' : `URL 추출 실행 (${validCount}개 카테고리)`}
+          <button
+            type="button"
+            className="btn btn--primary"
+            disabled={loading || !canSubmit}
+            onClick={runCrawl}
+          >
+            {loading ? '수집 중…' : '카테고리 수집 시작'}
           </button>
         </div>
       </section>
 
-      {(errors.length > 0 || usedNaverApi === false) && (
-        <section className="notice notice--warn">
-          {usedNaverApi === false && (
-            <p>
-              <strong>네이버 API 키 미설정:</strong> 카테고리 대표 URL만 엑셀에 포함됩니다.{' '}
-              <code>.env.local</code>에 <code>NAVER_CLIENT_ID</code>, <code>NAVER_CLIENT_SECRET</code>을 설정하세요.
-            </p>
-          )}
-          {errors.map((err, i) => (
-            <p key={i}>
-              <strong>{err.category}:</strong> {err.message}
-            </p>
-          ))}
+      {error && (
+        <section className="notice notice--error">
+          <p>{error}</p>
         </section>
       )}
 
-      {rows.length > 0 && (
-        <section className="panel">
-          <div className="panel__head">
-            <h2>추출 결과 ({rows.length}건)</h2>
-            <button type="button" className="btn btn--primary" onClick={handleDownload}>
-              엑셀 다운로드 (.xlsx)
-            </button>
-          </div>
-          <div className="table-wrap table-wrap--result">
-            <table className="result-table">
-              <thead>
-                <tr>
-                  <th>카테고리</th>
-                  <th>순번</th>
-                  <th>상품명</th>
-                  <th>상품 URL</th>
-                  <th>가격</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.slice(0, 200).map((r, i) => (
-                  <tr key={`${r.category}-${r.rank}-${i}`}>
-                    <td>{r.category}</td>
-                    <td>{r.rank || '—'}</td>
-                    <td className="ellipsis" title={r.title}>
-                      {r.title}
-                    </td>
-                    <td className="ellipsis">
-                      <a href={r.productUrl} target="_blank" rel="noreferrer">
-                        {r.productUrl}
-                      </a>
-                    </td>
-                    <td>{r.price > 0 ? r.price.toLocaleString('ko-KR') : '—'}</td>
+      {result && (
+        <>
+          <section className="summary">
+            <p>
+              <strong>{result.platform}</strong> · 상위 [{result.appliedTopCategories.join(', ')}] ·
+              카테고리 {result.totalCategories}건 · 상품 URL {result.productsFetched}건
+            </p>
+            {result.warnings.map((w, i) => (
+              <p key={i} className="summary__warn">
+                {w}
+              </p>
+            ))}
+          </section>
+
+          <section className="panel">
+            <div className="panel__head">
+              <h2>계층화된 카테고리표 ({rows.length}행)</h2>
+              <button type="button" className="btn btn--primary" onClick={handleDownload}>
+                엑셀 로컬 저장 (.xlsx)
+              </button>
+            </div>
+            <p className="panel__hint">
+              엑셀 양식: 상위 · 중위 · 하위 · 최종 카테고리명 · 대표상품 URL
+            </p>
+            <div className="table-wrap">
+              <table className="result-table">
+                <thead>
+                  <tr>
+                    <th>상위</th>
+                    <th>중위</th>
+                    <th>하위</th>
+                    <th>최종</th>
+                    <th>대표상품 URL</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-            {rows.length > 200 && <p className="more">… 외 {rows.length - 200}건 (엑셀에 전체 포함)</p>}
-          </div>
-        </section>
+                </thead>
+                <tbody>
+                  {rows.slice(0, 150).map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.top}</td>
+                      <td>{r.mid || '—'}</td>
+                      <td>{r.low || '—'}</td>
+                      <td>{r.final}</td>
+                      <td className="url-cell">
+                        {r.productUrl ? (
+                          <a href={r.productUrl} target="_blank" rel="noreferrer">
+                            {r.productUrl}
+                          </a>
+                        ) : (
+                          '—'
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {rows.length > 150 && (
+                <p className="more">… 외 {rows.length - 150}행 (엑셀에 전체 포함)</p>
+              )}
+            </div>
+          </section>
+        </>
       )}
     </div>
   );
