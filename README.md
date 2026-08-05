@@ -1,9 +1,9 @@
-# Nutri-Farmer_Front_Program_Board
+# AI_Program_Main_Board
 
-Nutri-Farmer 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등
+AI 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등
 
 **배포 URL:** https://sangpum-capture-price.vercel.app  
-(실행 프로그램명: `Nutri-Farmer_Front_Program_Board`)
+(실행 프로그램명: `AI_Program_Main_Board`)
 
 ## 주요 기능
 
