@@ -448,14 +448,61 @@ async function waitSaveAllButtonVisible(page: Page): Promise<Locator> {
   }
 }
 
-/** [6] 상품저장설정 팝업 닫힘 캐치 */
+/** [6] 상품저장설정 팝업이 열린 뒤 → 닫힐 때까지 (닫히기 전 다음 입력 금지) */
 async function waitForSavePopupClosed(page: Page): Promise<void> {
   const modal = saveSettingsModal(page);
-  if (await modal.isVisible().catch(() => false)) {
-    await modal.waitFor({ state: 'hidden' });
+  const deadline = Date.now() + 180_000;
+
+  // 저장하기 직후 모달이 아직 안 잡히면 잠시 등장 대기
+  const seen =
+    (await modal.isVisible().catch(() => false)) ||
+    (await modal
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false)) ||
+    (await saveSettingsTitle(page)
+      .waitFor({ state: 'visible', timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false));
+
+  if (seen || (await modal.isVisible().catch(() => false))) {
+    const remain = Math.max(5_000, deadline - Date.now());
+    await modal.waitFor({ state: 'hidden', timeout: remain });
+    // 완전히 사라졌는지 한 번 더 확인
+    await sleep(400);
+    if (await modal.isVisible().catch(() => false)) {
+      await modal.waitFor({ state: 'hidden', timeout: Math.max(5_000, deadline - Date.now()) });
+    }
     return;
   }
+
   await catchInPagePopupHidden(page, '');
+  await sleep(400);
+}
+
+/**
+ * 다음 URL 입력 가능 상태인지 게이트.
+ * 검색 팝업·상품저장설정이 하나라도 열려 있으면 절대 입력하지 않음.
+ */
+async function assertIdleBeforeInput(page: Page, ctx: LogCtx, rowIndex: number, reason: string) {
+  if (externalPages(page).length > 0) {
+    pushLog(ctx, 'next-row', `${reason}: 검색 모달 종료 대기`, rowIndex);
+    await waitExternalPopupsGone(page, Date.now() + 180_000);
+  }
+
+  const modal = saveSettingsModal(page);
+  if (await modal.isVisible().catch(() => false)) {
+    pushLog(ctx, 'wait-save-popup', `${reason}: 저장 모달 종료 대기`, rowIndex);
+    await modal.waitFor({ state: 'hidden', timeout: 180_000 });
+    await sleep(300);
+  }
+
+  if (externalPages(page).length > 0) {
+    throw new Error(`#${rowIndex} ${reason}: 검색 모달이 아직 열려 있어 다음 입력을 할 수 없습니다.`);
+  }
+  if (await modal.isVisible().catch(() => false)) {
+    throw new Error(`#${rowIndex} ${reason}: 저장 모달이 아직 열려 있어 다음 입력을 할 수 없습니다.`);
+  }
 }
 
 async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
@@ -516,13 +563,17 @@ async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: num
 }
 
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
+  // 게이트: 검색 모달이 완전히 끝난 뒤에만 다음 버튼 클릭
   if (externalPages(page).length > 0) {
-    pushLog(ctx, 'save-all', '[4] 팝업 닫힘 대기', rowIndex);
+    pushLog(ctx, 'save-all', '[4] 검색 모달 종료 대기 (버튼 클릭 보류)', rowIndex);
     await waitExternalPopupsGone(page, Date.now() + 180_000);
+  }
+  if (externalPages(page).length > 0) {
+    throw new Error(`#${rowIndex} 검색 모달이 열린 채라 모두저장을 클릭할 수 없습니다.`);
   }
 
   await focusMangoBulk(page);
-  pushLog(ctx, 'save-all', '[4] 검색된 상품 모두저장 클릭', rowIndex);
+  pushLog(ctx, 'save-all', '[4] 모달 종료 확인 → 검색된 상품 모두저장 클릭', rowIndex);
   const btn = await waitSaveAllButtonVisible(page);
   await btn.click({ force: true }).catch(async () => {
     await hardClick(page, btn);
@@ -595,19 +646,37 @@ async function processOneRow(
   const { rowIndex, finalCategoryUrl, topFinalLabel } = row;
   pushLog(ctx, 'next-row', `━━━ 엑셀 #${rowIndex} 행 ━━━`, rowIndex);
 
-  if (externalPages(page).length > 0) {
-    pushLog(ctx, 'next-row', '이전 팝업 닫힘 대기', rowIndex);
-    await waitExternalPopupsGone(page, Date.now() + 180_000);
-  }
+  /*
+   * 필수 순서 (고정):
+   * 1) 이전 모달 종료 확인
+   * 2) URL 필드 입력 → URL상품검색하기
+   * 3) 검색 모달 종료까지 대기 (입력·클릭 금지)
+   * 4) 모달 종료 후 → 모두저장 클릭
+   * 5) 상품저장설정 입력 → 저장하기
+   * 6) 저장 모달 종료까지 대기
+   * 7) 그 다음에야 다음 엑셀 URL 입력 가능
+   */
+  await assertIdleBeforeInput(page, ctx, rowIndex, '행 시작 전');
 
   await openBulkPage(page, ctx, rowIndex);
+
+  // 2) URL 필드 입력
   await clearGrid(page, ctx, rowIndex);
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
+
+  // 3) 검색 클릭 → 모달 종료 대기
   await clickUrlSearchAndWaitPopup(page, ctx, rowIndex);
+  await assertIdleBeforeInput(page, ctx, rowIndex, '검색 모달 종료 후');
+
+  // 4) 다음 버튼(모두저장) 클릭 → 5) 저장설정 입력·저장하기
   await clickSaveAll(page, ctx, rowIndex);
   await fillSaveForm(page, topFinalLabel, saveCount, ctx, rowIndex);
+
+  // 6) 저장 모달 종료까지 대기 — 끝나기 전 다음 행 입력 금지
   await waitSavePopupDone(page, ctx, rowIndex);
-  pushLog(ctx, 'next-row', `#${rowIndex} 행 완료`, rowIndex);
+  await assertIdleBeforeInput(page, ctx, rowIndex, '저장 모달 종료 후');
+
+  pushLog(ctx, 'next-row', `#${rowIndex} 행 완료 — 다음 URL 입력 가능`, rowIndex);
 }
 
 export async function runTmgCollectWorkflow(
@@ -623,7 +692,13 @@ export async function runTmgCollectWorkflow(
     return { ok: false, logs, processedCount: 0, message: '처리할 엑셀 행이 없습니다.' };
   }
 
-  pushLog(ctx, 'open-page', '메인 화면 1~6단계', undefined, '입력·클릭 즉시 / 팝업 닫힘만 대기');
+  pushLog(
+    ctx,
+    'open-page',
+    '순서 고정: 입력→대기→모달종료→버튼→모달종료→다음입력',
+    undefined,
+    '모달 종료 전 다음 입력·클릭 금지',
+  );
 
   const headless = req.headless ?? false;
   let processedCount = 0;

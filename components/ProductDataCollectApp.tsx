@@ -167,7 +167,7 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 실행 (메인 진입 후 1~6단계)</h2>
+        <h2 className="panel__title">2. 실행 (모달 종료 후 다음 단계)</h2>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (
             <li
