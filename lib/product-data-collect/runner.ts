@@ -85,11 +85,12 @@ async function actStep(
   label: string,
   run: () => Promise<void>,
   rowIndex?: number,
+  message?: string,
 ) {
   await page.bringToFront();
-  pushLog(ctx, step, label, rowIndex, page.url());
+  pushLog(ctx, step, label, rowIndex, message);
   await run();
-  pushLog(ctx, step, `${label} — 완료`, rowIndex);
+  pushLog(ctx, step, `${label} — 완료`, rowIndex, message);
 }
 
 async function clickFirstVisible(page: Page, locators: Locator[]) {
@@ -351,11 +352,12 @@ async function clearGrid(page: Page, ctx: LogCtx, rowIndex: number) {
 
 async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) {
   const normalized = normalizeUrl(url);
-  await actStep(page, ctx, 'paste-url', '[2] URL 붙여넣기', async () => {
-    const input = await findUrlInput(page);
-    await pasteField(page, input, normalized);
-  }, rowIndex);
-  pushLog(ctx, 'paste-url', '[2] URL', rowIndex, normalized);
+  // 엑셀 「최종 카테고리 URL주소」만 로그 — 브라우저 주소창(getGoodsNew.php) 아님
+  pushLog(ctx, 'paste-url', '[2] 엑셀 URL 붙여넣기', rowIndex, normalized);
+  await page.bringToFront();
+  const input = await findUrlInput(page);
+  await pasteField(page, input, normalized);
+  pushLog(ctx, 'paste-url', '[2] 엑셀 URL 붙여넣기 — 완료', rowIndex, normalized);
 }
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
