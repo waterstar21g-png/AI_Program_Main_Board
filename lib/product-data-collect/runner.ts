@@ -228,17 +228,7 @@ function saveSubmitButton(page: Page) {
     .or(page.locator('a, button').filter({ hasText: /^저장하기$/ }));
 }
 
-/** 새 창 팝업 close 이벤트 캐치 */
-function catchWindowPopupClose(page: Page): Promise<void> {
-  return new Promise(resolve => {
-    page.once('popup', async popup => {
-      await popup.waitForEvent('close');
-      resolve();
-    });
-  });
-}
-
-/** 화면 안 팝업/레이어가 DOM에서 사라질 때까지 (MutationObserver) */
+/** 새 창 팝업 close 이벤트 캐치 — 미사용 경로 제거됨 */
 function catchInPagePopupHidden(page: Page, skipContains = ''): Promise<void> {
   return page
     .evaluate(skip => {
@@ -284,40 +274,13 @@ function isNavDestroyedError(e: unknown): boolean {
   return /Execution context was destroyed|Target closed|navigation/i.test(msg);
 }
 
-/** [3] 검색 완료 = 「검색된 상품 모두저장」 보이면 즉시 */
-async function waitForSearchPopupClosed(page: Page, windowClosed: Promise<void>): Promise<void> {
-  const saveAllReady = (async () => {
-    for (;;) {
-      try {
-        await page.waitForLoadState('domcontentloaded').catch(() => undefined);
-        await saveAllButton(page).first().waitFor({ state: 'visible', timeout: 3000 });
-        return;
-      } catch (e) {
-        if (isNavDestroyedError(e)) continue;
-        // timeout → 결과 문구로 재시도
-        const hasResult = await page
-          .getByText(/실시간 검색한 결과/)
-          .first()
-          .isVisible()
-          .catch(() => false);
-        if (hasResult && (await saveAllButton(page).first().isVisible().catch(() => false))) return;
-        continue;
-      }
-    }
-  })();
-
-  await Promise.race([
-    windowClosed.catch(() => undefined),
-    catchInPagePopupHidden(page, '상품저장설정'),
-    saveAllReady,
-  ]);
-
-  // 네비게이션 끝난 뒤 「검색된 상품 모두저장」 보일 때까지 (즉시 클릭 준비)
+/** 「검색된 상품 모두저장」 보이자마자 반환 — 불필요 대기 없음 */
+async function waitSaveAllButtonVisible(page: Page): Promise<Locator> {
+  const btn = saveAllButton(page).first();
   for (;;) {
     try {
-      await page.waitForLoadState('domcontentloaded').catch(() => undefined);
-      await saveAllButton(page).first().waitFor({ state: 'visible' });
-      return;
+      await btn.waitFor({ state: 'visible' });
+      return btn;
     } catch (e) {
       if (isNavDestroyedError(e)) continue;
       throw e;
@@ -373,43 +336,32 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
-  const windowClosed = catchWindowPopupClose(page);
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
-
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 완료 대기 → 모두저장 버튼', rowIndex);
-  await waitForSearchPopupClosed(page, windowClosed);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 완료 — 모두저장 버튼 확인', rowIndex);
 }
 
+/** 검색 결과「모두저장」보이면 망설이지 말고 즉시 클릭 → 상품저장설정 모달 */
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'save-all', '[4] 검색된 상품 모두저장 클릭', rowIndex);
+  pushLog(ctx, 'wait-search-popup', '[3] 모두저장 버튼 대기', rowIndex);
+  const btn = await waitSaveAllButtonVisible(page);
 
-  // 모달 뜰 때까지 클릭 재시도 (클릭 실패로 그냥 지나가지 않음)
-  for (let attempt = 1; attempt <= 8; attempt++) {
-    if (await isSaveSettingsOpen(page)) break;
-
-    const btn = saveAllButton(page).first();
-    await btn.waitFor({ state: 'visible' });
-    pushLog(ctx, 'save-all', `[4] 모두저장 클릭 시도 ${attempt}`, rowIndex);
+  pushLog(ctx, 'save-all', '[4] 검색된 상품 모두저장 — 즉시 클릭', rowIndex);
+  await btn.click({ force: true }).catch(async () => {
     await hardClick(page, btn);
+  });
 
-    const opened = await Promise.race([
-      waitSaveSettingsOpen(page).then(() => true).catch(() => false),
-      saveSettingsTitle(page).waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false),
-    ]);
-    if (opened || (await isSaveSettingsOpen(page))) break;
-  }
-
+  pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 대기', rowIndex);
+  await waitSaveSettingsOpen(page);
   if (!(await isSaveSettingsOpen(page))) {
-    throw new Error(
-      `#${rowIndex} 「검색된 상품 모두저장」 클릭 후에도 상품저장설정 모달이 안 떴습니다.`,
-    );
+    // 클릭 한 번 더 — 모달 안 떴을 때만
+    await hardClick(page, saveAllButton(page));
+    await waitSaveSettingsOpen(page);
   }
-
-  pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 열림 — 확인', rowIndex, '검색필터명·저장상품수·저장하기');
-  await maximizePage(page);
+  if (!(await isSaveSettingsOpen(page))) {
+    throw new Error(`#${rowIndex} 모두저장 클릭 후 상품저장설정 모달이 안 떴습니다.`);
+  }
+  pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 열림', rowIndex);
 }
 
 async function fillSaveForm(
