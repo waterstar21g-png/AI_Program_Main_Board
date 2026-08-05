@@ -120,7 +120,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>①</strong> 로그인 클릭 → 상품데이터수집 → 대량수집 자동 진입 → <strong>② 수집 시작</strong>
+            <strong>①</strong> 로그인→대량수집 → <strong>② 수집 시작</strong> (매 행: 메뉴 재진입으로 초기화, CLEAR 없음)
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -167,7 +167,7 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 실행 (메인 진입 후 1~6단계)</h2>
+        <h2 className="panel__title">2. 실행 (모달 종료 후 다음 단계)</h2>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (
             <li

@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Raw = "https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main"
-$TargetVersion = "2.0.8.8"
+$TargetVersion = "2.0.9.1"
 
 Write-Host "========================================"
 Write-Host "  AI_Program_Main_Board  v$TargetVersion"
@@ -68,12 +68,16 @@ if ($failed.Count -gt 0) {
   Write-Host "[WARN] 일부 파일 동기화 실패. 인터넷 확인 후 다시 run.ps1 실행"
 }
 
-"버전 $TargetVersion (좌측 상단 작게 표시)" | Out-File -FilePath "VERSION.txt" -Encoding utf8
-
+# 동기화 후 실제 파일 버전을 배너에 반영 (main 미반영 시 바로 알 수 있음)
 if (Test-Path "lib\app-version.ts") {
-  $verLine = Select-String -Path "lib\app-version.ts" -Pattern "APP_VERSION" | Select-Object -First 1
-  Write-Host "[CHECK] $($verLine.Line.Trim())"
+  $verLine = Select-String -Path "lib\app-version.ts" -Pattern "APP_VERSION\s*=\s*'([^']+)'" | Select-Object -First 1
+  if ($verLine -and $verLine.Matches.Groups.Count -gt 1) {
+    $TargetVersion = $verLine.Matches.Groups[1].Value
+  }
+  Write-Host "[CHECK] APP_VERSION = $TargetVersion"
 }
+
+"버전 $TargetVersion (좌측 상단 작게 표시)" | Out-File -FilePath "VERSION.txt" -Encoding utf8
 
 Write-Host "[STOP] 기존 서버(포트 3000) 종료..."
 Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue |

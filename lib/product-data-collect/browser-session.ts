@@ -102,36 +102,66 @@ async function clickLoginIfNeeded(page: Page) {
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);
 }
 
-/** 망고 메인 → 상품데이터수집 → 상품데이터 대량수집 */
-async function openBulkMenuFromMain(page: Page) {
-  if (isBulkPage(page.url())) return;
+/**
+ * 상단「상품데이터수집」→「상품데이터 대량수집 (리스팅페이지 URL 이용)」클릭
+ * (이미 대량수집 화면이어도 다시 클릭 — 초기화 효과)
+ */
+export async function clickBulkCollectMenu(page: Page): Promise<void> {
+  await page.bringToFront().catch(() => undefined);
 
-  // 상단 메뉴「상품데이터수집」
   const menu = page
     .getByText('상품데이터수집', { exact: true })
-    .or(page.locator('a, span, li, div').filter({ hasText: /^상품데이터수집$/ }))
+    .or(page.locator('a, span, li, div, td').filter({ hasText: /^상품데이터수집$/ }))
     .first();
 
-  if (await menu.isVisible().catch(() => false)) {
-    await menu.hover().catch(() => undefined);
-    await menu.click();
-  }
+  await menu.waitFor({ state: 'visible', timeout: 20_000 });
+  await menu.hover().catch(() => undefined);
+  await menu.click();
 
-  // 하위「상품데이터 대량수집 …」
+  // 스크린샷 메뉴: 상품데이터 대량수집 (리스팅페이지 URL 이용)
   const sub = page
-    .getByText(/상품데이터\s*대량수집/)
+    .locator('a, span, li, div')
+    .filter({ hasText: /상품데이터\s*대량수집/ })
+    .filter({ hasText: /리스팅페이지|URL/ })
+    .first()
+    .or(page.getByText(/상품데이터\s*대량수집\s*\(?\s*리스팅페이지/))
+    .or(page.getByText(/상품데이터\s*대량수집/))
     .or(page.locator('a').filter({ hasText: /상품데이터\s*대량수집/ }))
     .first();
 
-  if (await sub.isVisible().catch(() => false)) {
-    await sub.click();
-    await page.waitForURL(u => isBulkPage(u.toString()), { timeout: 60000 }).catch(() => undefined);
-    await page.waitForLoadState('domcontentloaded').catch(() => undefined);
-  }
+  await sub.waitFor({ state: 'visible', timeout: 10_000 });
+  // 이미 대량수집 URL이어도 메뉴 재클릭으로 초기화 — URL 변경이 없을 수 있음
+  await sub.click();
+  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+  await page
+    .waitForURL(u => isBulkPage(u.toString()), { timeout: 60_000 })
+    .catch(() => undefined);
 
-  // 메뉴 클릭으로 안 열리면 URL 직접 이동
   if (!isBulkPage(page.url())) {
     await gotoUrl(page, TMG_BULK_URL);
+  }
+
+  // 초기화 완료 신호: URL상품검색하기 버튼
+  await page
+    .locator('input[type="button"][value*="URL"][value*="상품"][value*="검색"]')
+    .or(page.getByText(/URL\s*상품\s*검색하기/))
+    .first()
+    .waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+/** 최초 진입: 이미 대량수집이면 메뉴 스킵 */
+async function openBulkMenuFromMain(page: Page) {
+  if (isBulkPage(page.url())) return;
+  await clickBulkCollectMenu(page);
+}
+
+/** 매 행/단계 시작: 메뉴 재클릭으로 화면 초기화 (CLEAR 대체) */
+export async function resetBulkCollectViaMenu(page: Page): Promise<void> {
+  await clickBulkCollectMenu(page);
+  if (!isBulkPage(page.url())) {
+    throw new Error(
+      '메뉴 초기화 실패: 상품데이터수집 → 상품데이터 대량수집 화면이 아닙니다.',
+    );
   }
 }
 

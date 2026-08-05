@@ -1,5 +1,10 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { ensureBulkCollectPage, getCollectBrowserContext, maximizePage, TMG_ADMIN_HOST } from '@/lib/product-data-collect/browser-session';
+import {
+  ensureBulkCollectPage,
+  getCollectBrowserContext,
+  resetBulkCollectViaMenu,
+  TMG_ADMIN_HOST,
+} from '@/lib/product-data-collect/browser-session';
 import { TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -7,6 +12,10 @@ type LogCtx = {
   logs: WorkflowStepLog[];
   onLog?: (entry: WorkflowStepLog) => void;
 };
+
+function sleep(ms: number) {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
+}
 
 function pushLog(
   ctx: LogCtx,
@@ -20,13 +29,7 @@ function pushLog(
   ctx.onLog?.(entry);
 }
 
-/** 외부 검색 팝업이 없을 때만 망고를 앞으로 */
-async function focusMangoBulk(page: Page) {
-  if (externalPages(page).length > 0) return;
-  await page.bringToFront().catch(() => undefined);
-  await maximizePage(page);
-}
-
+/** 외부 검색 팝업 목록 (망고 admin 제외) */
 function externalPages(page: Page): Page[] {
   return page
     .context()
@@ -34,46 +37,149 @@ function externalPages(page: Page): Page[] {
     .filter(p => p !== page && !p.isClosed() && !p.url().includes(TMG_ADMIN_HOST));
 }
 
-/** 외부 팝업 close만 대기 — 망고 DOM/입력/포커스 일절 금지 */
-async function waitExternalPopupsGone(page: Page) {
+/** 망고 앞으로 — 외부 팝업 있을 땐 절대 호출하지 말 것 (maximize 금지) */
+async function focusMangoBulk(page: Page) {
+  if (externalPages(page).length > 0) return;
+  await page.bringToFront().catch(() => undefined);
+}
+
+/** 외부 팝업이 모두 닫힐 때까지 (망고 미터치) */
+async function waitExternalPopupsGone(page: Page, deadlineMs: number) {
   while (externalPages(page).length > 0) {
+    if (Date.now() >= deadlineMs) {
+      throw new Error('검색 팝업이 시간 안에 닫히지 않았습니다.');
+    }
     const open = externalPages(page);
-    await Promise.race(open.map(p => p.waitForEvent('close').catch(() => undefined)));
+    await Promise.race([
+      ...open.map(p => p.waitForEvent('close').catch(() => undefined)),
+      sleep(Math.min(2000, Math.max(200, deadlineMs - Date.now()))),
+    ]);
   }
 }
 
 /**
- * URL검색 클릭 직후 호출.
- * 규칙: 팝업이 스스로 닫힐 때까지
- *  - URL 입력필드 수정 금지
- *  - 망고 bringToFront / maximize 금지
- *  - 망고 DOM 조회(모두저장 버튼 등) 금지
- *  - 팝업 bringToFront / close 금지
- * → context의 page close 이벤트만 대기
+ * URL검색 클릭 직후 — 1행·N행 동일 규칙
+ * - 팝업이 떠 있는 동안: URL입력/망고 DOM/bringToFront/maximize/강제close 금지
+ * - 팝업 close 이벤트만 대기
+ * - waitForEvent('page') 무한대기 금지 (타임아웃)
+ * - 팝업이 Playwright에 안 잡히면 나타남 대기 후 망고 결과만 확인
  */
-async function waitSearchPopupClosedNaturally(
+async function waitSearchFinished(
   page: Page,
   ctx: LogCtx,
   rowIndex: number,
-  popupPromise: Promise<Page>,
+  popupPromise: Promise<Page | null>,
 ) {
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘만 대기 (완전 미터치)', rowIndex);
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 대기(입력·포커스 금지)', rowIndex);
 
-  // 이미 떠 있으면 close만
-  if (externalPages(page).length > 0) {
-    await waitExternalPopupsGone(page);
-    pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
-    return;
+  const APPEAR_MS = 30_000;
+  const TOTAL_MS = 180_000;
+  const start = Date.now();
+  const appearUntil = start + APPEAR_MS;
+  const deadline = start + TOTAL_MS;
+
+  // 클릭 전 걸어둔 리스너 소비 (타임아웃 시 null — 무한대기 없음)
+  const firstPopup = await popupPromise.catch(() => null);
+  const firstIsExternal = (() => {
+    if (!firstPopup) return false;
+    try {
+      return !firstPopup.url().includes(TMG_ADMIN_HOST);
+    } catch {
+      // 이미 닫혀 URL을 못 읽어도 외부 팝업으로 간주
+      return true;
+    }
+  })();
+  let sawExternal = externalPages(page).length > 0 || firstIsExternal;
+  let loggedPopup = false;
+
+  /** about:blank 등이 먼저 닫힌 뒤 실제 검색창이 이어 열릴 수 있음 → 짧게 재확인 */
+  async function settleNoExternal(): Promise<boolean> {
+    const settleUntil = Date.now() + 3_000;
+    while (Date.now() < settleUntil && Date.now() < deadline) {
+      if (externalPages(page).length > 0) return false;
+      await Promise.race([
+        page
+          .context()
+          .waitForEvent('page', { timeout: 400 })
+          .then(p => {
+            if (p && !p.isClosed() && !p.url().includes(TMG_ADMIN_HOST)) {
+              sawExternal = true;
+            }
+          })
+          .catch(() => undefined),
+        sleep(300),
+      ]);
+    }
+    return externalPages(page).length === 0;
   }
 
-  // 클릭 전에 걸어둔 popupPromise — 팝업이 뜰 때까지 (망고 미조회)
-  const popup = await popupPromise.catch(() => null);
-  if (popup && !popup.isClosed()) {
-    await popup.waitForEvent('close').catch(() => undefined);
-  }
-  await waitExternalPopupsGone(page);
+  while (Date.now() < deadline) {
+    const extras = externalPages(page);
 
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
+    if (extras.length > 0) {
+      sawExternal = true;
+      if (!loggedPopup) {
+        const url = (() => {
+          try {
+            return extras[0]!.url();
+          } catch {
+            return '(unknown)';
+          }
+        })();
+        pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 감지 — 닫힘만 대기', rowIndex, url);
+        loggedPopup = true;
+      }
+      // 팝업 떠 있는 동안 망고·입력 절대 접근 금지
+      await waitExternalPopupsGone(page, deadline);
+      continue;
+    }
+
+    if (sawExternal) {
+      const reallyGone = await settleNoExternal();
+      if (!reallyGone) continue;
+      pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
+      return;
+    }
+
+    // 아직 외부 팝업을 못 봄 → 나타남 창구 동안은 망고 DOM 조회하지 않음
+    if (Date.now() < appearUntil) {
+      await Promise.race([
+        page
+          .context()
+          .waitForEvent('page', { timeout: 800 })
+          .then(p => {
+            if (p && !p.url().includes(TMG_ADMIN_HOST)) sawExternal = true;
+          })
+          .catch(() => undefined),
+        sleep(400),
+      ]);
+      continue;
+    }
+
+    break;
+  }
+
+  if (Date.now() >= deadline) {
+    throw new Error(`#${rowIndex} 검색 팝업 대기 시간 초과(180초)`);
+  }
+
+  // Playwright가 팝업을 못 본 경우만: 망고에서 실패/완료 신호 확인
+  const empty = await page
+    .getByText(/검색결과가\s*없습니다/)
+    .first()
+    .isVisible()
+    .catch(() => false);
+  if (empty) {
+    throw new Error(`#${rowIndex} 검색결과가 없습니다 — URL 붙여넣기/검색 실패`);
+  }
+
+  const remain = Math.max(5_000, deadline - Date.now());
+  try {
+    await saveAllButton(page).first().waitFor({ state: 'visible', timeout: remain });
+  } catch {
+    throw new Error(`#${rowIndex} 검색 완료 확인 실패(팝업 미감지·모두저장 없음)`);
+  }
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 완료(외부 팝업 미감지)', rowIndex);
 }
 
 async function pasteField(page: Page, locator: Locator, text: string) {
@@ -254,18 +360,6 @@ async function findUrlInput(page: Page): Promise<Locator> {
   throw new Error('URL상품검색하기 좌측 입력 그리드를 찾지 못했습니다.');
 }
 
-async function findClearButton(page: Page): Promise<Locator | null> {
-  const btn = urlSearchButton(page).first();
-  const nearInput = btn.locator('xpath=preceding::input[@type="button"][contains(@value,"CLEAR")][1]');
-  if (await nearInput.isVisible().catch(() => false)) return nearInput;
-
-  const area = urlSearchArea(page);
-  const inArea = area.locator('input[type="button"][value*="CLEAR"], input[type="button"][value="CLEAR"]');
-  if (await inArea.first().isVisible().catch(() => false)) return inArea.first();
-
-  return null;
-}
-
 function saveSettingsModal(page: Page) {
   // 팝업 전체(하단 저장하기·취소하기 포함) — 안쪽 작은 div만 잡히지 않게
   return page
@@ -332,46 +426,92 @@ function isNavDestroyedError(e: unknown): boolean {
   return /Execution context was destroyed|Target closed|navigation/i.test(msg);
 }
 
-/** 「검색된 상품 모두저장」 보이자마자 반환 — 불필요 대기 없음 */
+/** 「검색된 상품 모두저장」 보이자마자 반환 */
 async function waitSaveAllButtonVisible(page: Page): Promise<Locator> {
   const btn = saveAllButton(page).first();
+  const deadline = Date.now() + 120_000;
   for (;;) {
     try {
-      await btn.waitFor({ state: 'visible' });
+      await btn.waitFor({ state: 'visible', timeout: Math.max(1_000, deadline - Date.now()) });
       return btn;
     } catch (e) {
-      if (isNavDestroyedError(e)) continue;
+      if (isNavDestroyedError(e) && Date.now() < deadline) continue;
       throw e;
     }
   }
 }
 
-/** [6] 상품저장설정 팝업 닫힘 캐치 */
+/** [6] 상품저장설정 팝업이 열린 뒤 → 닫힐 때까지 (닫히기 전 다음 입력 금지) */
 async function waitForSavePopupClosed(page: Page): Promise<void> {
   const modal = saveSettingsModal(page);
-  if (await modal.isVisible().catch(() => false)) {
-    await modal.waitFor({ state: 'hidden' });
+  const deadline = Date.now() + 180_000;
+
+  // 저장하기 직후 모달이 아직 안 잡히면 잠시 등장 대기
+  const seen =
+    (await modal.isVisible().catch(() => false)) ||
+    (await modal
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false)) ||
+    (await saveSettingsTitle(page)
+      .waitFor({ state: 'visible', timeout: 3_000 })
+      .then(() => true)
+      .catch(() => false));
+
+  if (seen || (await modal.isVisible().catch(() => false))) {
+    const remain = Math.max(5_000, deadline - Date.now());
+    await modal.waitFor({ state: 'hidden', timeout: remain });
+    // 완전히 사라졌는지 한 번 더 확인
+    await sleep(400);
+    if (await modal.isVisible().catch(() => false)) {
+      await modal.waitFor({ state: 'hidden', timeout: Math.max(5_000, deadline - Date.now()) });
+    }
     return;
   }
+
   await catchInPagePopupHidden(page, '');
+  await sleep(400);
 }
 
-async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
-  await actStep(page, ctx, 'open-page', '[1] 상품데이터 대량수집 메인 확인', async () => {
-    await assertBulkCollectPage(page);
-  }, rowIndex);
+/**
+ * 다음 URL 입력 가능 상태인지 게이트.
+ * 검색 팝업·상품저장설정이 하나라도 열려 있으면 절대 입력하지 않음.
+ */
+async function assertIdleBeforeInput(page: Page, ctx: LogCtx, rowIndex: number, reason: string) {
+  if (externalPages(page).length > 0) {
+    pushLog(ctx, 'next-row', `${reason}: 검색 모달 종료 대기`, rowIndex);
+    await waitExternalPopupsGone(page, Date.now() + 180_000);
+  }
+
+  const modal = saveSettingsModal(page);
+  if (await modal.isVisible().catch(() => false)) {
+    pushLog(ctx, 'wait-save-popup', `${reason}: 저장 모달 종료 대기`, rowIndex);
+    await modal.waitFor({ state: 'hidden', timeout: 180_000 });
+    await sleep(300);
+  }
+
+  if (externalPages(page).length > 0) {
+    throw new Error(`#${rowIndex} ${reason}: 검색 모달이 아직 열려 있어 다음 입력을 할 수 없습니다.`);
+  }
+  if (await modal.isVisible().catch(() => false)) {
+    throw new Error(`#${rowIndex} ${reason}: 저장 모달이 아직 열려 있어 다음 입력을 할 수 없습니다.`);
+  }
 }
 
-async function clearGrid(page: Page, ctx: LogCtx, rowIndex: number) {
-  await actStep(page, ctx, 'clear-grid', '[2] 입력 그리드 CLEAR', async () => {
-    const clearBtn = await findClearButton(page);
-    if (clearBtn) {
-      await fastClick(page, clearBtn);
-    } else {
-      const input = await findUrlInput(page);
-      await pasteField(page, input, '');
-    }
-  }, rowIndex);
+/** 매 단계 시작: 상품데이터수집 → 대량수집 메뉴 (CLEAR 대체 초기화) */
+async function resetViaMenu(page: Page, ctx: LogCtx, rowIndex: number) {
+  await actStep(
+    page,
+    ctx,
+    'clear-grid',
+    '[2] 상품데이터수집 → 대량수집 메뉴 (초기화)',
+    async () => {
+      await resetBulkCollectViaMenu(page);
+      await assertBulkCollectPage(page);
+    },
+    rowIndex,
+    '상품데이터 대량수집 (리스팅페이지 URL 이용)',
+  );
 }
 
 async function readInputValue(locator: Locator): Promise<string> {
@@ -385,12 +525,11 @@ async function readInputValue(locator: Locator): Promise<string> {
 
 async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) {
   if (externalPages(page).length > 0) {
-    pushLog(ctx, 'paste-url', '[2] 이전 팝업 닫힘 대기 후 URL 입력', rowIndex);
-    await waitExternalPopupsGone(page);
+    pushLog(ctx, 'paste-url', '[2] 이전 팝업 닫힘 대기', rowIndex);
+    await waitExternalPopupsGone(page, Date.now() + 180_000);
   }
 
   const normalized = normalizeUrl(url);
-  await page.bringToFront().catch(() => undefined);
   const input = await findUrlInput(page);
   await pasteField(page, input, normalized);
   const fieldValue = (await readInputValue(input)) || normalized;
@@ -400,37 +539,37 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
 
-  // 클릭 전에 popup 리스너만 등록 (망고·입력 추가 조작 없음)
-  const popupPromise = page.context().waitForEvent('page');
+  // 클릭 전에 팝업 리스너 등록 (놓치지 않음) — 타임아웃으로 무한대기 방지
+  const popupPromise = page
+    .context()
+    .waitForEvent('page', { timeout: 30_000 })
+    .catch(() => null);
 
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
 
-  // ★ 1행·2행 공통: 클릭 후 팝업 닫힐 때까지 완전 손 뗌
-  await waitSearchPopupClosedNaturally(page, ctx, rowIndex, popupPromise);
-
-  // 닫힌 뒤에만 망고 복귀
-  await focusMangoBulk(page);
+  // 1행부터: 팝업이 스스로 닫힐 때까지 입력·망고·포커스 금지
+  await waitSearchFinished(page, ctx, rowIndex, popupPromise);
 }
 
-/** 팝업이 닫힌 뒤「모두저장」즉시 클릭 → 상품저장설정 모달 */
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
+  // 게이트: 검색 모달이 완전히 끝난 뒤에만 다음 버튼 클릭
   if (externalPages(page).length > 0) {
-    pushLog(ctx, 'wait-search-popup', '[3] 남은 팝업 닫힘 대기 (미터치)', rowIndex);
-    await waitExternalPopupsGone(page);
+    pushLog(ctx, 'save-all', '[4] 검색 모달 종료 대기 (버튼 클릭 보류)', rowIndex);
+    await waitExternalPopupsGone(page, Date.now() + 180_000);
+  }
+  if (externalPages(page).length > 0) {
+    throw new Error(`#${rowIndex} 검색 모달이 열린 채라 모두저장을 클릭할 수 없습니다.`);
   }
 
   await focusMangoBulk(page);
-  pushLog(ctx, 'save-all', '[4] 모두저장 버튼 대기', rowIndex);
+  pushLog(ctx, 'save-all', '[4] 모달 종료 확인 → 검색된 상품 모두저장 클릭', rowIndex);
   const btn = await waitSaveAllButtonVisible(page);
-
-  pushLog(ctx, 'save-all', '[4] 검색된 상품 모두저장 — 즉시 클릭', rowIndex);
   await btn.click({ force: true }).catch(async () => {
     await hardClick(page, btn);
   });
 
-  // 상품저장설정 모달 — 망고 페이지 안 레이어 (외부 창 아님)
   pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 대기', rowIndex);
   await waitSaveSettingsOpen(page);
   if (!(await isSaveSettingsOpen(page))) {
@@ -438,7 +577,7 @@ async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
     await waitSaveSettingsOpen(page);
   }
   if (!(await isSaveSettingsOpen(page))) {
-    throw new Error(`#${rowIndex} 모두저장 클릭 후 상품저장설정 모달이 안 떴습니다.`);
+    throw new Error(`#${rowIndex} 상품저장설정 모달이 안 떴습니다.`);
   }
   pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 열림', rowIndex);
 }
@@ -498,24 +637,36 @@ async function processOneRow(
   const { rowIndex, finalCategoryUrl, topFinalLabel } = row;
   pushLog(ctx, 'next-row', `━━━ 엑셀 #${rowIndex} 행 ━━━`, rowIndex);
 
-  // 이전 행 팝업이 남아 있으면 — CLEAR/URL입력 전에 닫힐 때까지 대기
-  if (externalPages(page).length > 0) {
-    pushLog(ctx, 'next-row', '이전 검색 팝업 닫힘 대기 (입력 보류)', rowIndex);
-    await waitExternalPopupsGone(page);
-  }
+  /*
+   * 필수 순서 (고정):
+   * 1) 이전 모달 종료 확인
+   * 2) 메뉴 재진입으로 초기화 (CLEAR 없음)
+   * 3) URL 필드 입력 → URL상품검색하기
+   * 4) 검색 모달 종료까지 대기
+   * 5) 모두저장 → 저장설정 → 저장하기
+   * 6) 저장 모달 종료 후 → 다음 행(다시 메뉴 초기화부터)
+   */
+  await assertIdleBeforeInput(page, ctx, rowIndex, '행 시작 전');
 
-  await focusMangoBulk(page);
-  await openBulkPage(page, ctx, rowIndex);
-  await clearGrid(page, ctx, rowIndex);
+  // 매 행 시작: 상품데이터수집 → 상품데이터 대량수집 (초기화)
+  await resetViaMenu(page, ctx, rowIndex);
+
+  // URL 필드 입력
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
-  // URL 입력·검색 클릭 후 → 팝업 닫힐 때까지 필드 재수정 없음
+
+  // 3) 검색 클릭 → 모달 종료 대기
   await clickUrlSearchAndWaitPopup(page, ctx, rowIndex);
+  await assertIdleBeforeInput(page, ctx, rowIndex, '검색 모달 종료 후');
+
+  // 4) 다음 버튼(모두저장) 클릭 → 5) 저장설정 입력·저장하기
   await clickSaveAll(page, ctx, rowIndex);
-  await focusMangoBulk(page);
   await fillSaveForm(page, topFinalLabel, saveCount, ctx, rowIndex);
+
+  // 6) 저장 모달 종료까지 대기 — 끝나기 전 다음 행 입력 금지
   await waitSavePopupDone(page, ctx, rowIndex);
-  await focusMangoBulk(page);
-  pushLog(ctx, 'next-row', `#${rowIndex} 행 완료`, rowIndex);
+  await assertIdleBeforeInput(page, ctx, rowIndex, '저장 모달 종료 후');
+
+  pushLog(ctx, 'next-row', `#${rowIndex} 행 완료 — 다음 URL 입력 가능`, rowIndex);
 }
 
 export async function runTmgCollectWorkflow(
@@ -531,7 +682,13 @@ export async function runTmgCollectWorkflow(
     return { ok: false, logs, processedCount: 0, message: '처리할 엑셀 행이 없습니다.' };
   }
 
-  pushLog(ctx, 'open-page', '메인 화면 1~6단계', undefined, '입력·클릭 즉시 / 팝업 닫힘만 대기');
+  pushLog(
+    ctx,
+    'open-page',
+    '순서 고정: 입력→대기→모달종료→버튼→모달종료→다음입력',
+    undefined,
+    '모달 종료 전 다음 입력·클릭 금지',
+  );
 
   const headless = req.headless ?? false;
   let processedCount = 0;
@@ -542,8 +699,8 @@ export async function runTmgCollectWorkflow(
     pushLog(ctx, 'open-page', 'Chromium 연결 — 완료', undefined, TMG_LOGIN_URL);
 
     const page = await resolveBulkPageOrThrow(context, ctx);
-    await maximizePage(page);
-    page.setDefaultTimeout(0);
+    // 0이면 waitForEvent('page') 등이 영원히 멈춤 → 명시 타임아웃 사용
+    page.setDefaultTimeout(120_000);
 
     const start = req.startRowIndex ?? 0;
     for (let i = start; i < rows.length; i++) {
