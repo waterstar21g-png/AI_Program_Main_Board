@@ -129,9 +129,11 @@ async function login(page: Page, id: string, pw: string, ctx: LogCtx) {
   await actStep(page, ctx, 'login', '더망고 로그인 페이지 열기', async () => {
     await page.goto(TMG_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.locator('form#loginForm').waitFor({ state: 'visible', timeout: 30000 });
+    await page.locator('form#loginForm input[name="login_id"]').fill('');
+    await page.locator('form#loginForm input[name="login_pass"]').fill('');
   });
 
-  await actStep(page, ctx, 'login', '로그인 ID 입력 (아이디)', async () => {
+  await actStep(page, ctx, 'login', `로그인 ID 입력: ${id}`, async () => {
     const idInput = page.locator('form#loginForm input[name="login_id"]');
     await idInput.waitFor({ state: 'visible', timeout: 30000 });
     await highlight(page, idInput);
