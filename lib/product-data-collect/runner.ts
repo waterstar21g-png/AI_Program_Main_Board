@@ -363,7 +363,7 @@ export async function runTmgCollectWorkflow(
 
   pushLog(ctx, 'open-page', '메인 화면 1~6단계', undefined, '입력·클릭 즉시 / 팝업 닫힘만 대기');
 
-  const context = await attachBrowser();
+  const context = await getCollectBrowserContext();
   const headless = req.headless ?? false;
   let processedCount = 0;
 
