@@ -13,16 +13,14 @@ export function ProgramBoardApp() {
   return (
     <div className="program-board">
       <header className="program-board__header">
-        <h1 className="program-board__title">
-          {APP_NAME}
-          <span className="program-board__version-badge">버전 {APP_VERSION}</span>
-        </h1>
+        <h1 className="program-board__title">{APP_NAME}</h1>
       </header>
 
       <div className="program-board__body">
         <aside className="program-board__sidebar">
           <div className="program-board__sidebar-title">
-            프로그램 목록 <span className="program-board__version">v{APP_VERSION}</span>
+            <span className="program-board__version">v{APP_VERSION}</span>
+            <span>프로그램 목록</span>
           </div>
           <ul className="program-board__list" role="listbox" aria-label="프로그램 목록">
             {PROGRAMS.map(program => (

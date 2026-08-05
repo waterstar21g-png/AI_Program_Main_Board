@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Raw = "https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main"
-$TargetVersion = "1.7.3"
+$TargetVersion = "1.7.4"
 
 Write-Host "========================================"
 Write-Host "  AI_Program_Main_Board  v$TargetVersion"
@@ -23,7 +23,6 @@ New-Item -ItemType Directory -Force -Path "app\api\product-collect\run" | Out-Nu
 
 $files = @(
   @("components\ProgramBoardApp.tsx", "$Raw/components/ProgramBoardApp.tsx"),
-  @("components\VersionBanner.tsx", "$Raw/components/VersionBanner.tsx"),
   @("components\ProductDataCollectApp.tsx", "$Raw/components/ProductDataCollectApp.tsx"),
   @("app\layout.tsx", "$Raw/app/layout.tsx"),
   @("app\globals.css", "$Raw/app/globals.css"),
@@ -44,7 +43,7 @@ foreach ($f in $files) {
     Write-Host "  FAIL $($f[0]) - $($_.Exception.Message)"
   }
 }
-"버전 $TargetVersion`n브라우저 하단 노란 줄에 표시됩니다." | Out-File -FilePath "VERSION.txt" -Encoding utf8
+"버전 $TargetVersion (좌측 상단 작게 표시)" | Out-File -FilePath "VERSION.txt" -Encoding utf8
 
 if (Test-Path "lib\app-version.ts") {
   $verLine = Select-String -Path "lib\app-version.ts" -Pattern "APP_VERSION" | Select-Object -First 1
@@ -69,8 +68,7 @@ if (-not (Test-Path ".local\playwright-chromium.ok")) {
 }
 
 Write-Host ""
-Write-Host "  버전: $TargetVersion"
-Write-Host "  브라우저 탭 제목 + 화면 맨 아래 노란 줄 확인"
+Write-Host "  버전: $TargetVersion (좌측 상단)"
 Write-Host "  http://localhost:3000"
 Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
