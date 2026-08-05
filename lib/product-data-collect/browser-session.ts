@@ -326,13 +326,22 @@ export async function attachBrowser(): Promise<BrowserContext> {
   return launchBrowserOnce(false);
 }
 
-export async function getCollectBrowserContext(): Promise<BrowserContext> {
+export async function getCollectBrowserContextForRun(): Promise<BrowserContext> {
   const cdp = await tryConnectCdp();
   if (contextAlive(cdp)) return cdp!;
 
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
-  return launchBrowserOnce(false);
+  throw new Error(
+    'Chromium(CDP 9222)에 연결되지 않았습니다.\n' +
+      '① Chromium 열기로 로그인·대량수집 화면을 연 뒤 ② 수집을 누르세요.\n' +
+      '(수집 중 새 창/탭을 열지 않습니다)',
+  );
+}
+
+/** @deprecated 수집 루프에서는 getCollectBrowserContextForRun 사용 */
+export async function getCollectBrowserContext(): Promise<BrowserContext> {
+  return getCollectBrowserContextForRun();
 }
 
 export function findBulkPage(context: BrowserContext): Page | null {
@@ -345,8 +354,14 @@ export function findBulkPage(context: BrowserContext): Page | null {
 /** ① Chromium 열기 → 로그인 클릭 → 대량수집 메뉴까지 자동 */
 export async function openBrowserToLoginUrl(loginUrl = TMG_LOGIN_URL): Promise<Page> {
   const context = await attachBrowser();
-  const page = context.pages().find(p => !p.isClosed()) ?? (await context.newPage());
-  await gotoUrl(page, loginUrl);
+  const existing = context.pages().find(p => !p.isClosed());
+  if (!existing) {
+    throw new Error('Chromium 탭이 없습니다. 브라우저를 먼저 실행해 주세요.');
+  }
+  const page = existing;
+  if (!isBulkPage(page.url())) {
+    await gotoUrl(page, loginUrl);
+  }
   return ensureBulkCollectPage(page);
 }
 

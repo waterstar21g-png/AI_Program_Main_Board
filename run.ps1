@@ -4,7 +4,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.1.6"
+$ExpectedVersion = "2.2.0"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -64,6 +64,7 @@ Write-Host "[SYNC] GitHub API로 최신 파일 다운로드 (CDN 우회)..."
 
 $files = @(
   @("lib\product-data-collect\browser-session.ts", "lib/product-data-collect/browser-session.ts"),
+  @("lib\product-data-collect\screen-state.ts", "lib/product-data-collect/screen-state.ts"),
   @("lib\product-data-collect\runner.ts", "lib/product-data-collect/runner.ts"),
   @("lib\product-data-collect\steps.ts", "lib/product-data-collect/steps.ts"),
   @("lib\product-data-collect\types.ts", "lib/product-data-collect/types.ts"),
@@ -96,6 +97,7 @@ foreach ($f in $files) {
 
 foreach ($r in @(
   "lib\product-data-collect\browser-session.ts",
+  "lib\product-data-collect\screen-state.ts",
   "lib\product-data-collect\runner.ts",
   "lib\app-version.ts",
   "app\api\product-collect\open\route.ts"
