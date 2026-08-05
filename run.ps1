@@ -1,12 +1,45 @@
 # AI_Program_Main_Board - run.ps1
+# GitHub main 최신 커밋 SHA로 동기화 (raw CDN 캐시 우회)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$Raw = "https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main"
-$TargetVersion = "2.0.9.1"
+$Repo = "waterstar21g-png/sangpum-capture-price"
+$ExpectedVersion = "2.0.9.2"
+$TargetVersion = $ExpectedVersion
+$cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+function Get-MainCommitSha {
+  try {
+    $headers = @{
+      "User-Agent"    = "AI_Program_Main_Board-run.ps1"
+      "Cache-Control" = "no-cache"
+      "Pragma"        = "no-cache"
+    }
+    $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/main?t=$cb" -Headers $headers
+    if ($meta.sha) { return $meta.sha }
+  } catch {
+    Write-Host "[WARN] commits API 실패 — main raw 사용: $($_.Exception.Message)"
+  }
+  return "main"
+}
+
+function Download-File([string]$RelPath, [string]$Url) {
+  $headers = @{
+    "User-Agent"    = "AI_Program_Main_Board-run.ps1"
+    "Cache-Control" = "no-cache"
+    "Pragma"        = "no-cache"
+  }
+  $tmp = "$RelPath.download"
+  Invoke-WebRequest -Uri "$Url`?t=$cb" -OutFile $tmp -UseBasicParsing -Headers $headers
+  Move-Item -Force $tmp $RelPath
+}
+
+$Sha = Get-MainCommitSha
+$Raw = "https://raw.githubusercontent.com/$Repo/$Sha"
 
 Write-Host "========================================"
-Write-Host "  AI_Program_Main_Board  v$TargetVersion"
+Write-Host "  AI_Program_Main_Board  v$ExpectedVersion"
+Write-Host "  sync: $Sha"
 Write-Host "========================================"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -15,7 +48,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-Write-Host "[SYNC] GitHub 최신 파일 다운로드 (매 실행)..."
+Write-Host "[SYNC] GitHub 최신 파일 다운로드 (캐시 우회)..."
 New-Item -ItemType Directory -Force -Path "lib\programs" | Out-Null
 New-Item -ItemType Directory -Force -Path "lib\product-data-collect" | Out-Null
 New-Item -ItemType Directory -Force -Path "components" | Out-Null
@@ -34,6 +67,7 @@ $files = @(
   @("app\globals.css", "$Raw/app/globals.css"),
   @("lib\programs\registry.tsx", "$Raw/lib/programs/registry.tsx"),
   @("lib\app-version.ts", "$Raw/lib/app-version.ts"),
+  @("package.json", "$Raw/package.json"),
   @("app\api\product-collect\run\route.ts", "$Raw/app/api/product-collect/run/route.ts"),
   @("app\api\product-collect\open\route.ts", "$Raw/app/api/product-collect/open/route.ts"),
   @("run.ps1", "$Raw/run.ps1")
@@ -42,7 +76,7 @@ $files = @(
 $failed = @()
 foreach ($f in $files) {
   try {
-    Invoke-WebRequest -Uri $f[1] -OutFile $f[0] -UseBasicParsing
+    Download-File $f[0] $f[1]
     Write-Host "  OK $($f[0])"
   } catch {
     Write-Host "  FAIL $($f[0]) - $($_.Exception.Message)"
@@ -53,6 +87,7 @@ foreach ($f in $files) {
 $required = @(
   "lib\product-data-collect\browser-session.ts",
   "lib\product-data-collect\runner.ts",
+  "lib\app-version.ts",
   "app\api\product-collect\open\route.ts"
 )
 foreach ($r in $required) {
@@ -68,16 +103,24 @@ if ($failed.Count -gt 0) {
   Write-Host "[WARN] 일부 파일 동기화 실패. 인터넷 확인 후 다시 run.ps1 실행"
 }
 
-# 동기화 후 실제 파일 버전을 배너에 반영 (main 미반영 시 바로 알 수 있음)
+# 동기화 후 실제 APP_VERSION 강제 확인
 if (Test-Path "lib\app-version.ts") {
-  $verLine = Select-String -Path "lib\app-version.ts" -Pattern "APP_VERSION\s*=\s*'([^']+)'" | Select-Object -First 1
-  if ($verLine -and $verLine.Matches.Groups.Count -gt 1) {
-    $TargetVersion = $verLine.Matches.Groups[1].Value
+  $rawVer = Get-Content "lib\app-version.ts" -Raw
+  if ($rawVer -match "APP_VERSION\s*=\s*'([^']+)'") {
+    $TargetVersion = $Matches[1]
   }
-  Write-Host "[CHECK] APP_VERSION = $TargetVersion"
+  Write-Host "[CHECK] APP_VERSION = $TargetVersion  (sha=$Sha)"
 }
 
-"버전 $TargetVersion (좌측 상단 작게 표시)" | Out-File -FilePath "VERSION.txt" -Encoding utf8
+if ($TargetVersion -ne $ExpectedVersion) {
+  Write-Host "[FATAL] 버전 불일치: 파일=$TargetVersion / 기대=$ExpectedVersion"
+  Write-Host "        GitHub main 반영·캐시 문제. 30초 후 다시 run.ps1 실행하세요."
+  Write-Host "        직접 확인: https://raw.githubusercontent.com/$Repo/$Sha/lib/app-version.ts"
+  Read-Host "Press Enter"
+  exit 1
+}
+
+"버전 $TargetVersion" | Out-File -FilePath "VERSION.txt" -Encoding utf8
 
 Write-Host "[STOP] 기존 서버(포트 3000) 종료..."
 Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue |
@@ -94,6 +137,12 @@ if (-not (Test-Path ".local\playwright-chromium.ok")) {
   New-Item -ItemType Directory -Force -Path ".local" | Out-Null
   npx playwright install chromium
   if ($LASTEXITCODE -eq 0) { "ok" | Out-File ".local\playwright-chromium.ok" -Encoding ascii }
+}
+
+# Next 캐시에 옛 버전이 남으면 배너가 안 바뀜 → .next 삭제
+if (Test-Path ".next") {
+  Write-Host "[CLEAN] .next 캐시 삭제 (버전 배지 갱신)"
+  Remove-Item -Recurse -Force ".next" -ErrorAction SilentlyContinue
 }
 
 Write-Host ""
