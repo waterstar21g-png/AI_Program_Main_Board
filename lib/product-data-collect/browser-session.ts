@@ -102,6 +102,61 @@ async function clickLoginIfNeeded(page: Page) {
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);
 }
 
+function sleep(ms: number) {
+  return new Promise<void>(r => setTimeout(r, ms));
+}
+
+async function waitBulkReady(page: Page) {
+  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+  await page
+    .waitForURL(u => isBulkPage(u.toString()), { timeout: 60_000 })
+    .catch(() => undefined);
+  if (!isBulkPage(page.url())) {
+    await gotoUrl(page, TMG_BULK_URL);
+  }
+  await page
+    .locator('input[type="button"][value*="URL"][value*="상품"][value*="검색"]')
+    .or(page.getByText(/URL\s*상품\s*검색하기/))
+    .first()
+    .waitFor({ state: 'visible', timeout: 30_000 });
+}
+
+/** 하위「상품데이터 대량수집 …」후보 (보이는 것 우선) */
+function bulkSubmenuLocators(page: Page) {
+  return [
+    // 가장 확실: getGoodsNew.php 링크
+    page.locator('a[href*="getGoodsNew.php"]'),
+    page.locator('a[href*="getGoodsNew"]'),
+    // 스크린샷 문구 전체
+    page.getByRole('link', { name: /상품데이터\s*대량수집/ }),
+    page.locator('a').filter({ hasText: /상품데이터\s*대량수집/ }),
+    page.locator('a, li, span, td, div').filter({ hasText: /상품데이터\s*대량수집/ }),
+    page.getByText(/상품데이터\s*대량수집\s*\(?\s*리스팅페이지/),
+    page.getByText(/상품데이터\s*대량수집/),
+  ];
+}
+
+async function clickFirstVisible(
+  locators: ReturnType<typeof bulkSubmenuLocators>,
+  timeoutMs = 2_500,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (const loc of locators) {
+      const el = loc.first();
+      if (await el.isVisible().catch(() => false)) {
+        await el.scrollIntoViewIfNeeded().catch(() => undefined);
+        await el.click({ force: true }).catch(async () => {
+          await el.evaluate((n: HTMLElement) => n.click());
+        });
+        return true;
+      }
+    }
+    await sleep(200);
+  }
+  return false;
+}
+
 /**
  * 상단「상품데이터수집」→「상품데이터 대량수집 (리스팅페이지 URL 이용)」클릭
  * (이미 대량수집 화면이어도 다시 클릭 — 초기화 효과)
@@ -109,44 +164,54 @@ async function clickLoginIfNeeded(page: Page) {
 export async function clickBulkCollectMenu(page: Page): Promise<void> {
   await page.bringToFront().catch(() => undefined);
 
-  const menu = page
-    .getByText('상품데이터수집', { exact: true })
-    .or(page.locator('a, span, li, div, td').filter({ hasText: /^상품데이터수집$/ }))
-    .first();
-
-  await menu.waitFor({ state: 'visible', timeout: 20_000 });
-  await menu.hover().catch(() => undefined);
-  await menu.click();
-
-  // 스크린샷 메뉴: 상품데이터 대량수집 (리스팅페이지 URL 이용)
-  const sub = page
-    .locator('a, span, li, div')
-    .filter({ hasText: /상품데이터\s*대량수집/ })
-    .filter({ hasText: /리스팅페이지|URL/ })
-    .first()
-    .or(page.getByText(/상품데이터\s*대량수집\s*\(?\s*리스팅페이지/))
-    .or(page.getByText(/상품데이터\s*대량수집/))
-    .or(page.locator('a').filter({ hasText: /상품데이터\s*대량수집/ }))
-    .first();
-
-  await sub.waitFor({ state: 'visible', timeout: 10_000 });
-  // 이미 대량수집 URL이어도 메뉴 재클릭으로 초기화 — URL 변경이 없을 수 있음
-  await sub.click();
-  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
-  await page
-    .waitForURL(u => isBulkPage(u.toString()), { timeout: 60_000 })
-    .catch(() => undefined);
-
-  if (!isBulkPage(page.url())) {
-    await gotoUrl(page, TMG_BULK_URL);
+  // 0) 하위 링크가 이미 보이면 바로 클릭
+  if (await clickFirstVisible(bulkSubmenuLocators(page), 800)) {
+    await waitBulkReady(page);
+    return;
   }
 
-  // 초기화 완료 신호: URL상품검색하기 버튼
-  await page
-    .locator('input[type="button"][value*="URL"][value*="상품"][value*="검색"]')
-    .or(page.getByText(/URL\s*상품\s*검색하기/))
-    .first()
-    .waitFor({ state: 'visible', timeout: 30_000 });
+  // 1) 상단 메뉴「상품데이터수집」열기 (호버 드롭다운)
+  const topMenus = [
+    page.getByRole('link', { name: /^상품데이터수집/ }),
+    page.locator('a').filter({ hasText: /^상품데이터수집/ }),
+    page.locator('li, span, td, div').filter({ hasText: /^상품데이터수집$/ }),
+    page.getByText('상품데이터수집', { exact: true }),
+    page.getByText(/상품데이터수집/),
+  ];
+
+  let topOpened = false;
+  for (const top of topMenus) {
+    const el = top.first();
+    if (!(await el.isVisible().catch(() => false))) continue;
+    await el.scrollIntoViewIfNeeded().catch(() => undefined);
+    await el.hover({ force: true }).catch(() => undefined);
+    await sleep(350);
+    // 호버만으로 안 열리면 클릭
+    if (!(await clickFirstVisible(bulkSubmenuLocators(page), 600))) {
+      await el.click({ force: true }).catch(() => undefined);
+      await sleep(400);
+    }
+    topOpened = true;
+    break;
+  }
+
+  // 2) 하위 메뉴 클릭 (최대 2회 재시도)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    if (await clickFirstVisible(bulkSubmenuLocators(page), 4_000)) {
+      await waitBulkReady(page);
+      return;
+    }
+    if (topOpened) {
+      // 다시 호버
+      const top = page.getByText(/상품데이터수집/).first();
+      await top.hover({ force: true }).catch(() => undefined);
+      await sleep(400);
+    }
+  }
+
+  // 3) 메뉴를 못 찾으면 URL 직접 이동 (초기화 목적 유지)
+  await gotoUrl(page, TMG_BULK_URL);
+  await waitBulkReady(page);
 }
 
 /** 최초 진입: 이미 대량수집이면 메뉴 스킵 */
