@@ -35,11 +35,46 @@ async function pasteField(page: Page, locator: Locator, text: string) {
   await page.keyboard.press('Control+v');
 }
 
-/** 클릭 즉시 */
-async function fastClick(page: Page, locator: Locator) {
+/** 클릭 — 일반/force/JS 순으로 시도 */
+async function hardClick(page: Page, locator: Locator) {
   const el = locator.first();
   await el.scrollIntoViewIfNeeded().catch(() => undefined);
-  await el.click();
+  await el.waitFor({ state: 'visible' });
+  try {
+    await el.click({ timeout: 3000 });
+    return;
+  } catch {
+    /* force */
+  }
+  try {
+    await el.click({ force: true, timeout: 3000 });
+    return;
+  } catch {
+    /* js */
+  }
+  await el.evaluate((node: HTMLElement) => {
+    node.focus?.();
+    node.click();
+    node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  });
+}
+
+async function fastClick(page: Page, locator: Locator) {
+  await hardClick(page, locator);
+}
+
+async function isSaveSettingsOpen(page: Page): Promise<boolean> {
+  if (await saveSettingsTitle(page).isVisible().catch(() => false)) return true;
+  if (await saveSettingsModal(page).isVisible().catch(() => false)) return true;
+  return false;
+}
+
+async function waitSaveSettingsOpen(page: Page): Promise<void> {
+  await Promise.race([
+    saveSettingsTitle(page).waitFor({ state: 'visible' }),
+    saveSettingsModal(page).waitFor({ state: 'visible' }),
+    page.getByText('검색필터명').first().waitFor({ state: 'visible' }),
+  ]);
 }
 
 /** 단계 로그만 남기고 즉시 실행 */
@@ -99,10 +134,14 @@ function saveAllButton(page: Page) {
   // 화면 문구: 「검색된 상품 모두저장」(띄어쓰기 없음)
   return page
     .locator('input[type="button"][value*="검색된"][value*="모두저장"]')
+    .or(page.locator('input[type="submit"][value*="검색된"][value*="모두저장"]'))
     .or(page.locator('input[type="button"][value*="검색된"][value*="모두"][value*="저장"]'))
-    .or(page.locator('input[type="submit"][value*="검색된"][value*="모두"]'))
-    .or(page.getByRole('button', { name: /검색된\s*상품\s*모두\s*저장/ }))
-    .or(page.locator('a, button, span, div').filter({ hasText: /검색된\s*상품\s*모두\s*저장/ }));
+    .or(page.locator('a, button').filter({ hasText: /검색된\s*상품\s*모두\s*저장/ }))
+    .or(page.getByRole('button', { name: /검색된\s*상품\s*모두\s*저장/ }));
+}
+
+function saveSettingsTitle(page: Page) {
+  return page.getByText('상품저장설정', { exact: false }).first();
 }
 
 function urlSearchArea(page: Page) {
@@ -332,12 +371,32 @@ async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: num
 }
 
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
-  await actStep(page, ctx, 'save-all', '[4] 검색된 상품 모두저장 즉시 클릭', async () => {
+  pushLog(ctx, 'save-all', '[4] 검색된 상품 모두저장 클릭', rowIndex);
+
+  // 모달 뜰 때까지 클릭 재시도 (클릭 실패로 그냥 지나가지 않음)
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    if (await isSaveSettingsOpen(page)) break;
+
     const btn = saveAllButton(page).first();
     await btn.waitFor({ state: 'visible' });
-    await fastClick(page, btn);
-    await saveSettingsModal(page).waitFor({ state: 'visible' });
-  }, rowIndex);
+    pushLog(ctx, 'save-all', `[4] 모두저장 클릭 시도 ${attempt}`, rowIndex);
+    await hardClick(page, btn);
+
+    const opened = await Promise.race([
+      waitSaveSettingsOpen(page).then(() => true).catch(() => false),
+      saveSettingsTitle(page).waitFor({ state: 'visible', timeout: 2000 }).then(() => true).catch(() => false),
+    ]);
+    if (opened || (await isSaveSettingsOpen(page))) break;
+  }
+
+  if (!(await isSaveSettingsOpen(page))) {
+    throw new Error(
+      `#${rowIndex} 「검색된 상품 모두저장」 클릭 후에도 상품저장설정 모달이 안 떴습니다.`,
+    );
+  }
+
+  pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 열림 — 확인', rowIndex, '검색필터명·저장상품수·저장하기');
+  await maximizePage(page);
 }
 
 async function fillSaveForm(
@@ -348,8 +407,11 @@ async function fillSaveForm(
   rowIndex: number,
 ) {
   await actStep(page, ctx, 'fill-save-form', '[5] 상품저장설정 (필터→상품수→저장)', async () => {
+    pushLog(ctx, 'fill-save-form', '[5] 상품저장설정 모달 대기', rowIndex);
+    await waitSaveSettingsOpen(page);
     const modal = saveSettingsModal(page);
     await modal.waitFor({ state: 'visible' });
+    pushLog(ctx, 'fill-save-form', '[5] 상품저장설정 모달 표시됨', rowIndex);
 
     // 순서: 검색필터명 → 저장상품수 → 저장하기 (즉시)
     const filterInput = modal
