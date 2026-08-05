@@ -28,8 +28,9 @@ export interface WorkflowStepLog {
 }
 
 export interface TmgCollectRequest {
-  loginId: string;
-  loginPw: string;
+  /** 사용 안 함 — 로그인은 Chromium에서 직접 */
+  loginId?: string;
+  loginPw?: string;
   siteName?: string;
   rows: TmgCollectRow[];
   /** 검색결과상위 저장 개수 (기본 3) */

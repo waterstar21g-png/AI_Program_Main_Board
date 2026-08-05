@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
-import { TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
+import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 /** 단계마다 화면에서 동작이 보이도록 대기(ms) */
@@ -133,76 +133,38 @@ async function assertLoggedIn(page: Page) {
   }
 }
 
-/** 더망고 로그인 — UI에서 받은 id/pw만 사용 (망고 창에 직접 입력 불필요) */
-async function typeIntoInput(page: Page, locator: Locator, value: string) {
-  await locator.click();
-  await locator.fill('');
-  await locator.pressSequentially(value, { delay: 40 });
-}
+/** 대량수집 메인 화면 준비 — 로그인은 사용자가 Chromium에서 직접 */
+async function waitForBulkMainScreen(page: Page, ctx: LogCtx) {
+  await actStep(page, ctx, 'open-page', '대량수집 메인 화면 이동', async () => {
+    await page.goto(TMG_BULK_URL, { waitUntil: 'networkidle', timeout: 60000 });
+  });
 
-async function waitForRecaptcha(page: Page) {
-  await page.waitForFunction(
-    () => typeof (window as unknown as { grecaptcha?: { execute?: unknown } }).grecaptcha?.execute === 'function',
-    { timeout: 30000 },
-  ).catch(() => undefined);
-}
-
-/** 저장된 Chromium 세션이 있으면 로그인 생략 */
-async function ensureLoggedIn(page: Page, id: string, pw: string, ctx: LogCtx) {
-  pushLog(ctx, 'login', '저장된 로그인 세션 확인', undefined, '이전에 로그인한 적 있으면 자동 통과');
-  await page.goto(TMG_BULK_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => undefined);
-
-  if (!isLoginPageUrl(page.url())) {
-    try {
-      await assertBulkCollectPage(page);
-      pushLog(ctx, 'login', '세션 유효 — 로그인 생략', undefined, page.url());
-      return;
-    } catch {
-      /* 세션 만료 → 로그인 진행 */
-    }
+  if (await urlSearchButton(page).first().isVisible().catch(() => false)) {
+    pushLog(ctx, 'open-page', '대량수집 메인 화면 준비됨', undefined, page.url());
+    return;
   }
 
-  await login(page, id, pw, ctx);
-}
+  pushLog(
+    ctx,
+    'open-page',
+    '로그인 필요',
+    undefined,
+    'Chromium 창에서 더망고 로그인 → 대량수집 화면까지 직접 이동하세요 (최대 5분 대기)',
+  );
 
-/** 더망고 로그인 페이지(admin_login.php) — reCAPTCHA v3 포함 폼 제출 */
-async function login(page: Page, id: string, pw: string, ctx: LogCtx) {
-  await actStep(page, ctx, 'login', '더망고 로그인 페이지 열기', async () => {
-    await page.goto(TMG_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.locator('form#loginForm').waitFor({ state: 'visible', timeout: 30000 });
-    await waitForRecaptcha(page);
-  });
-
-  await actStep(page, ctx, 'login', `아이디 자동 입력: ${id}`, async () => {
-    const idInput = page.locator('form#loginForm input[name="login_id"]');
-    await highlight(page, idInput);
-    await typeIntoInput(page, idInput, id);
-    const filled = await idInput.inputValue();
-    if (filled !== id) {
-      throw new Error(`아이디 자동 입력 실패 (화면값: ${filled.slice(0, 30)})`);
+  const deadline = Date.now() + 300_000;
+  while (Date.now() < deadline) {
+    if (await urlSearchButton(page).first().isVisible().catch(() => false)) {
+      pushLog(ctx, 'open-page', '대량수집 메인 화면 확인됨', undefined, page.url());
+      return;
     }
-  });
-
-  await actStep(page, ctx, 'login', '비밀번호 자동 입력', async () => {
-    const pwInput = page.locator('form#loginForm input[name="login_pass"]');
-    await highlight(page, pwInput);
-    await typeIntoInput(page, pwInput, pw);
-    const len = (await pwInput.inputValue()).length;
-    if (len !== pw.length) {
-      throw new Error('비밀번호 자동 입력 실패 — 길이가 맞지 않습니다.');
+    if (!isLoginPageUrl(page.url())) {
+      await page.goto(TMG_BULK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => undefined);
     }
-  });
+    await page.waitForTimeout(2000);
+  }
 
-  await actStep(page, ctx, 'login', '로그인 버튼 클릭', async () => {
-    const submit = page.locator('form#loginForm button[type="submit"]');
-    await highlight(page, submit);
-    await waitForRecaptcha(page);
-    await submit.click();
-    await page.waitForURL(url => !url.pathname.includes('admin_login'), { timeout: 120000 }).catch(() => undefined);
-    await page.waitForLoadState('networkidle', { timeout: 90000 }).catch(() => undefined);
-    await assertLoggedIn(page);
-  });
+  throw new Error('대량수집 메인 화면을 찾지 못했습니다. 더망고 로그인 후 대량수집 페이지를 열어주세요.');
 }
 
 async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
@@ -386,29 +348,16 @@ export async function runTmgCollectWorkflow(
   const saveCount = req.saveCount ?? 3;
   const rows = req.rows.filter(r => r.finalCategoryUrl.trim());
 
-  if (!req.loginId?.trim() || !req.loginPw?.trim()) {
-    return { ok: false, logs, processedCount: 0, message: '로그인 ID·PW를 입력하세요.' };
-  }
-  if (/^https?:\/\//i.test(req.loginId.trim())) {
-    return {
-      ok: false,
-      logs,
-      processedCount: 0,
-      message: '로그인 ID에 URL이 들어가 있습니다. 더망고 아이디(예: waterstar21)를 입력하세요.',
-    };
-  }
   if (!rows.length) {
     return { ok: false, logs, processedCount: 0, message: '처리할 엑셀 행이 없습니다.' };
   }
 
-  const loginId = req.loginId.trim();
-  const loginPw = req.loginPw.trim();
   pushLog(
     ctx,
-    'login',
-    'UI 입력값 → 망고 자동 입력',
+    'open-page',
+    '로그인 자동화 없음',
     undefined,
-    `아이디: ${loginId} — 망고 창에 직접 입력하지 마세요`,
+    'Chromium에서 더망고 로그인 후 대량수집 화면부터 자동 진행',
   );
 
   fs.mkdirSync(TMG_PROFILE_DIR, { recursive: true });
@@ -426,7 +375,7 @@ export async function runTmgCollectWorkflow(
     const page = context.pages()[0] ?? await context.newPage();
     page.setDefaultTimeout(120000);
 
-    await ensureLoggedIn(page, loginId, loginPw, ctx);
+    await waitForBulkMainScreen(page, ctx);
 
     const start = req.startRowIndex ?? 0;
     for (let i = start; i < rows.length; i++) {
