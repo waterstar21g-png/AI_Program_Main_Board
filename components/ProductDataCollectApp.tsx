@@ -1,18 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { parseCategoryUrlExcel } from '@/lib/product-data-collect/excel-import';
-import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
+import { WORKFLOW_STEPS, TMG_BULK_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepId, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 const SITE_NAME = '더망고';
-const LS_ID = 'tmg-login-id';
-const LS_PW = 'tmg-login-pw';
 
 export function ProductDataCollectApp() {
-  const [loginId, setLoginId] = useState('');
-  const [loginPw, setLoginPw] = useState('');
-  const [rememberLogin, setRememberLogin] = useState(true);
   const [saveCount, setSaveCount] = useState(3);
   const [rows, setRows] = useState<TmgCollectRow[]>([]);
   const [fileName, setFileName] = useState('');
@@ -21,17 +16,6 @@ export function ProductDataCollectApp() {
   const [activeStep, setActiveStep] = useState<WorkflowStepId | null>(null);
   const [error, setError] = useState('');
   const logEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    try {
-      const id = localStorage.getItem(LS_ID);
-      const pw = localStorage.getItem(LS_PW);
-      if (id) setLoginId(id);
-      if (pw) setLoginPw(pw);
-    } catch {
-      /* private mode 등 */
-    }
-  }, []);
 
   const onExcelPick = useCallback(async (file?: File | null) => {
     if (!file) return;
@@ -49,29 +33,15 @@ export function ProductDataCollectApp() {
   }, []);
 
   const runCollect = async () => {
-    if (/^https?:\/\//i.test(loginId.trim())) {
-      setError('로그인 ID에 URL이 들어가 있습니다. 더망고 아이디를 입력하세요.');
-      return;
-    }
     setRunning(true);
     setError('');
     setLogs([]);
     setActiveStep(null);
-    if (rememberLogin) {
-      try {
-        localStorage.setItem(LS_ID, loginId.trim());
-        localStorage.setItem(LS_PW, loginPw);
-      } catch {
-        /* ignore */
-      }
-    }
     try {
       const res = await fetch('/api/product-collect/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          loginId,
-          loginPw,
           siteName: SITE_NAME,
           rows,
           saveCount,
@@ -127,9 +97,10 @@ export function ProductDataCollectApp() {
     <div className="product-data-collect-app program-unit">
       <section className="panel panel--compact">
         <div className="panel__head">
-          <h2 className="panel__title">1. 로그인 · 엑셀</h2>
+          <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>여기서만</strong> ID/PW 입력 → 망고 Chromium 창에는 <strong>자동 입력</strong>됩니다. 망고 창에 직접 치지 마세요.
+            <strong>로그인은 Chromium 창에서 직접</strong> 하세요. 프로그램은{' '}
+            <strong>대량수집 메인 화면</strong>부터 자동 진행합니다.
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -138,40 +109,8 @@ export function ProductDataCollectApp() {
             <input className="input" value={SITE_NAME} readOnly />
           </label>
           <label className="field">
-            <span className="field__label">로그인 URL</span>
-            <input className="input" value={TMG_LOGIN_URL} readOnly />
-          </label>
-          <label className="field">
             <span className="field__label">대량수집 URL</span>
             <input className="input" value={TMG_BULK_URL} readOnly />
-          </label>
-          <label className="field">
-            <span className="field__label">로그인 ID</span>
-            <input
-              className="input"
-              value={loginId}
-              onChange={e => setLoginId(e.target.value)}
-              autoComplete="off"
-              placeholder="더망고 아이디 (URL 아님)"
-            />
-          </label>
-          <label className="field">
-            <span className="field__label">로그인 PW</span>
-            <input
-              className="input"
-              type="password"
-              value={loginPw}
-              onChange={e => setLoginPw(e.target.value)}
-              autoComplete="current-password"
-            />
-          </label>
-          <label className="field field--inline">
-            <input
-              type="checkbox"
-              checked={rememberLogin}
-              onChange={e => setRememberLogin(e.target.checked)}
-            />
-            <span className="field__label">로그인 정보 이 PC에 기억</span>
           </label>
         </div>
         <div className="panel__head" style={{ marginTop: '0.5rem' }}>
@@ -204,9 +143,9 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 작업 흐름 — Chromium 창에서 단계별 확인</h2>
+        <h2 className="panel__title">2. 작업 흐름</h2>
         <p className="panel__hint">
-          실행 시 더망고 Chromium 창이 열립니다. 작업·오류 확인 후 <strong>창을 직접 닫으세요</strong> (자동으로 안 닫힘).
+          실행 → Chromium 열림 → <strong>창 닫지 말고</strong> 로그인 → 대량수집 화면 이동 (최대 5분) → 자동 진행
         </p>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (
@@ -223,10 +162,10 @@ export function ProductDataCollectApp() {
           <button
             type="button"
             className="btn btn--primary btn--sm"
-            disabled={running || !rows.length || !loginId || !loginPw}
+            disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '수집 실행 중… (Chromium + 아래 로그)' : '3. 자동 수집 시작'}
+            {running ? '수집 실행 중…' : '3. 자동 수집 시작'}
           </button>
         </div>
       </section>

@@ -133,38 +133,64 @@ async function assertLoggedIn(page: Page) {
   }
 }
 
-/** 대량수집 메인 화면 준비 — 로그인은 사용자가 Chromium에서 직접 */
-async function waitForBulkMainScreen(page: Page, ctx: LogCtx) {
-  await actStep(page, ctx, 'open-page', '대량수집 메인 화면 이동', async () => {
-    await page.goto(TMG_BULK_URL, { waitUntil: 'networkidle', timeout: 60000 });
-  });
+function urlSearchButton(page: Page) {
+  return page
+    .locator('input[type="button"][value*="URL상품검색"]')
+    .or(page.locator('input[type="submit"][value*="URL상품검색"]'))
+    .or(page.getByRole('button', { name: /URL\s*상품\s*검색하기/ }))
+    .or(page.getByText('URL상품검색하기', { exact: true }));
+}
 
-  if (await urlSearchButton(page).first().isVisible().catch(() => false)) {
-    pushLog(ctx, 'open-page', '대량수집 메인 화면 준비됨', undefined, page.url());
-    return;
+async function findBulkReadyPage(context: BrowserContext): Promise<Page | null> {
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    if (await urlSearchButton(p).first().isVisible().catch(() => false)) return p;
+  }
+  return null;
+}
+
+function safeSleep(ms: number) {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
+}
+
+/** 대량수집 메인 화면 준비 — 로그인은 Chromium에서 직접 (창 닫지 말 것) */
+async function waitForBulkMainScreen(context: BrowserContext, logCtx: LogCtx): Promise<Page> {
+  let page = context.pages().find(p => !p.isClosed()) ?? await context.newPage();
+  pushLog(logCtx, 'open-page', '대량수집 페이지 열기', undefined, TMG_BULK_URL);
+  await page.goto(TMG_BULK_URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => undefined);
+
+  let ready = await findBulkReadyPage(context);
+  if (ready) {
+    pushLog(logCtx, 'open-page', '대량수집 메인 화면 준비됨', undefined, ready.url());
+    return ready;
   }
 
   pushLog(
-    ctx,
+    logCtx,
     'open-page',
     '로그인 필요',
     undefined,
-    'Chromium 창에서 더망고 로그인 → 대량수집 화면까지 직접 이동하세요 (최대 5분 대기)',
+    'Chromium 창 닫지 마세요 → 로그인 → 상품데이터 대량수집 화면 이동 (최대 5분)',
   );
 
   const deadline = Date.now() + 300_000;
   while (Date.now() < deadline) {
-    if (await urlSearchButton(page).first().isVisible().catch(() => false)) {
-      pushLog(ctx, 'open-page', '대량수집 메인 화면 확인됨', undefined, page.url());
-      return;
+    ready = await findBulkReadyPage(context);
+    if (ready) {
+      pushLog(logCtx, 'open-page', '대량수집 메인 화면 확인됨', undefined, ready.url());
+      return ready;
     }
-    if (!isLoginPageUrl(page.url())) {
-      await page.goto(TMG_BULK_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => undefined);
+
+    const alive = context.pages().filter(p => !p.isClosed());
+    if (!alive.length) {
+      throw new Error('Chromium 창이 닫혔습니다. 창을 닫지 말고 다시 실행하세요.');
     }
-    await page.waitForTimeout(2000);
+
+    page = alive[alive.length - 1];
+    await safeSleep(2000);
   }
 
-  throw new Error('대량수집 메인 화면을 찾지 못했습니다. 더망고 로그인 후 대량수집 페이지를 열어주세요.');
+  throw new Error('5분 안에 대량수집 화면을 찾지 못했습니다. 더망고에서 대량수집 메뉴까지 이동 후 다시 시도하세요.');
 }
 
 async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
@@ -172,14 +198,6 @@ async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
     await page.goto(TMG_BULK_URL, { waitUntil: 'networkidle', timeout: 60000 });
     await assertBulkCollectPage(page);
   }, rowIndex);
-}
-
-function urlSearchButton(page: Page) {
-  return page
-    .locator('input[type="button"][value*="URL상품검색"]')
-    .or(page.locator('input[type="submit"][value*="URL상품검색"]'))
-    .or(page.getByRole('button', { name: /URL\s*상품\s*검색하기/ }))
-    .or(page.getByText('URL상품검색하기', { exact: true }));
 }
 
 function saveAllButton(page: Page) {

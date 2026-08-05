@@ -3,7 +3,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Raw = "https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main"
-$TargetVersion = "1.8.0"
+$TargetVersion = "1.8.1"
 
 Write-Host "========================================"
 Write-Host "  AI_Program_Main_Board  v$TargetVersion"
