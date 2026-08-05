@@ -153,6 +153,34 @@ export function ProductDataCollectApp() {
             </span>
           )}
         </div>
+        {rows.length > 0 && (
+          <div className="excel-preview" style={{ marginTop: '0.5rem', overflowX: 'auto' }}>
+            <p className="panel__hint" style={{ marginBottom: '0.35rem' }}>
+              엑셀에서 읽은 값 (상위 최종 카테고리명 → 검색필터명 / 최종 카테고리 URL주소 → URL입력)
+            </p>
+            <table className="data-table" style={{ fontSize: '0.8rem', width: '100%' }}>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>상위 최종 카테고리명</th>
+                  <th>최종 카테고리 URL주소</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.slice(0, 8).map(r => (
+                  <tr key={r.rowIndex}>
+                    <td>{r.rowIndex}</td>
+                    <td>{r.topFinalLabel || '(비어있음)'}</td>
+                    <td style={{ wordBreak: 'break-all' }}>{r.finalCategoryUrl}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {rows.length > 8 && (
+              <p className="panel__hint">… 외 {rows.length - 8}행</p>
+            )}
+          </div>
+        )}
         <label className="field" style={{ maxWidth: '8rem', marginTop: '0.35rem' }}>
           <span className="field__label">검색결과상위 저장 수</span>
           <input

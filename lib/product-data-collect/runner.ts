@@ -530,10 +530,14 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
   }
 
   const normalized = normalizeUrl(url);
+  pushLog(ctx, 'paste-url', '[2] 엑셀 URL → 입력', rowIndex, normalized);
   const input = await findUrlInput(page);
   await pasteField(page, input, normalized);
   const fieldValue = (await readInputValue(input)) || normalized;
-  pushLog(ctx, 'paste-url', '[2] URL 입력', rowIndex, fieldValue);
+  if (fieldValue !== normalized && !fieldValue.includes(normalized.slice(0, 40))) {
+    pushLog(ctx, 'paste-url', '[2] URL 입력값 불일치 경고', rowIndex, fieldValue);
+  }
+  pushLog(ctx, 'paste-url', '[2] URL 입력 확인', rowIndex, fieldValue);
 }
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
@@ -599,8 +603,10 @@ async function fillSaveForm(
     // 큰 부모 div가 잡히면 첫 input(=검색필터명)에 3이 덮어써짐 → tr 행 단위로만 찾음
     const filterRow = modal.locator('tr').filter({ hasText: '검색필터명' }).first();
     const filterInput = filterRow.locator('input[type="text"], input:not([type="hidden"])').first();
+    pushLog(ctx, 'fill-save-form', '[5] 엑셀 상위최종카테고리명 → 검색필터명', rowIndex, filterName);
     await pasteField(page, filterInput, filterName);
-    pushLog(ctx, 'fill-save-form', '[5] 검색필터명', rowIndex, filterName);
+    const filterWritten = await readInputValue(filterInput);
+    pushLog(ctx, 'fill-save-form', '[5] 검색필터명 확인', rowIndex, filterWritten || filterName);
 
     const countRow = modal.locator('tr').filter({ hasText: '저장상품수' }).first();
     const countInput = countRow.locator('input[type="text"], input[type="number"], input:not([type="hidden"])').first();
