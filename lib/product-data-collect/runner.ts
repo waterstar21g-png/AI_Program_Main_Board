@@ -312,19 +312,11 @@ async function fillSaveForm(
   ctx: LogCtx,
   rowIndex: number,
 ) {
-  await actStep(page, ctx, 'fill-save-form', '[5] 상품저장설정 입력 (즉시)', async () => {
+  await actStep(page, ctx, 'fill-save-form', '[5] 상품저장설정 (필터→상품수→저장)', async () => {
     const modal = saveSettingsModal(page);
     await modal.waitFor({ state: 'visible' });
 
-    // 요건: 검색결과상위(저장상품수)=3 먼저 → 검색필터명
-    const countInput = modal
-      .locator('tr, div')
-      .filter({ hasText: /저장상품수|검색결과\s*상위/ })
-      .first()
-      .locator('input[type="text"], input[type="number"], input:not([type])')
-      .first();
-    await pasteField(page, countInput, String(saveCount));
-
+    // 순서: 검색필터명 → 저장상품수 → 저장하기 (즉시)
     const filterInput = modal
       .locator('tr, div')
       .filter({ hasText: '검색필터명' })
@@ -332,6 +324,14 @@ async function fillSaveForm(
       .locator('input[type="text"], input:not([type])')
       .first();
     await pasteField(page, filterInput, filterName);
+
+    const countInput = modal
+      .locator('tr, div')
+      .filter({ hasText: /저장상품수|검색결과\s*상위/ })
+      .first()
+      .locator('input[type="text"], input[type="number"], input:not([type])')
+      .first();
+    await pasteField(page, countInput, String(saveCount));
   }, rowIndex);
 
   pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭', rowIndex);
