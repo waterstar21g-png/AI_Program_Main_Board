@@ -46,6 +46,16 @@ foreach ($f in $files) {
 }
 "버전 $TargetVersion`n브라우저 하단 노란 줄에 표시됩니다." | Out-File -FilePath "VERSION.txt" -Encoding utf8
 
+if (Test-Path "lib\app-version.ts") {
+  $verLine = Select-String -Path "lib\app-version.ts" -Pattern "APP_VERSION" | Select-Object -First 1
+  Write-Host "[CHECK] $($verLine.Line.Trim())"
+}
+
+Write-Host "[STOP] 기존 서버(포트 3000) 종료..."
+Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue |
+  ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 2
+
 if (-not (Test-Path "node_modules")) {
   Write-Host "[INSTALL] npm install..."
   npm install
