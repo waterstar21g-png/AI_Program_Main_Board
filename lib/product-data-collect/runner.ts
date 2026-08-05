@@ -1,10 +1,19 @@
-import { chromium, type Locator, type Page } from 'playwright';
+import fs from 'fs';
+import path from 'path';
+import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
 import { TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 /** 단계마다 화면에서 동작이 보이도록 대기(ms) */
 const STEP_VISIBLE_MS = 1200;
 const ACTION_SLOW_MO = 350;
+const TMG_PROFILE_DIR = path.join(process.cwd(), '.local', 'tmg-chromium-profile');
+
+const CHROMIUM_ARGS = [
+  '--disable-blink-features=AutomationControlled',
+  '--no-first-run',
+  '--no-default-browser-check',
+];
 
 type LogCtx = {
   logs: WorkflowStepLog[];
@@ -124,43 +133,73 @@ async function assertLoggedIn(page: Page) {
   }
 }
 
+/** 더망고 로그인 — UI에서 받은 id/pw만 사용 (망고 창에 직접 입력 불필요) */
+async function typeIntoInput(page: Page, locator: Locator, value: string) {
+  await locator.click();
+  await locator.fill('');
+  await locator.pressSequentially(value, { delay: 40 });
+}
+
+async function waitForRecaptcha(page: Page) {
+  await page.waitForFunction(
+    () => typeof (window as unknown as { grecaptcha?: { execute?: unknown } }).grecaptcha?.execute === 'function',
+    { timeout: 30000 },
+  ).catch(() => undefined);
+}
+
+/** 저장된 Chromium 세션이 있으면 로그인 생략 */
+async function ensureLoggedIn(page: Page, id: string, pw: string, ctx: LogCtx) {
+  pushLog(ctx, 'login', '저장된 로그인 세션 확인', undefined, '이전에 로그인한 적 있으면 자동 통과');
+  await page.goto(TMG_BULK_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => undefined);
+
+  if (!isLoginPageUrl(page.url())) {
+    try {
+      await assertBulkCollectPage(page);
+      pushLog(ctx, 'login', '세션 유효 — 로그인 생략', undefined, page.url());
+      return;
+    } catch {
+      /* 세션 만료 → 로그인 진행 */
+    }
+  }
+
+  await login(page, id, pw, ctx);
+}
+
 /** 더망고 로그인 페이지(admin_login.php) — reCAPTCHA v3 포함 폼 제출 */
 async function login(page: Page, id: string, pw: string, ctx: LogCtx) {
   await actStep(page, ctx, 'login', '더망고 로그인 페이지 열기', async () => {
     await page.goto(TMG_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.locator('form#loginForm').waitFor({ state: 'visible', timeout: 30000 });
-    await page.locator('form#loginForm input[name="login_id"]').fill('');
-    await page.locator('form#loginForm input[name="login_pass"]').fill('');
+    await waitForRecaptcha(page);
   });
 
-  await actStep(page, ctx, 'login', `로그인 ID 입력: ${id}`, async () => {
+  await actStep(page, ctx, 'login', `아이디 자동 입력: ${id}`, async () => {
     const idInput = page.locator('form#loginForm input[name="login_id"]');
-    await idInput.waitFor({ state: 'visible', timeout: 30000 });
     await highlight(page, idInput);
-    await pauseVisible(page, 500);
-    await idInput.fill('');
-    await idInput.fill(id);
+    await typeIntoInput(page, idInput, id);
     const filled = await idInput.inputValue();
-    if (filled !== id) throw new Error(`아이디 입력 실패 (입력값: ${filled.slice(0, 20)})`);
-  });
-
-  await actStep(page, ctx, 'login', '로그인 PW 입력 (비밀번호)', async () => {
-    const pwInput = page.locator('form#loginForm input[name="login_pass"]');
-    await pwInput.waitFor({ state: 'visible', timeout: 30000 });
-    await highlight(page, pwInput);
-    await pauseVisible(page, 500);
-    await pwInput.fill('');
-    await pwInput.fill(pw);
-  });
-
-  await actStep(page, ctx, 'login', '로그인 버튼 클릭 (reCAPTCHA)', async () => {
-    const submit = page.locator('form#loginForm button[type="submit"]');
-    if (!(await submit.isVisible().catch(() => false))) {
-      throw new Error('로그인 버튼을 찾지 못했습니다.');
+    if (filled !== id) {
+      throw new Error(`아이디 자동 입력 실패 (화면값: ${filled.slice(0, 30)})`);
     }
+  });
+
+  await actStep(page, ctx, 'login', '비밀번호 자동 입력', async () => {
+    const pwInput = page.locator('form#loginForm input[name="login_pass"]');
+    await highlight(page, pwInput);
+    await typeIntoInput(page, pwInput, pw);
+    const len = (await pwInput.inputValue()).length;
+    if (len !== pw.length) {
+      throw new Error('비밀번호 자동 입력 실패 — 길이가 맞지 않습니다.');
+    }
+  });
+
+  await actStep(page, ctx, 'login', '로그인 버튼 클릭', async () => {
+    const submit = page.locator('form#loginForm button[type="submit"]');
     await highlight(page, submit);
-    await pauseVisible(page, 500);
+    await waitForRecaptcha(page);
     await submit.click();
+    await page.waitForURL(url => !url.pathname.includes('admin_login'), { timeout: 120000 }).catch(() => undefined);
     await page.waitForLoadState('networkidle', { timeout: 90000 }).catch(() => undefined);
     await assertLoggedIn(page);
   });
@@ -367,24 +406,27 @@ export async function runTmgCollectWorkflow(
   pushLog(
     ctx,
     'login',
-    'UI 입력값 → Chromium 전달',
+    'UI 입력값 → 망고 자동 입력',
     undefined,
-    `아이디: ${loginId} / PW: ${loginPw ? '●'.repeat(Math.min(loginPw.length, 10)) : '(없음)'}`,
+    `아이디: ${loginId} — 망고 창에 직접 입력하지 마세요`,
   );
 
-  const browser = await chromium.launch({
-    headless: req.headless ?? false,
+  fs.mkdirSync(TMG_PROFILE_DIR, { recursive: true });
+  const headless = req.headless ?? false;
+  const context: BrowserContext = await chromium.launchPersistentContext(TMG_PROFILE_DIR, {
+    headless,
     slowMo: ACTION_SLOW_MO,
+    viewport: { width: 1400, height: 900 },
+    args: CHROMIUM_ARGS,
   });
 
   let processedCount = 0;
   let ok = false;
   try {
-    const page = await browser.newPage();
+    const page = context.pages()[0] ?? await context.newPage();
     page.setDefaultTimeout(120000);
-    await page.setViewportSize({ width: 1400, height: 900 });
 
-    await login(page, loginId, loginPw, ctx);
+    await ensureLoggedIn(page, loginId, loginPw, ctx);
 
     const start = req.startRowIndex ?? 0;
     for (let i = start; i < rows.length; i++) {
@@ -399,7 +441,6 @@ export async function runTmgCollectWorkflow(
     pushLog(ctx, 'next-row', '오류', undefined, message);
     return { ok: false, logs, processedCount, message };
   } finally {
-    const headless = req.headless ?? false;
     const keepOpen = req.keepBrowserOpen ?? !headless;
     if (keepOpen) {
       pushLog(
@@ -407,10 +448,11 @@ export async function runTmgCollectWorkflow(
         'next-row',
         'Chromium 창 유지',
         undefined,
-        ok ? '작업 완료 — 화면 확인 후 창을 직접 닫으세요' : '오류 화면 확인 — 창을 직접 닫으면 종료됩니다',
+        ok ? '완료 — 창을 직접 닫으세요' : '오류 확인 — 창을 직접 닫으세요',
       );
-      await browser.waitForEvent('disconnected', { timeout: 1_800_000 }).catch(() => undefined);
+      await context.waitForEvent('close', { timeout: 1_800_000 }).catch(() => undefined);
+    } else {
+      await context.close().catch(() => undefined);
     }
-    await browser.close().catch(() => undefined);
   }
 }
