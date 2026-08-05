@@ -1,13 +1,14 @@
 import type { Metadata, Viewport } from 'next';
+import { APP_NAME } from '@/lib/app-name';
 import './globals.css';
 
 export const metadata: Metadata = {
   title: {
-    default: '카테고리별 상품목록 URL LIST 추출',
-    template: '%s · URL LIST',
+    default: APP_NAME,
+    template: `%s · ${APP_NAME}`,
   },
-  description: '카테고리별 대표 URL·상품 URL을 추출하여 엑셀 파일로 저장합니다.',
-  applicationName: '카테고리별_상품목록_URL_LIST추출',
+  description: '카테고리 계층 구조와 최종 카테고리 URL을 엑셀 파일로 추출합니다.',
+  applicationName: APP_NAME,
 };
 
 export const viewport: Viewport = {

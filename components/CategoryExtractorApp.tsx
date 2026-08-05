@@ -2,6 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { downloadHierarchyExcel } from '@/lib/excel-export';
+import { APP_NAME } from '@/lib/app-name';
 import { MAX_TOP_CATEGORIES } from '@/lib/types';
 import type { CrawlResult, HierarchyRow } from '@/lib/types';
 
@@ -91,10 +92,10 @@ export function CategoryExtractorApp() {
     <div className="app">
       <header className="app__header">
         <p className="app__eyebrow">웹 · 계층 카테고리 · 엑셀 저장</p>
-        <h1 className="app__title">카테고리별 상품목록 URL LIST 추출</h1>
+        <h1 className="app__title">{APP_NAME}</h1>
         <p className="app__desc">
           사이트명·URL과 <strong>상위 카테고리</strong>를 지정하면, 해당 상위만 골라 중위→하위→최종
-          카테고리와 <strong>최종 카테고리 클릭 URL</strong>을 엑셀로 저장합니다.
+          카테고리와 <strong>브라우저 주소창 URL</strong>을 엑셀로 저장합니다. (ABC마트 / A-RT 계열)
         </p>
       </header>
 

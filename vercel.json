@@ -3,5 +3,6 @@
     "deploymentEnabled": {
       "main": true
     }
-  }
+  },
+  "name": "Category_Item_Url_List"
 }
