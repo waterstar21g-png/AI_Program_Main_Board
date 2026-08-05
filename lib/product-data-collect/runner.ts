@@ -2,59 +2,6 @@ import type { BrowserContext, Locator, Page } from 'playwright';
 import { attachBrowser } from '@/lib/product-data-collect/browser-session';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
-/**
- * 속도 정책
- * - 필드·클릭: 즉시
- * - 대기: sleep 없음 — 팝업 닫힘·버튼 표시 등 상태 변화 시 즉시 진행
- * - STATE_WAIT_MAX_MS: 망고가 너무 오래 걸릴 때만 쓰는 실패 한도(초 단위 sleep 아님)
- */
-const STATE_WAIT_MAX_MS = 90_000;
-
-/** 화면 안 검색 레이어(상품저장설정 제외)가 사라질 때까지 */
-async function waitInPageSearchLayerHidden(page: Page): Promise<void> {
-  await page
-    .waitForFunction(
-      () => {
-        const nodes = document.querySelectorAll(
-          '[role="dialog"], .ui-dialog, .modal, div[id*="layer"], div[id*="popup"], div[class*="layer"], div[class*="popup"]',
-        );
-        for (const el of nodes) {
-          const node = el as HTMLElement;
-          const style = window.getComputedStyle(node);
-          const visible =
-            style.display !== 'none' && style.visibility !== 'hidden' && node.offsetParent !== null;
-          if (visible && !node.textContent?.includes('상품저장설정')) return false;
-        }
-        return true;
-      },
-      null,
-      { timeout: STATE_WAIT_MAX_MS },
-    )
-    .catch(() => undefined);
-}
-
-/** [3] 검색 완료 — 새창 팝업 닫힘 OR 화면안 레이어 사라짐 OR 저장버튼 표시 */
-async function waitSearchComplete(page: Page, popupClose: Promise<void>): Promise<void> {
-  const saveBtnReady = saveAllButton(page).first().waitFor({ state: 'visible', timeout: STATE_WAIT_MAX_MS });
-  await Promise.race([popupClose, waitInPageSearchLayerHidden(page), saveBtnReady]);
-  await saveBtnReady;
-}
-
-/** 새 창 팝업이 열리면 닫힐 때까지 (없으면 즉시 통과) */
-function listenWindowPopupClose(page: Page): Promise<void> {
-  return new Promise(resolve => {
-    page.once('popup', async popup => {
-      await popup.waitForEvent('close').catch(() => undefined);
-      resolve();
-    });
-    saveAllButton(page)
-      .first()
-      .waitFor({ state: 'visible', timeout: STATE_WAIT_MAX_MS })
-      .then(() => resolve())
-      .catch(() => resolve());
-  });
-}
-
 type LogCtx = {
   logs: WorkflowStepLog[];
   onLog?: (entry: WorkflowStepLog) => void;
@@ -74,7 +21,7 @@ function pushLog(
 
 async function highlight(page: Page, locator: Locator) {
   try {
-    const handle = await locator.first().elementHandle({ timeout: 5000 });
+    const handle = await locator.first().elementHandle();
     if (!handle) return;
     await handle.evaluate(el => {
       const node = el as HTMLElement;
@@ -139,7 +86,7 @@ async function assertBulkCollectPage(page: Page) {
         '① 메인 URL 열기 → 로그인 → ② 수집 시작',
     );
   }
-  await urlSearchButton(page).first().waitFor({ state: 'visible', timeout: 90000 });
+  await urlSearchButton(page).first().waitFor({ state: 'visible' });
 }
 
 function urlSearchButton(page: Page) {
@@ -222,6 +169,78 @@ function saveSettingsModal(page: Page) {
   return page.locator('body').locator('table, div, form').filter({ hasText: '상품저장설정' }).last();
 }
 
+/** 새 창 팝업 close 이벤트 캐치 */
+function catchWindowPopupClose(page: Page): Promise<void> {
+  return new Promise(resolve => {
+    page.once('popup', async popup => {
+      await popup.waitForEvent('close');
+      resolve();
+    });
+  });
+}
+
+/** 화면 안 팝업/레이어가 DOM에서 사라질 때까지 (MutationObserver) */
+function catchInPagePopupHidden(page: Page, skipContains = ''): Promise<void> {
+  return page.evaluate(skip => {
+    return new Promise<void>(resolve => {
+      const isLayerVisible = () => {
+        const nodes = document.querySelectorAll(
+          '[role="dialog"], .ui-dialog, .modal, div[id*="layer"], div[id*="popup"], div[class*="layer"], div[class*="popup"]',
+        );
+        for (const el of nodes) {
+          const node = el as HTMLElement;
+          const style = window.getComputedStyle(node);
+          const visible =
+            style.display !== 'none' && style.visibility !== 'hidden' && node.offsetParent !== null;
+          if (visible && !(skip && node.textContent?.includes(skip))) return true;
+        }
+        return false;
+      };
+
+      if (!isLayerVisible()) {
+        resolve();
+        return;
+      }
+
+      const obs = new MutationObserver(() => {
+        if (!isLayerVisible()) {
+          obs.disconnect();
+          resolve();
+        }
+      });
+      obs.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class', 'hidden'],
+      });
+    });
+  }, skipContains);
+}
+
+/** [3] 검색 팝업 닫힘 캐치 */
+async function waitForSearchPopupClosed(page: Page): Promise<void> {
+  await Promise.race([
+    catchWindowPopupClose(page),
+    catchInPagePopupHidden(page, '상품저장설정'),
+    saveAllButton(page)
+      .first()
+      .waitFor({ state: 'visible' })
+      .then(() => undefined),
+  ]);
+  await saveAllButton(page).first().waitFor({ state: 'visible' });
+}
+
+/** [6] 상품저장설정 팝업 닫힘 캐치 */
+async function waitForSavePopupClosed(page: Page): Promise<void> {
+  const modal = saveSettingsModal(page);
+  if (await modal.isVisible().catch(() => false)) {
+    await modal.waitFor({ state: 'hidden' });
+    return;
+  }
+  await catchInPagePopupHidden(page, '');
+}
+
 async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
   await actStep(page, ctx, 'open-page', '[1] 상품데이터 대량수집 메인 확인', async () => {
     await assertBulkCollectPage(page);
@@ -249,24 +268,21 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
-
-  const popupClose = listenWindowPopupClose(page);
+  catchWindowPopupClose(page);
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
 
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 대기', rowIndex, '화면 상태 감지 (시간대기 아님)');
-
-  await waitSearchComplete(page, popupClose);
-
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 — 완료', rowIndex);
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 감지', rowIndex);
+  await waitForSearchPopupClosed(page);
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
 }
 
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
   await actStep(page, ctx, 'save-all', '[4] 검색된 상품 모두 저장 클릭', async () => {
     const ok = await clickFirstVisible(page, [saveAllButton(page)]);
     if (!ok) throw new Error('검색된 상품 모두 저장 버튼을 찾지 못했습니다.');
-    await saveSettingsModal(page).waitFor({ state: 'visible', timeout: 90000 });
+    await saveSettingsModal(page).waitFor({ state: 'visible' });
   }, rowIndex);
 }
 
@@ -279,7 +295,7 @@ async function fillSaveForm(
 ) {
   await actStep(page, ctx, 'fill-save-form', '[5] 상품저장설정 입력 (즉시)', async () => {
     const modal = saveSettingsModal(page);
-    await modal.waitFor({ state: 'visible', timeout: 60000 });
+    await modal.waitFor({ state: 'visible' });
 
     const countInput = modal
       .locator('tr, div')
@@ -308,12 +324,10 @@ async function fillSaveForm(
   pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭 — 완료', rowIndex);
 }
 
-/** [6] 상품저장설정 팝업이 화면에서 사라질 때까지 */
 async function waitSavePopupDone(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 대기', rowIndex, '화면 상태 감지 (시간대기 아님)');
-  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: STATE_WAIT_MAX_MS });
-  await saveAllButton(page).first().waitFor({ state: 'visible', timeout: STATE_WAIT_MAX_MS }).catch(() => undefined);
-  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 — 완료', rowIndex);
+  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 닫힘 감지', rowIndex);
+  await waitForSavePopupClosed(page);
+  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 닫힘 — 완료', rowIndex);
 }
 
 async function processOneRow(
@@ -355,7 +369,7 @@ export async function runTmgCollectWorkflow(
 
   try {
     const page = await resolveBulkPageOrThrow(context, ctx);
-    page.setDefaultTimeout(STATE_WAIT_MAX_MS);
+    page.setDefaultTimeout(0);
 
     const start = req.startRowIndex ?? 0;
     for (let i = start; i < rows.length; i++) {
