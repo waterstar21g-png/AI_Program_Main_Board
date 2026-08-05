@@ -19,19 +19,26 @@ function pushLog(
   ctx.onLog?.(entry);
 }
 
-async function highlight(page: Page, locator: Locator) {
-  try {
-    const handle = await locator.first().elementHandle();
-    if (!handle) return;
-    await handle.evaluate(el => {
-      const node = el as HTMLElement;
-      node.style.outline = '3px solid #ef4444';
-      node.style.outlineOffset = '2px';
-      node.style.boxShadow = '0 0 14px rgba(239,68,68,0.75)';
-    });
-  } catch {
-    /* skip */
+async function pasteField(page: Page, locator: Locator, text: string) {
+  const el = locator.first();
+  await el.scrollIntoViewIfNeeded().catch(() => undefined);
+  await el.click({ force: true });
+  if (!text) {
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Backspace');
+    return;
   }
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => undefined);
+  await page.evaluate(async t => { await navigator.clipboard.writeText(t); }, text);
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Control+v');
+}
+
+/** 클릭 즉시 */
+async function fastClick(page: Page, locator: Locator) {
+  const el = locator.first();
+  await el.scrollIntoViewIfNeeded().catch(() => undefined);
+  await el.click();
 }
 
 /** 단계 로그만 남기고 즉시 실행 */
@@ -49,22 +56,6 @@ async function actStep(
   pushLog(ctx, step, `${label} — 완료`, rowIndex);
 }
 
-/** 엑셀 copy → 필드 paste (기계적 속도) */
-async function pasteField(page: Page, locator: Locator, text: string) {
-  const el = locator.first();
-  await el.scrollIntoViewIfNeeded().catch(() => undefined);
-  await highlight(page, el);
-  await el.fill(text);
-}
-
-/** 클릭 즉시 */
-async function fastClick(page: Page, locator: Locator) {
-  const el = locator.first();
-  await el.scrollIntoViewIfNeeded().catch(() => undefined);
-  await highlight(page, el);
-  await el.click();
-}
-
 async function clickFirstVisible(page: Page, locators: Locator[]) {
   for (const loc of locators) {
     if (await loc.first().isVisible().catch(() => false)) {
@@ -73,6 +64,12 @@ async function clickFirstVisible(page: Page, locators: Locator[]) {
     }
   }
   return false;
+}
+
+function normalizeUrl(url: string): string {
+  const t = url.trim();
+  if (!t) return t;
+  return /^https?:\/\//i.test(t) ? t : `https://${t}`;
 }
 
 function isBulkCollectPageUrl(url: string) {
@@ -218,17 +215,20 @@ function catchInPagePopupHidden(page: Page, skipContains = ''): Promise<void> {
   }, skipContains);
 }
 
-/** [3] 검색 팝업 닫힘 캐치 */
+/** [3] 검색 완료 대기 */
 async function waitForSearchPopupClosed(page: Page, windowClosed: Promise<void>): Promise<void> {
   await Promise.race([
     windowClosed,
     catchInPagePopupHidden(page, '상품저장설정'),
-    saveAllButton(page)
-      .first()
-      .waitFor({ state: 'visible' })
-      .then(() => undefined),
+    page.waitForFunction(() => {
+      const text = document.body.innerText;
+      if (text.includes('검색결과가 없습니다')) return true;
+      if (text.includes('실시간 검색한 결과') && !text.includes('상품명 또는 검색 URL을 입력')) {
+        return true;
+      }
+      return false;
+    }),
   ]);
-  await saveAllButton(page).first().waitFor({ state: 'visible' });
 }
 
 /** [6] 상품저장설정 팝업 닫힘 캐치 */
@@ -260,10 +260,12 @@ async function clearGrid(page: Page, ctx: LogCtx, rowIndex: number) {
 }
 
 async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) {
-  await actStep(page, ctx, 'paste-url', '[2] 최종 카테고리 URL 붙여넣기', async () => {
+  const normalized = normalizeUrl(url);
+  await actStep(page, ctx, 'paste-url', '[2] URL 붙여넣기', async () => {
     const input = await findUrlInput(page);
-    await pasteField(page, input, url);
+    await pasteField(page, input, normalized);
   }, rowIndex);
+  pushLog(ctx, 'paste-url', '[2] URL', rowIndex, normalized);
 }
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
@@ -363,11 +365,14 @@ export async function runTmgCollectWorkflow(
 
   pushLog(ctx, 'open-page', '메인 화면 1~6단계', undefined, '입력·클릭 즉시 / 팝업 닫힘만 대기');
 
-  const context = await getCollectBrowserContext();
   const headless = req.headless ?? false;
   let processedCount = 0;
 
   try {
+    pushLog(ctx, 'open-page', 'Chromium 연결');
+    const context = await getCollectBrowserContext();
+    pushLog(ctx, 'open-page', 'Chromium 연결 — 완료');
+
     const page = await resolveBulkPageOrThrow(context, ctx);
     page.setDefaultTimeout(0);
 

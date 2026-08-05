@@ -76,10 +76,10 @@ export async function attachBrowser(): Promise<BrowserContext> {
 }
 
 export async function getCollectBrowserContext(): Promise<BrowserContext> {
-  if (contextAlive(getStoredContext())) return getStoredContext()!;
-
   const cdp = await tryConnectCdp();
   if (contextAlive(cdp)) return cdp!;
+
+  if (contextAlive(getStoredContext())) return getStoredContext()!;
 
   throw new Error(
     'Chromium이 연결되지 않았습니다.\n' +
