@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { ensureBulkCollectPage, getCollectBrowserContext, maximizePage, TMG_ADMIN_HOST, TMG_BULK_PATH } from '@/lib/product-data-collect/browser-session';
+import { ensureBulkCollectPage, getCollectBrowserContext, maximizePage, TMG_ADMIN_HOST } from '@/lib/product-data-collect/browser-session';
 import { TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -20,40 +20,56 @@ function pushLog(
   ctx.onLog?.(entry);
 }
 
-/** 망고 대량수집 창만 남기고 외부 창(ABC-MART 등) 닫기 → 모달이 뒤로 숨지 않게 */
+/** 망고 대량수집 창을 앞으로 — 팝업은 절대 강제 닫지 않음 */
 async function focusMangoBulk(page: Page) {
-  const ctx = page.context();
-  for (const p of ctx.pages()) {
-    if (p === page || p.isClosed()) continue;
-    const url = p.url();
-    // 망고 대량수집 탭만 유지 — ABC-MART 등 외부 창은 전부 닫음
-    if (!url.includes(TMG_BULK_PATH)) {
-      await p.close().catch(() => undefined);
-    }
-  }
   await page.bringToFront().catch(() => undefined);
   await maximizePage(page);
 }
 
-/** URL검색으로 뜬 외부 창 목록만 추적 (검색 중엔 닫지 않음) */
-function watchSearchPopups(page: Page): { closeTracked: () => Promise<void>; stop: () => void } {
-  const tracked = new Set<Page>();
-  const handler = (popup: Page) => {
-    tracked.add(popup);
-  };
-  page.context().on('page', handler);
-  return {
-    stop: () => page.context().off('page', handler),
-    closeTracked: async () => {
-      for (const p of tracked) {
-        if (!p.isClosed() && !p.url().includes(TMG_ADMIN_HOST)) {
-          await p.close().catch(() => undefined);
-        }
-      }
-      tracked.clear();
-      await focusMangoBulk(page);
-    },
-  };
+function externalPages(page: Page): Page[] {
+  return page
+    .context()
+    .pages()
+    .filter(p => p !== page && !p.isClosed() && !p.url().includes(TMG_ADMIN_HOST));
+}
+
+/**
+ * 검색 팝업이 스스로 닫힐 때까지 대기 (강제 close 금지)
+ * — 창 팝업이 없으면 모두저장 버튼이 보일 때 완료
+ */
+async function waitSearchPopupClosedNaturally(page: Page, ctx: LogCtx, rowIndex: number) {
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 스스로 닫힘 대기', rowIndex);
+
+  for (;;) {
+    const extras = externalPages(page);
+    if (extras.length > 0) {
+      // 열린 외부 팝업이 모두 스스로 닫힐 때까지 대기
+      await Promise.race(extras.map(p => p.waitForEvent('close').catch(() => undefined)));
+      continue;
+    }
+
+    // 외부 팝업 없음 — 모두저장이 보이면 검색 완료
+    if (await saveAllButton(page).first().isVisible().catch(() => false)) {
+      pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
+      return;
+    }
+
+    // 팝업이 곧 열리거나 모두저장이 나타날 때까지
+    await Promise.race([
+      new Promise<void>(resolve => {
+        const onPage = () => {
+          page.context().off('page', onPage);
+          resolve();
+        };
+        page.context().on('page', onPage);
+      }),
+      saveAllButton(page)
+        .first()
+        .waitFor({ state: 'visible' })
+        .then(() => undefined)
+        .catch(() => undefined),
+    ]);
+  }
 }
 
 async function pasteField(page: Page, locator: Locator, text: string) {
@@ -373,24 +389,31 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
   await focusMangoBulk(page);
-  const watch = watchSearchPopups(page);
-  (page as Page & { __popupWatch?: ReturnType<typeof watchSearchPopups> }).__popupWatch = watch;
+
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
+
+  // 팝업이 스스로 닫힐 때까지 반드시 대기 → 그 다음 단계
+  await waitSearchPopupClosedNaturally(page, ctx, rowIndex);
+  await focusMangoBulk(page);
 }
 
-/** 검색 결과「모두저장」보이면 즉시 클릭 → 상품저장설정 모달 (망고 창 앞으로) */
+/** 팝업이 닫힌 뒤「모두저장」즉시 클릭 → 상품저장설정 모달 */
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'wait-search-popup', '[3] 모두저장 버튼 대기', rowIndex);
-  const btn = await waitSaveAllButtonVisible(page);
+  // 남은 외부 팝업이 있으면 스스로 닫힐 때까지 대기
+  const extras = externalPages(page);
+  if (extras.length) {
+    pushLog(ctx, 'wait-search-popup', '[3] 남은 팝업 스스로 닫힘 대기', rowIndex);
+    while (externalPages(page).length) {
+      const open = externalPages(page);
+      await Promise.race(open.map(p => p.waitForEvent('close').catch(() => undefined)));
+    }
+  }
 
-  // 검색 끝난 뒤 ABC-MART 등 외부 창 닫고 망고를 맨 앞으로 (모달이 뒤로 숨지 않게)
-  const watch = (page as Page & { __popupWatch?: ReturnType<typeof watchSearchPopups> }).__popupWatch;
-  watch?.stop();
-  await watch?.closeTracked();
-  delete (page as Page & { __popupWatch?: ReturnType<typeof watchSearchPopups> }).__popupWatch;
   await focusMangoBulk(page);
+  pushLog(ctx, 'save-all', '[4] 모두저장 버튼 대기', rowIndex);
+  const btn = await waitSaveAllButtonVisible(page);
 
   pushLog(ctx, 'save-all', '[4] 검색된 상품 모두저장 — 즉시 클릭', rowIndex);
   await btn.click({ force: true }).catch(async () => {
