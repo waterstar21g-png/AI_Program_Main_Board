@@ -248,19 +248,14 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
 
-  const popupPromise = page.waitForEvent('popup', { timeout: 10000 }).catch(() => null);
+  const popupClose = listenWindowPopupClose(page);
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
 
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 대기', rowIndex, '망고 팝업 닫힘 대기');
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 대기', rowIndex, '화면 상태 감지 (시간대기 아님)');
 
-  const popup = await popupPromise;
-  if (popup) {
-    await popup.waitForEvent('close', { timeout: 300000 }).catch(() => undefined);
-  }
-
-  await saveAllButton(page).first().waitFor({ state: 'visible', timeout: 300000 });
+  await waitSearchComplete(page, popupClose);
 
   pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 종료 — 완료', rowIndex);
 }
@@ -311,10 +306,11 @@ async function fillSaveForm(
   pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭 — 완료', rowIndex);
 }
 
-/** [6] 저장하기 클릭 후 — 팝업 닫힐 때까지만 대기 */
+/** [6] 상품저장설정 팝업이 화면에서 사라질 때까지 */
 async function waitSavePopupDone(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 대기', rowIndex, '망고 팝업 닫힘 대기');
-  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: 300000 });
+  pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 대기', rowIndex, '화면 상태 감지 (시간대기 아님)');
+  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: 180000 });
+  await saveAllButton(page).first().waitFor({ state: 'visible', timeout: 180000 }).catch(() => undefined);
   pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 — 완료', rowIndex);
 }
 
