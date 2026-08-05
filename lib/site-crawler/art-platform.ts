@@ -1,6 +1,7 @@
 import * as cheerio from 'cheerio';
 import type { LeafCategory } from '@/lib/types';
-import { parseBrandNo, parseCtgrNo, resolveUrl } from '@/lib/site-crawler/fetch';
+import { buildArtBrowseUrl } from '@/lib/category-canonical-url';
+import { parseBrandNo, parseCtgrNo } from '@/lib/site-crawler/fetch';
 
 export function isArtPlatform(html: string, url: string): boolean {
   return (
@@ -48,7 +49,7 @@ export function parseArtPlatformGnb(html: string, baseUrl: string): LeafCategory
               mid,
               low,
               final: cleanText($d4.text()),
-              categoryUrl: resolveUrl(href, origin),
+              categoryUrl: buildArtBrowseUrl(origin, href ?? '', 'category'),
               ctgrNo: parseCtgrNo(href),
               kind: 'category',
             });
@@ -59,7 +60,7 @@ export function parseArtPlatformGnb(html: string, baseUrl: string): LeafCategory
             mid,
             low: '',
             final: low,
-            categoryUrl: resolveUrl(lowHref, origin),
+            categoryUrl: buildArtBrowseUrl(origin, lowHref ?? '', 'category'),
             ctgrNo: parseCtgrNo(lowHref),
             kind: 'category',
           });
@@ -74,7 +75,7 @@ export function parseArtPlatformGnb(html: string, baseUrl: string): LeafCategory
           mid: '',
           low: '',
           final: mid,
-          categoryUrl: resolveUrl(midHref, origin),
+          categoryUrl: buildArtBrowseUrl(origin, midHref ?? '', 'category'),
           ctgrNo: parseCtgrNo(midHref),
           kind: 'category',
         });
@@ -106,7 +107,7 @@ function parseBrandSection(
       mid: '',
       low: '',
       final: name,
-      categoryUrl: resolveUrl(href, origin),
+      categoryUrl: buildArtBrowseUrl(origin, href, 'brand'),
       brandNo: parseBrandNo(href),
       kind: 'brand',
     });
