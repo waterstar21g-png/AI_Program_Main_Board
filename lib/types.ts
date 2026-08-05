@@ -13,6 +13,8 @@ export interface HierarchyRow {
   mid: string;
   low: string;
   final: string;
+  /** 상위 카테고리명 + 공백 + 최종 카테고리명 */
+  topFinalLabel: string;
   /** 최종 카테고리 클릭 시 이동하는 URL */
   finalCategoryUrl: string;
 }

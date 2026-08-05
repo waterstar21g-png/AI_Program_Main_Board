@@ -6,13 +6,14 @@ const HEADERS = [
   '중위 카테고리명',
   '하위 카테고리명',
   '최종 카테고리명',
+  '상위+최종 카테고리명',
   '최종 카테고리 URL주소',
 ] as const;
 
 export function hierarchyToSheetData(rows: HierarchyRow[]): string[][] {
   const data: string[][] = [HEADERS.slice()];
   for (const r of rows) {
-    data.push([r.top, r.mid, r.low, r.final, r.finalCategoryUrl]);
+    data.push([r.top, r.mid, r.low, r.final, r.topFinalLabel, r.finalCategoryUrl]);
   }
   return data;
 }
@@ -24,7 +25,14 @@ export function downloadHierarchyExcel(rows: HierarchyRow[], siteName: string): 
 
   const wb = XLSX.utils.book_new();
   const ws = XLSX.utils.aoa_to_sheet(hierarchyToSheetData(rows));
-  ws['!cols'] = [{ wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 56 }];
+  ws['!cols'] = [
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 18 },
+    { wch: 24 },
+    { wch: 56 },
+  ];
   XLSX.utils.book_append_sheet(wb, ws, '카테고리표');
   XLSX.writeFile(wb, filename);
 }

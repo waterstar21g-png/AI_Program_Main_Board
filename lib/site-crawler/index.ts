@@ -74,6 +74,7 @@ function toRow(siteName: string, leaf: LeafCategory): HierarchyRow {
     mid: leaf.mid,
     low: leaf.low,
     final: leaf.final,
+    topFinalLabel: `${leaf.top.trim()} ${leaf.final.trim()}`.trim(),
     finalCategoryUrl: leaf.categoryUrl,
   };
 }
