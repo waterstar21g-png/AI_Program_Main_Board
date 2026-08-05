@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { getOrOpenBrowserContext, requireExistingBrowserContext } from '@/lib/product-data-collect/browser-session';
+import { requireExistingBrowserContext } from '@/lib/product-data-collect/browser-session';
 import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -200,15 +200,9 @@ function saveSettingsModal(page: Page) {
   return page.locator('body').locator('table, div, form').filter({ hasText: '상품저장설정' }).last();
 }
 
-/** [1] 대량수집 메인 — 로그인 없음, getGoodsNew.php 확인 */
+/** [1] 대량수집 메인 — 이미 열린 화면에서만 확인, 이동·새탭 없음 */
 async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
-  await actStep(page, ctx, 'open-page', '[1] 상품데이터 대량수집 메인', async () => {
-    const onBulk =
-      isBulkCollectPageUrl(page.url()) &&
-      (await urlSearchButton(page).first().isVisible().catch(() => false));
-    if (!onBulk) {
-      await page.goto(TMG_BULK_URL, { waitUntil: 'networkidle', timeout: 120000 });
-    }
+  await actStep(page, ctx, 'open-page', '[1] 상품데이터 대량수집 메인 확인', async () => {
     await assertBulkCollectPage(page);
   }, rowIndex);
 }
@@ -358,11 +352,8 @@ export async function runTmgCollectWorkflow(
     '로그인 제외 · getGoodsNew.php · 망고 속도',
   );
 
-  const headless = req.headless ?? false;
   const useExisting = req.useExistingBrowser !== false;
-  const context = useExisting
-    ? await requireExistingBrowserContext()
-    : await getOrOpenBrowserContext(headless);
+  const context = await requireExistingBrowserContext();
 
   let processedCount = 0;
   try {

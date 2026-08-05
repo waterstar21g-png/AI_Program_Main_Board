@@ -120,8 +120,8 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>로그인은 프로그램이 하지 않습니다.</strong> ① Chromium 열기 → (직접) 대량수집 메인 진입 →{' '}
-            <strong>② 수집 시작</strong> — 메인 화면에서 1~6단계를 망고 속도로 진행합니다.
+            <strong>로그인·화면 이동은 직접.</strong> ① Chromium 연결(최초 1회) → 대량수집 메인 열기 →{' '}
+            <strong>② 수집 시작</strong> — <strong>열린 메인 화면</strong>에서 1~6단계만 진행 (새 창 안 열림).
           </p>
         </div>
         <div className="form-grid form-grid--compact">
