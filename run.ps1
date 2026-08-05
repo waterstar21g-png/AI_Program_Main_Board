@@ -5,7 +5,7 @@ Set-Location $PSScriptRoot
 $Raw = "https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main"
 
 Write-Host "========================================"
-Write-Host "  AI_Program_Main_Board"
+Write-Host "  AI_Program_Main_Board  v$TargetVersion"
 Write-Host "========================================"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -14,7 +14,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-$TargetVersion = "1.6.9"
+$TargetVersion = "1.7.0"
 $needDownload = $false
 if (-not (Test-Path "components\ProductDataCollectApp.tsx")) { $needDownload = $true }
 if (-not (Test-Path "lib\product-data-collect\runner.ts")) { $needDownload = $true }
@@ -33,6 +33,7 @@ if ($needDownload) {
   New-Item -ItemType Directory -Force -Path "app\api\product-collect\run" | Out-Null
 
   $files = @(
+    @("components\ProgramBoardApp.tsx", "$Raw/components/ProgramBoardApp.tsx"),
     @("lib\programs\registry.tsx", "$Raw/lib/programs/registry.tsx"),
     @("lib\app-version.ts", "$Raw/lib/app-version.ts"),
     @("components\ProductDataCollectApp.tsx", "$Raw/components/ProductDataCollectApp.tsx"),

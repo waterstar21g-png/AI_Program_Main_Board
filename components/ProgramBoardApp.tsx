@@ -13,7 +13,10 @@ export function ProgramBoardApp() {
   return (
     <div className="program-board">
       <header className="program-board__header">
-        <h1 className="program-board__title">{APP_NAME}</h1>
+        <h1 className="program-board__title">
+          {APP_NAME}
+          <span className="program-board__version-badge">버전 {APP_VERSION}</span>
+        </h1>
       </header>
 
       <div className="program-board__body">
