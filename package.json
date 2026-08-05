@@ -1,6 +1,6 @@
 {
   "name": "ai-program-main-board",
-  "version": "2.0.9.0",
+  "version": "2.0.9.1",
   "private": true,
   "description": "AI_Program_Main_Board — 단위 프로그램 실행 보드",
   "scripts": {

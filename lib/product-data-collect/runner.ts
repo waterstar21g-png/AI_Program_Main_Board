@@ -1,5 +1,10 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { ensureBulkCollectPage, getCollectBrowserContext, TMG_ADMIN_HOST } from '@/lib/product-data-collect/browser-session';
+import {
+  ensureBulkCollectPage,
+  getCollectBrowserContext,
+  resetBulkCollectViaMenu,
+  TMG_ADMIN_HOST,
+} from '@/lib/product-data-collect/browser-session';
 import { TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -355,18 +360,6 @@ async function findUrlInput(page: Page): Promise<Locator> {
   throw new Error('URL상품검색하기 좌측 입력 그리드를 찾지 못했습니다.');
 }
 
-async function findClearButton(page: Page): Promise<Locator | null> {
-  const btn = urlSearchButton(page).first();
-  const nearInput = btn.locator('xpath=preceding::input[@type="button"][contains(@value,"CLEAR")][1]');
-  if (await nearInput.isVisible().catch(() => false)) return nearInput;
-
-  const area = urlSearchArea(page);
-  const inArea = area.locator('input[type="button"][value*="CLEAR"], input[type="button"][value="CLEAR"]');
-  if (await inArea.first().isVisible().catch(() => false)) return inArea.first();
-
-  return null;
-}
-
 function saveSettingsModal(page: Page) {
   // 팝업 전체(하단 저장하기·취소하기 포함) — 안쪽 작은 div만 잡히지 않게
   return page
@@ -505,22 +498,20 @@ async function assertIdleBeforeInput(page: Page, ctx: LogCtx, rowIndex: number, 
   }
 }
 
-async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
-  await actStep(page, ctx, 'open-page', '[1] 상품데이터 대량수집 메인 확인', async () => {
-    await assertBulkCollectPage(page);
-  }, rowIndex);
-}
-
-async function clearGrid(page: Page, ctx: LogCtx, rowIndex: number) {
-  await actStep(page, ctx, 'clear-grid', '[2] 입력 그리드 CLEAR', async () => {
-    const clearBtn = await findClearButton(page);
-    if (clearBtn) {
-      await fastClick(page, clearBtn);
-    } else {
-      const input = await findUrlInput(page);
-      await pasteField(page, input, '');
-    }
-  }, rowIndex);
+/** 매 단계 시작: 상품데이터수집 → 대량수집 메뉴 (CLEAR 대체 초기화) */
+async function resetViaMenu(page: Page, ctx: LogCtx, rowIndex: number) {
+  await actStep(
+    page,
+    ctx,
+    'clear-grid',
+    '[2] 상품데이터수집 → 대량수집 메뉴 (초기화)',
+    async () => {
+      await resetBulkCollectViaMenu(page);
+      await assertBulkCollectPage(page);
+    },
+    rowIndex,
+    '상품데이터 대량수집 (리스팅페이지 URL 이용)',
+  );
 }
 
 async function readInputValue(locator: Locator): Promise<string> {
@@ -649,19 +640,18 @@ async function processOneRow(
   /*
    * 필수 순서 (고정):
    * 1) 이전 모달 종료 확인
-   * 2) URL 필드 입력 → URL상품검색하기
-   * 3) 검색 모달 종료까지 대기 (입력·클릭 금지)
-   * 4) 모달 종료 후 → 모두저장 클릭
-   * 5) 상품저장설정 입력 → 저장하기
-   * 6) 저장 모달 종료까지 대기
-   * 7) 그 다음에야 다음 엑셀 URL 입력 가능
+   * 2) 메뉴 재진입으로 초기화 (CLEAR 없음)
+   * 3) URL 필드 입력 → URL상품검색하기
+   * 4) 검색 모달 종료까지 대기
+   * 5) 모두저장 → 저장설정 → 저장하기
+   * 6) 저장 모달 종료 후 → 다음 행(다시 메뉴 초기화부터)
    */
   await assertIdleBeforeInput(page, ctx, rowIndex, '행 시작 전');
 
-  await openBulkPage(page, ctx, rowIndex);
+  // 매 행 시작: 상품데이터수집 → 상품데이터 대량수집 (초기화)
+  await resetViaMenu(page, ctx, rowIndex);
 
-  // 2) URL 필드 입력
-  await clearGrid(page, ctx, rowIndex);
+  // URL 필드 입력
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
 
   // 3) 검색 클릭 → 모달 종료 대기
