@@ -4,15 +4,13 @@ import { MAX_TOP_CATEGORIES } from '@/lib/types';
 import { sanitizeTopCategories } from '@/lib/top-category-filter';
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
+export const maxDuration = 120;
 
 export async function POST(req: NextRequest) {
   let body: {
     siteName?: string;
     siteUrl?: string;
     topCategories?: unknown;
-    fetchProducts?: boolean;
-    productLimit?: number;
   };
 
   try {
@@ -41,13 +39,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const result = await crawlSite({
-    siteName,
-    siteUrl,
-    topCategories,
-    fetchProducts: body.fetchProducts !== false,
-    productLimit: Number(body.productLimit) || 0,
-  });
+  const result = await crawlSite({ siteName, siteUrl, topCategories });
 
   if (!result.ok) {
     return NextResponse.json(

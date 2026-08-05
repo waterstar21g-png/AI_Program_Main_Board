@@ -10,7 +10,6 @@ const DEFAULT_SITE = {
   siteUrl: 'https://abcmart.a-rt.com/?track=W0009',
 };
 
-/** ABC마트 기본 상위 카테고리 */
 const DEFAULT_TOP_CATEGORIES = ['MEN', 'WOMEN', 'KIDS'];
 
 function newTopId(): string {
@@ -27,8 +26,6 @@ export function CategoryExtractorApp() {
   const [siteName, setSiteName] = useState(DEFAULT_SITE.siteName);
   const [siteUrl, setSiteUrl] = useState(DEFAULT_SITE.siteUrl);
   const [topRows, setTopRows] = useState(() => makeTopRows(DEFAULT_TOP_CATEGORIES));
-  const [fetchProducts, setFetchProducts] = useState(true);
-  const [productLimit, setProductLimit] = useState(0);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CrawlResult | null>(null);
   const [error, setError] = useState('');
@@ -70,8 +67,6 @@ export function CategoryExtractorApp() {
           siteName: siteName.trim(),
           siteUrl: siteUrl.trim(),
           topCategories,
-          fetchProducts,
-          productLimit: productLimit > 0 ? productLimit : 0,
         }),
       });
       const data = await res.json();
@@ -99,7 +94,7 @@ export function CategoryExtractorApp() {
         <h1 className="app__title">카테고리별 상품목록 URL LIST 추출</h1>
         <p className="app__desc">
           사이트명·URL과 <strong>상위 카테고리</strong>를 지정하면, 해당 상위만 골라 중위→하위→최종
-          카테고리와 대표 상품 URL을 엑셀로 저장합니다. (ABC마트 / A-RT 계열 지원)
+          카테고리와 <strong>최종 카테고리 클릭 URL</strong>을 엑셀로 저장합니다.
         </p>
       </header>
 
@@ -147,8 +142,7 @@ export function CategoryExtractorApp() {
           </button>
         </div>
         <p className="panel__hint">
-          사이트명·URL과 별도로 상위 카테고리를 입력합니다. <strong>입력한 상위만</strong> 추출됩니다.
-          ABC마트 예: MEN, WOMEN, KIDS (BRAND 등은 제외)
+          입력한 상위만 추출됩니다. ABC마트 예: MEN, WOMEN, KIDS
         </p>
         <ul className="top-list">
           {topRows.map((row, idx) => (
@@ -172,30 +166,6 @@ export function CategoryExtractorApp() {
             </li>
           ))}
         </ul>
-      </section>
-
-      <section className="panel">
-        <h2 className="panel__title">2. 수집 옵션</h2>
-        <div className="options">
-          <label className="check">
-            <input
-              type="checkbox"
-              checked={fetchProducts}
-              onChange={e => setFetchProducts(e.target.checked)}
-            />
-            최종 카테고리별 대표 상품 URL 수집
-          </label>
-          <label className="field field--inline">
-            <span className="field__label">상품 수집 제한 (0=전체)</span>
-            <input
-              className="input input--xs"
-              type="number"
-              min={0}
-              value={productLimit}
-              onChange={e => setProductLimit(Number(e.target.value) || 0)}
-            />
-          </label>
-        </div>
         <div className="panel__footer">
           <button
             type="button"
@@ -203,7 +173,7 @@ export function CategoryExtractorApp() {
             disabled={loading || !canSubmit}
             onClick={runCrawl}
           >
-            {loading ? '수집 중…' : '카테고리 수집 시작'}
+            {loading ? '수집 중…' : '2. 카테고리 수집 시작'}
           </button>
         </div>
       </section>
@@ -219,7 +189,7 @@ export function CategoryExtractorApp() {
           <section className="summary">
             <p>
               <strong>{result.platform}</strong> · 상위 [{result.appliedTopCategories.join(', ')}] ·
-              카테고리 {result.totalCategories}건 · 상품 URL {result.productsFetched}건
+              카테고리 {result.totalCategories}건
             </p>
             {result.warnings.map((w, i) => (
               <p key={i} className="summary__warn">
@@ -236,7 +206,7 @@ export function CategoryExtractorApp() {
               </button>
             </div>
             <p className="panel__hint">
-              엑셀 양식: 상위 · 중위 · 하위 · 최종 카테고리명 · 대표상품 URL
+              엑셀 양식: 상위 · 중위 · 하위 · 최종 카테고리명 · 최종 카테고리 URL
             </p>
             <div className="table-wrap">
               <table className="result-table">
@@ -246,7 +216,7 @@ export function CategoryExtractorApp() {
                     <th>중위</th>
                     <th>하위</th>
                     <th>최종</th>
-                    <th>대표상품 URL</th>
+                    <th>최종 카테고리 URL</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -257,13 +227,9 @@ export function CategoryExtractorApp() {
                       <td>{r.low || '—'}</td>
                       <td>{r.final}</td>
                       <td className="url-cell">
-                        {r.productUrl ? (
-                          <a href={r.productUrl} target="_blank" rel="noreferrer">
-                            {r.productUrl}
-                          </a>
-                        ) : (
-                          '—'
-                        )}
+                        <a href={r.finalCategoryUrl} target="_blank" rel="noreferrer">
+                          {r.finalCategoryUrl}
+                        </a>
                       </td>
                     </tr>
                   ))}

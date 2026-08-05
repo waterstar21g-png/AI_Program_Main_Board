@@ -5,8 +5,6 @@ export interface CrawlRequest {
   siteUrl: string;
   /** 사용자 지정 상위 카테고리 (1~15개, 이 목록에 해당하는 것만 추출) */
   topCategories: string[];
-  fetchProducts?: boolean;
-  productLimit?: number;
 }
 
 export interface HierarchyRow {
@@ -15,8 +13,8 @@ export interface HierarchyRow {
   mid: string;
   low: string;
   final: string;
-  productUrl: string;
-  categoryUrl: string;
+  /** 최종 카테고리 클릭 시 이동하는 URL */
+  finalCategoryUrl: string;
 }
 
 export interface CrawlResult {
@@ -27,7 +25,6 @@ export interface CrawlResult {
   appliedTopCategories: string[];
   rows: HierarchyRow[];
   totalCategories: number;
-  productsFetched: number;
   errors: string[];
   warnings: string[];
 }

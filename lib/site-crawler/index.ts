@@ -1,24 +1,11 @@
 import type { CrawlRequest, CrawlResult, HierarchyRow, LeafCategory } from '@/lib/types';
 import { filterLeavesByTop, sanitizeTopCategories } from '@/lib/top-category-filter';
-import {
-  fetchHtml,
-  getOrigin,
-  mapPool,
-  normalizeSiteUrl,
-  sleep,
-} from '@/lib/site-crawler/fetch';
-import {
-  fetchRepresentativeProductUrl,
-  isArtPlatform,
-  parseArtPlatformGnb,
-} from '@/lib/site-crawler/art-platform';
+import { fetchHtml, normalizeSiteUrl } from '@/lib/site-crawler/fetch';
+import { isArtPlatform, parseArtPlatformGnb } from '@/lib/site-crawler/art-platform';
 
 export async function crawlSite(req: CrawlRequest): Promise<CrawlResult> {
   const siteName = req.siteName.trim() || '사이트';
   const siteUrl = normalizeSiteUrl(req.siteUrl);
-  const origin = getOrigin(siteUrl);
-  const fetchProducts = req.fetchProducts !== false;
-  const productLimit = req.productLimit ?? 0;
   const appliedTopCategories = sanitizeTopCategories(req.topCategories);
 
   const errors: string[] = [];
@@ -65,38 +52,7 @@ export async function crawlSite(req: CrawlRequest): Promise<CrawlResult> {
     );
   }
 
-  const targetLeaves =
-    productLimit > 0 && fetchProducts ? leaves.slice(0, productLimit) : leaves;
-
-  if (productLimit > 0 && leaves.length > productLimit) {
-    warnings.push(`상품 URL 수집을 ${productLimit}개 카테고리로 제한했습니다.`);
-  }
-
-  let productsFetched = 0;
-  const rows: HierarchyRow[] = [];
-
-  if (fetchProducts) {
-    const productUrls = await mapPool(targetLeaves, 4, async (leaf, idx) => {
-      if (idx > 0 && idx % 10 === 0) await sleep(120);
-      const productUrl = await fetchRepresentativeProductUrl(origin, leaf);
-      if (productUrl.includes('prdtNo=')) productsFetched++;
-      return productUrl || leaf.categoryUrl;
-    });
-
-    targetLeaves.forEach((leaf, i) => {
-      rows.push(toRow(siteName, leaf, productUrls[i]));
-    });
-
-    if (productLimit > 0 && leaves.length > productLimit) {
-      for (const leaf of leaves.slice(productLimit)) {
-        rows.push(toRow(siteName, leaf, leaf.categoryUrl));
-      }
-    }
-  } else {
-    for (const leaf of leaves) {
-      rows.push(toRow(siteName, leaf, ''));
-    }
-  }
+  const rows: HierarchyRow[] = leaves.map(leaf => toRow(siteName, leaf));
 
   return {
     ok: true,
@@ -106,21 +62,19 @@ export async function crawlSite(req: CrawlRequest): Promise<CrawlResult> {
     appliedTopCategories,
     rows,
     totalCategories: leaves.length,
-    productsFetched,
     errors,
     warnings,
   };
 }
 
-function toRow(siteName: string, leaf: LeafCategory, productUrl: string): HierarchyRow {
+function toRow(siteName: string, leaf: LeafCategory): HierarchyRow {
   return {
     siteName,
     top: leaf.top,
     mid: leaf.mid,
     low: leaf.low,
     final: leaf.final,
-    productUrl,
-    categoryUrl: leaf.categoryUrl,
+    finalCategoryUrl: leaf.categoryUrl,
   };
 }
 
@@ -138,7 +92,6 @@ function fail(
     appliedTopCategories,
     rows: [],
     totalCategories: 0,
-    productsFetched: 0,
     errors: [message],
     warnings: [],
   };

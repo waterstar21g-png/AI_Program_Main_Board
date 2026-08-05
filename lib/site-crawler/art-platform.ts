@@ -1,6 +1,6 @@
 import * as cheerio from 'cheerio';
 import type { LeafCategory } from '@/lib/types';
-import { fetchHtml, parseBrandNo, parseCtgrNo, resolveUrl } from '@/lib/site-crawler/fetch';
+import { parseBrandNo, parseCtgrNo, resolveUrl } from '@/lib/site-crawler/fetch';
 
 export function isArtPlatform(html: string, url: string): boolean {
   return (
@@ -125,41 +125,4 @@ function dedupeLeaves(leaves: LeafCategory[]): LeafCategory[] {
     seen.add(key);
     return true;
   });
-}
-
-/** 카테고리 목록 API에서 첫 상품 URL */
-export async function fetchCategoryProductUrl(origin: string, ctgrNo: string): Promise<string> {
-  const api = new URL('/display/category/product/list', origin);
-  api.searchParams.set('ctgrNo', ctgrNo);
-  api.searchParams.set('pagingSortType', 'best');
-  api.searchParams.set('rowsPerPage', '1');
-  api.searchParams.set('pageNum', '1');
-
-  const html = await fetchHtml(api.toString(), `${origin}/display/category`);
-  const m = html.match(/href="(\/product\?prdtNo=\d+)"/i);
-  if (!m) return '';
-  return resolveUrl(m[1], origin);
-}
-
-/** 브랜드 페이지에서 첫 상품 URL */
-export async function fetchBrandProductUrl(origin: string, brandPageUrl: string): Promise<string> {
-  const html = await fetchHtml(brandPageUrl, origin);
-  const m = html.match(/href="(\/product\?prdtNo=\d+)"/i);
-  if (!m) return brandPageUrl;
-  return resolveUrl(m[1], origin);
-}
-
-export async function fetchRepresentativeProductUrl(origin: string, leaf: LeafCategory): Promise<string> {
-  try {
-    if (leaf.kind === 'brand') {
-      return (await fetchBrandProductUrl(origin, leaf.categoryUrl)) || leaf.categoryUrl;
-    }
-    if (leaf.ctgrNo) {
-      const url = await fetchCategoryProductUrl(origin, leaf.ctgrNo);
-      return url || leaf.categoryUrl;
-    }
-    return leaf.categoryUrl;
-  } catch {
-    return leaf.categoryUrl;
-  }
 }
