@@ -5,8 +5,10 @@ import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib
 /**
  * 속도 정책
  * - 필드·클릭: 즉시
- * - 대기: 시간(sleep) 아님 — 팝업 닫힘·버튼 나타남 등 화면 상태 변화만 감지
+ * - 대기: sleep 없음 — 팝업 닫힘·버튼 표시 등 상태 변화 시 즉시 진행
+ * - STATE_WAIT_MAX_MS: 망고가 너무 오래 걸릴 때만 쓰는 실패 한도(초 단위 sleep 아님)
  */
+const STATE_WAIT_MAX_MS = 90_000;
 
 /** 화면 안 검색 레이어(상품저장설정 제외)가 사라질 때까지 */
 async function waitInPageSearchLayerHidden(page: Page): Promise<void> {
@@ -26,14 +28,14 @@ async function waitInPageSearchLayerHidden(page: Page): Promise<void> {
         return true;
       },
       null,
-      { timeout: 180000 },
+      { timeout: STATE_WAIT_MAX_MS },
     )
     .catch(() => undefined);
 }
 
 /** [3] 검색 완료 — 새창 팝업 닫힘 OR 화면안 레이어 사라짐 OR 저장버튼 표시 */
 async function waitSearchComplete(page: Page, popupClose: Promise<void>): Promise<void> {
-  const saveBtnReady = saveAllButton(page).first().waitFor({ state: 'visible', timeout: 180000 });
+  const saveBtnReady = saveAllButton(page).first().waitFor({ state: 'visible', timeout: STATE_WAIT_MAX_MS });
   await Promise.race([popupClose, waitInPageSearchLayerHidden(page), saveBtnReady]);
   await saveBtnReady;
 }
@@ -47,7 +49,7 @@ function listenWindowPopupClose(page: Page): Promise<void> {
     });
     saveAllButton(page)
       .first()
-      .waitFor({ state: 'visible', timeout: 180000 })
+      .waitFor({ state: 'visible', timeout: STATE_WAIT_MAX_MS })
       .then(() => resolve())
       .catch(() => resolve());
   });
@@ -309,8 +311,8 @@ async function fillSaveForm(
 /** [6] 상품저장설정 팝업이 화면에서 사라질 때까지 */
 async function waitSavePopupDone(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 대기', rowIndex, '화면 상태 감지 (시간대기 아님)');
-  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: 180000 });
-  await saveAllButton(page).first().waitFor({ state: 'visible', timeout: 180000 }).catch(() => undefined);
+  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: STATE_WAIT_MAX_MS });
+  await saveAllButton(page).first().waitFor({ state: 'visible', timeout: STATE_WAIT_MAX_MS }).catch(() => undefined);
   pushLog(ctx, 'wait-save-popup', '[6] 저장 팝업 종료 — 완료', rowIndex);
 }
 
@@ -353,7 +355,7 @@ export async function runTmgCollectWorkflow(
 
   try {
     const page = await resolveBulkPageOrThrow(context, ctx);
-    page.setDefaultTimeout(180000);
+    page.setDefaultTimeout(STATE_WAIT_MAX_MS);
 
     const start = req.startRowIndex ?? 0;
     for (let i = start; i < rows.length; i++) {
