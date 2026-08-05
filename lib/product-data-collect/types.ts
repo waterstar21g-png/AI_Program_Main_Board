@@ -38,6 +38,8 @@ export interface TmgCollectRequest {
   headless?: boolean;
   /** false면 Chromium 창을 자동으로 닫지 않음 (기본: 화면 보기 모드에서 true) */
   keepBrowserOpen?: boolean;
+  /** true면 이미 연 Chromium에서 바로 단계별 수집 (5분 대기 없음) */
+  useExistingBrowser?: boolean;
   startRowIndex?: number;
 }
 

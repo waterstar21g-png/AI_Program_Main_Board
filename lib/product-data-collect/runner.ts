@@ -1,19 +1,10 @@
-import fs from 'fs';
-import path from 'path';
-import { chromium, type BrowserContext, type Locator, type Page } from 'playwright';
+import type { BrowserContext, Locator, Page } from 'playwright';
+import { ACTION_SLOW_MO, getOrOpenBrowserContext } from '@/lib/product-data-collect/browser-session';
 import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 /** 단계마다 화면에서 동작이 보이도록 대기(ms) */
-const STEP_VISIBLE_MS = 1200;
-const ACTION_SLOW_MO = 350;
-const TMG_PROFILE_DIR = path.join(process.cwd(), '.local', 'tmg-chromium-profile');
-
-const CHROMIUM_ARGS = [
-  '--disable-blink-features=AutomationControlled',
-  '--no-first-run',
-  '--no-default-browser-check',
-];
+const STEP_VISIBLE_MS = 1800;
 
 type LogCtx = {
   logs: WorkflowStepLog[];
@@ -60,8 +51,9 @@ async function actStep(
   run: () => Promise<void>,
   rowIndex?: number,
 ) {
+  await page.bringToFront();
   pushLog(ctx, step, label, rowIndex, page.url());
-  await pauseVisible(page, 400);
+  await pauseVisible(page, 600);
   await run();
   pushLog(ctx, step, `${label} — 완료`, rowIndex, page.url());
   await pauseVisible(page);
@@ -84,10 +76,11 @@ async function fillFirstVisible(page: Page, selectors: string[], value: string) 
 async function clickFirstVisible(page: Page, locators: Locator[]) {
   for (const loc of locators) {
     if (await loc.first().isVisible().catch(() => false)) {
+      await page.bringToFront();
       await loc.first().scrollIntoViewIfNeeded().catch(() => undefined);
       await highlight(page, loc);
-      await pauseVisible(page, 500);
-      await loc.first().click();
+      await pauseVisible(page, 800);
+      await loc.first().click({ delay: 120 });
       return true;
     }
   }
@@ -153,7 +146,20 @@ function safeSleep(ms: number) {
   return new Promise<void>(resolve => setTimeout(resolve, ms));
 }
 
-/** 대량수집 메인 화면 준비 — 로그인은 Chromium에서 직접 (창 닫지 말 것) */
+/** 지금 열린 Chromium 탭에서 대량수집 화면 찾기 */
+async function resolveBulkPageOrThrow(context: BrowserContext, logCtx: LogCtx): Promise<Page> {
+  const ready = await findBulkReadyPage(context);
+  if (ready) {
+    await ready.bringToFront();
+    pushLog(logCtx, 'open-page', '대량수집 화면 확인', undefined, ready.url());
+    return ready;
+  }
+  throw new Error(
+    '대량수집 화면이 아닙니다. ① Chromium 열기 → 로그인 → 대량수집 메뉴 이동 → ② 지금 화면에서 수집 시작',
+  );
+}
+
+/** @deprecated 5분 대기 — useExistingBrowser 사용 권장 */
 async function waitForBulkMainScreen(context: BrowserContext, logCtx: LogCtx): Promise<Page> {
   let page = context.pages().find(p => !p.isClosed()) ?? await context.newPage();
   pushLog(logCtx, 'open-page', '대량수집 페이지 열기', undefined, TMG_BULK_URL);
@@ -373,27 +379,23 @@ export async function runTmgCollectWorkflow(
   pushLog(
     ctx,
     'open-page',
-    '로그인 자동화 없음',
+    '단계별 수집 시작',
     undefined,
-    'Chromium에서 더망고 로그인 후 대량수집 화면부터 자동 진행',
+    req.useExistingBrowser
+      ? '지금 Chromium 화면에서 클릭·입력이 보입니다'
+      : '먼저 ① Chromium 열기 권장',
   );
 
-  fs.mkdirSync(TMG_PROFILE_DIR, { recursive: true });
   const headless = req.headless ?? false;
-  const context: BrowserContext = await chromium.launchPersistentContext(TMG_PROFILE_DIR, {
-    headless,
-    slowMo: ACTION_SLOW_MO,
-    viewport: { width: 1400, height: 900 },
-    args: CHROMIUM_ARGS,
-  });
+  const context = await getOrOpenBrowserContext(headless);
 
   let processedCount = 0;
   let ok = false;
   try {
-    const page = context.pages()[0] ?? await context.newPage();
+    const page = req.useExistingBrowser
+      ? await resolveBulkPageOrThrow(context, ctx)
+      : await waitForBulkMainScreen(context, ctx);
     page.setDefaultTimeout(120000);
-
-    await waitForBulkMainScreen(page, ctx);
 
     const start = req.startRowIndex ?? 0;
     for (let i = start; i < rows.length; i++) {
@@ -415,11 +417,8 @@ export async function runTmgCollectWorkflow(
         'next-row',
         'Chromium 창 유지',
         undefined,
-        ok ? '완료 — 창을 직접 닫으세요' : '오류 확인 — 창을 직접 닫으세요',
+        ok ? '완료 — 창을 직접 닫으세요' : '오류 — 창 확인 후 다시 시도',
       );
-      await context.waitForEvent('close', { timeout: 1_800_000 }).catch(() => undefined);
-    } else {
-      await context.close().catch(() => undefined);
     }
   }
 }
