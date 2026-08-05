@@ -11,7 +11,7 @@ export const CHROMIUM_ARGS = [
   '--no-default-browser-check',
 ];
 
-export const ACTION_SLOW_MO = 500;
+export const ACTION_SLOW_MO = 800;
 
 let sharedContext: BrowserContext | null = null;
 

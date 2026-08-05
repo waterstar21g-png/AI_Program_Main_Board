@@ -11,7 +11,9 @@ export function ProductDataCollectApp() {
   const [saveCount, setSaveCount] = useState(3);
   const [rows, setRows] = useState<TmgCollectRow[]>([]);
   const [fileName, setFileName] = useState('');
+  const [browserOpen, setBrowserOpen] = useState(false);
   const [running, setRunning] = useState(false);
+  const [opening, setOpening] = useState(false);
   const [logs, setLogs] = useState<WorkflowStepLog[]>([]);
   const [activeStep, setActiveStep] = useState<WorkflowStepId | null>(null);
   const [error, setError] = useState('');
@@ -32,6 +34,24 @@ export function ProductDataCollectApp() {
     }
   }, []);
 
+  const openBrowser = async () => {
+    setOpening(true);
+    setError('');
+    try {
+      const res = await fetch('/api/product-collect/open', { method: 'POST' });
+      const data = await res.json() as { ok?: boolean; message?: string };
+      if (!res.ok || !data.ok) {
+        setError(data.message ?? 'Chromium 열기 실패');
+        return;
+      }
+      setBrowserOpen(true);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Chromium 열기 실패');
+    } finally {
+      setOpening(false);
+    }
+  };
+
   const runCollect = async () => {
     setRunning(true);
     setError('');
@@ -47,6 +67,7 @@ export function ProductDataCollectApp() {
           saveCount,
           headless: false,
           keepBrowserOpen: true,
+          useExistingBrowser: true,
         }),
       });
 
@@ -99,8 +120,8 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>로그인은 Chromium 창에서 직접</strong> 하세요. 프로그램은{' '}
-            <strong>대량수집 메인 화면</strong>부터 자동 진행합니다.
+            <strong>① Chromium 열기</strong> → 로그인 → <strong>상품데이터 대량수집</strong> 화면 이동 →{' '}
+            <strong>② 수집 시작</strong> (각 단계마다 빨간 테두리·클릭이 Chromium에 보임)
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -143,10 +164,7 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 작업 흐름</h2>
-        <p className="panel__hint">
-          실행 → Chromium 열림 → <strong>창 닫지 말고</strong> 로그인 → 대량수집 화면 이동 (최대 5분) → 자동 진행
-        </p>
+        <h2 className="panel__title">2. 실행 (2단계)</h2>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (
             <li
@@ -154,18 +172,26 @@ export function ProductDataCollectApp() {
               className={activeStep === s.id ? 'workflow-steps__item is-active' : 'workflow-steps__item'}
             >
               {i + 1}. {s.label}
-              {activeStep === s.id && <span className="workflow-steps__now"> ← 진행 중</span>}
+              {activeStep === s.id && <span className="workflow-steps__now"> ← Chromium에서 진행 중</span>}
             </li>
           ))}
         </ol>
-        <div className="panel__footer panel__footer--compact">
+        <div className="panel__footer panel__footer--compact" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn btn--sm"
+            disabled={opening || running}
+            onClick={() => void openBrowser()}
+          >
+            {opening ? '열는 중…' : browserOpen ? '① Chromium 다시 열기' : '① Chromium 열기'}
+          </button>
           <button
             type="button"
             className="btn btn--primary btn--sm"
             disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '수집 실행 중…' : '3. 자동 수집 시작'}
+            {running ? '단계별 실행 중…' : '② 지금 화면에서 수집 시작'}
           </button>
         </div>
       </section>

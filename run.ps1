@@ -22,19 +22,21 @@ New-Item -ItemType Directory -Force -Path "components" | Out-Null
 New-Item -ItemType Directory -Force -Path "app\api\product-collect\run" | Out-Null
 
 $files = @(
-  @("components\ProgramBoardApp.tsx", "$Raw/components/ProgramBoardApp.tsx"),
-  @("components\ProductDataCollectApp.tsx", "$Raw/components/ProductDataCollectApp.tsx"),
-  @("app\layout.tsx", "$Raw/app/layout.tsx"),
-  @("app\globals.css", "$Raw/app/globals.css"),
-  @("lib\programs\registry.tsx", "$Raw/lib/programs/registry.tsx"),
-  @("lib\app-version.ts", "$Raw/lib/app-version.ts"),
-  @("lib\product-data-collect\types.ts", "$Raw/lib/product-data-collect/types.ts"),
-  @("lib\product-data-collect\steps.ts", "$Raw/lib/product-data-collect/steps.ts"),
-  @("lib\product-data-collect\runner.ts", "$Raw/lib/product-data-collect/runner.ts"),
-  @("lib\product-data-collect\excel-import.ts", "$Raw/lib/product-data-collect/excel-import.ts"),
-  @("app\api\product-collect\run\route.ts", "$Raw/app/api/product-collect/run/route.ts"),
-  @("run.ps1", "$Raw/run.ps1")
-)
+    @("lib\product-data-collect\browser-session.ts", "$Raw/lib/product-data-collect/browser-session.ts"),
+    @("components\ProgramBoardApp.tsx", "$Raw/components/ProgramBoardApp.tsx"),
+    @("components\ProductDataCollectApp.tsx", "$Raw/components/ProductDataCollectApp.tsx"),
+    @("app\layout.tsx", "$Raw/app/layout.tsx"),
+    @("app\globals.css", "$Raw/app/globals.css"),
+    @("lib\programs\registry.tsx", "$Raw/lib/programs/registry.tsx"),
+    @("lib\app-version.ts", "$Raw/lib/app-version.ts"),
+    @("lib\product-data-collect\types.ts", "$Raw/lib/product-data-collect/types.ts"),
+    @("lib\product-data-collect\steps.ts", "$Raw/lib/product-data-collect/steps.ts"),
+    @("lib\product-data-collect\runner.ts", "$Raw/lib/product-data-collect/runner.ts"),
+    @("lib\product-data-collect\excel-import.ts", "$Raw/lib/product-data-collect/excel-import.ts"),
+    @("app\api\product-collect\run\route.ts", "$Raw/app/api/product-collect/run/route.ts"),
+    @("app\api\product-collect\open\route.ts", "$Raw/app/api/product-collect/open/route.ts"),
+    @("run.ps1", "$Raw/run.ps1")
+  )
 foreach ($f in $files) {
   try {
     Invoke-WebRequest -Uri $f[1] -OutFile $f[0] -UseBasicParsing
