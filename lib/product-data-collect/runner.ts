@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { attachBrowser } from '@/lib/product-data-collect/browser-session';
+import { getCollectBrowserContext } from '@/lib/product-data-collect/browser-session';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 type LogCtx = {
@@ -268,13 +268,13 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
-  catchWindowPopupClose(page);
+  const windowClosed = catchWindowPopupClose(page);
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
 
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
   pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 감지', rowIndex);
-  await waitForSearchPopupClosed(page);
+  await waitForSearchPopupClosed(page, windowClosed);
   pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
 }
 

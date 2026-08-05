@@ -46,6 +46,11 @@ export async function tryConnectCdp(): Promise<BrowserContext | null> {
   }
 }
 
+async function gotoMainUrl(page: Page, mainUrl: string) {
+  if (page.url().includes(TMG_BULK_PATH)) return;
+  await page.goto(mainUrl, { waitUntil: 'domcontentloaded', timeout: 120000 });
+}
+
 async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
   fs.mkdirSync(TMG_PROFILE_DIR, { recursive: true });
   const ctx = await chromium.launchPersistentContext(TMG_PROFILE_DIR, {
@@ -55,9 +60,12 @@ async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
     args: CHROMIUM_ARGS,
   });
   setStoredContext(ctx);
+  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  await gotoMainUrl(page, TMG_BULK_URL);
   return ctx;
 }
 
+/** ① 전용 — Chromium 열고 망고 메인 URL로 이동 */
 export async function attachBrowser(): Promise<BrowserContext> {
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
@@ -67,7 +75,8 @@ export async function attachBrowser(): Promise<BrowserContext> {
   return launchBrowserOnce(false);
 }
 
-export async function requireExistingBrowserContext(): Promise<BrowserContext> {
+/** ② 전용 — 이미 연 브라우저만 (새 창 안 열음) */
+export async function getCollectBrowserContext(): Promise<BrowserContext> {
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
   const cdp = await tryConnectCdp();
@@ -86,19 +95,18 @@ export function findBulkPage(context: BrowserContext): Page | null {
   return null;
 }
 
-/** ① 메인 URL로 Chromium 열기 */
+/** ① 메인 URL로 Chromium 열기 — about:blank 금지, 항상 망고 주소 */
 export async function openBrowserToMainUrl(mainUrl = TMG_BULK_URL): Promise<Page> {
   const context = await attachBrowser();
-  let page = findBulkPage(context);
-  if (!page) {
-    page =
-      context.pages().find(p => !p.isClosed() && !p.url().includes('about:blank')) ??
-      context.pages().find(p => !p.isClosed()) ??
-      (await context.newPage());
+
+  const bulk = findBulkPage(context);
+  if (bulk) {
+    await bulk.bringToFront();
+    return bulk;
   }
-  if (!page.url().includes(TMG_BULK_PATH)) {
-    await page.goto(mainUrl, { waitUntil: 'domcontentloaded', timeout: 120000 });
-  }
+
+  const page = context.pages().find(p => !p.isClosed()) ?? (await context.newPage());
+  await gotoMainUrl(page, mainUrl);
   await page.bringToFront();
   return page;
 }
