@@ -1,2 +1,2 @@
 /** package.json version 과 동기화 */
-export const APP_VERSION = '1.9.0';
+export const APP_VERSION = '1.9.1';

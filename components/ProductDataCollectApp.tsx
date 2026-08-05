@@ -120,8 +120,8 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>① Chromium 열기</strong> → 로그인 → <strong>상품데이터 대량수집</strong> 화면 이동 →{' '}
-            <strong>② 수집 시작</strong> (각 단계마다 빨간 테두리·클릭이 Chromium에 보임)
+            <strong>로그인은 프로그램이 하지 않습니다.</strong> ① Chromium 열기 → (직접) 대량수집 메인 진입 →{' '}
+            <strong>② 수집 시작</strong> — 메인 화면에서 1~6단계를 망고 속도로 진행합니다.
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -164,7 +164,7 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 실행 (2단계)</h2>
+        <h2 className="panel__title">2. 실행 (메인 진입 후 1~6단계)</h2>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (
             <li
