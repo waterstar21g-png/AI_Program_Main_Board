@@ -17,8 +17,9 @@ if not errorlevel 1 (
     echo [Git] 최신 소스 받는 중...
     git pull origin main
     if not errorlevel 1 (
+      if exist ".next\" rmdir /s /q ".next"
       echo.
-      echo [완료] git pull 성공. run.bat 실행하세요:
+      echo [완료] git pull 성공. 캐시 삭제 후 run.bat 실행:
       echo   .\run.bat
       echo.
       pause

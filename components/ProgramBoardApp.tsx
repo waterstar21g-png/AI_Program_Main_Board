@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { APP_NAME } from '@/lib/app-name';
+import { APP_VERSION } from '@/lib/app-version';
 import { DEFAULT_PROGRAM_ID, PROGRAMS } from '@/lib/programs/registry';
 
 export function ProgramBoardApp() {
@@ -17,7 +18,9 @@ export function ProgramBoardApp() {
 
       <div className="program-board__body">
         <aside className="program-board__sidebar">
-          <div className="program-board__sidebar-title">프로그램 목록</div>
+          <div className="program-board__sidebar-title">
+            프로그램 목록 <span className="program-board__version">v{APP_VERSION}</span>
+          </div>
           <ul className="program-board__list" role="listbox" aria-label="프로그램 목록">
             {PROGRAMS.map(program => (
               <li key={program.id}>
