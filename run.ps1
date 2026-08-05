@@ -14,11 +14,15 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
+$TargetVersion = "1.6.6"
 $needDownload = $false
 if (-not (Test-Path "components\ProductDataCollectApp.tsx")) { $needDownload = $true }
 if (-not (Test-Path "lib\product-data-collect\runner.ts")) { $needDownload = $true }
 if (Test-Path "lib\programs\registry.tsx") {
   if (Select-String -Path "lib\programs\registry.tsx" -Pattern "ProductCapture" -Quiet) { $needDownload = $true }
+} else { $needDownload = $true }
+if (Test-Path "lib\app-version.ts") {
+  if (-not (Select-String -Path "lib\app-version.ts" -Pattern $TargetVersion -Quiet)) { $needDownload = $true }
 } else { $needDownload = $true }
 
 if ($needDownload) {
@@ -30,12 +34,14 @@ if ($needDownload) {
 
   $files = @(
     @("lib\programs\registry.tsx", "$Raw/lib/programs/registry.tsx"),
+    @("lib\app-version.ts", "$Raw/lib/app-version.ts"),
     @("components\ProductDataCollectApp.tsx", "$Raw/components/ProductDataCollectApp.tsx"),
     @("lib\product-data-collect\types.ts", "$Raw/lib/product-data-collect/types.ts"),
     @("lib\product-data-collect\steps.ts", "$Raw/lib/product-data-collect/steps.ts"),
     @("lib\product-data-collect\runner.ts", "$Raw/lib/product-data-collect/runner.ts"),
     @("lib\product-data-collect\excel-import.ts", "$Raw/lib/product-data-collect/excel-import.ts"),
-    @("app\api\product-collect\run\route.ts", "$Raw/app/api/product-collect/run/route.ts")
+    @("app\api\product-collect\run\route.ts", "$Raw/app/api/product-collect/run/route.ts"),
+    @("app\globals.css", "$Raw/app/globals.css")
   )
   foreach ($f in $files) {
     Invoke-WebRequest -Uri $f[1] -OutFile $f[0] -UseBasicParsing

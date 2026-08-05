@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { parseCategoryUrlExcel } from '@/lib/product-data-collect/excel-import';
 import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
-import type { TmgCollectRow, WorkflowStepLog } from '@/lib/product-data-collect/types';
+import type { TmgCollectRow, WorkflowStepId, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 const SITE_NAME = '더망고';
 
@@ -15,8 +15,9 @@ export function ProductDataCollectApp() {
   const [fileName, setFileName] = useState('');
   const [running, setRunning] = useState(false);
   const [logs, setLogs] = useState<WorkflowStepLog[]>([]);
+  const [activeStep, setActiveStep] = useState<WorkflowStepId | null>(null);
   const [error, setError] = useState('');
-  const fileRef = useRef<HTMLInputElement>(null);
+  const logEndRef = useRef<HTMLDivElement>(null);
 
   const onExcelPick = useCallback(async (file?: File | null) => {
     if (!file) return;
@@ -37,6 +38,7 @@ export function ProductDataCollectApp() {
     setRunning(true);
     setError('');
     setLogs([]);
+    setActiveStep(null);
     try {
       const res = await fetch('/api/product-collect/run', {
         method: 'POST',
@@ -50,13 +52,47 @@ export function ProductDataCollectApp() {
           headless: false,
         }),
       });
-      const data = await res.json();
-      setLogs(data.logs ?? []);
-      if (!data.ok) setError(data.message ?? '수집 실패');
+
+      if (!res.ok || !res.body) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.message ?? '수집 실패');
+        return;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const msg = JSON.parse(line) as {
+            type: string;
+            log?: WorkflowStepLog;
+            ok?: boolean;
+            message?: string;
+          };
+          if (msg.type === 'log' && msg.log) {
+            setLogs(prev => [...prev, msg.log!]);
+            setActiveStep(msg.log.step);
+            logEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+          }
+          if (msg.type === 'done') {
+            if (!msg.ok) setError(msg.message ?? '수집 실패');
+            setActiveStep(null);
+          }
+        }
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '요청 실패');
     } finally {
       setRunning(false);
+      setActiveStep(null);
     }
   };
 
@@ -101,9 +137,8 @@ export function ProductDataCollectApp() {
         </div>
         <div className="panel__head" style={{ marginTop: '0.5rem' }}>
           <label className="field">
-            <span className="field__label">카테고리 URL 엑셀 (.xlsx)</span>
+            <span className="field__label">수집 대상 엑셀 (.xlsx)</span>
             <input
-              ref={fileRef}
               type="file"
               accept=".xlsx,.xls"
               className="input"
@@ -130,14 +165,20 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 작업 흐름 (스텝 by 스텝)</h2>
+        <h2 className="panel__title">2. 작업 흐름 — Chromium 창에서 단계별 확인</h2>
+        <p className="panel__hint">
+          실행 시 더망고 Chromium 창이 열립니다. 클릭·입력 위치에 <strong>빨간 테두리</strong>가 표시되며, 단계마다 잠시 멈춥니다.
+        </p>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (
-            <li key={s.id}>
+            <li
+              key={s.id}
+              className={activeStep === s.id ? 'workflow-steps__item is-active' : 'workflow-steps__item'}
+            >
               {i + 1}. {s.label}
+              {activeStep === s.id && <span className="workflow-steps__now"> ← 진행 중</span>}
             </li>
           ))}
-          <li>{WORKFLOW_STEPS.length + 1}. 다음 엑셀 행으로 1번 반복 (전체 행)</li>
         </ol>
         <div className="panel__footer panel__footer--compact">
           <button
@@ -146,20 +187,16 @@ export function ProductDataCollectApp() {
             disabled={running || !rows.length || !loginId || !loginPw}
             onClick={() => void runCollect()}
           >
-            {running ? '수집 실행 중… (브라우저 확인)' : '3. 자동 수집 시작'}
+            {running ? '수집 실행 중… (Chromium + 아래 로그)' : '3. 자동 수집 시작'}
           </button>
         </div>
       </section>
 
-      {error && (
-        <section className="notice notice--error">
-          <p>{error}</p>
-        </section>
-      )}
-
-      {logs.length > 0 && (
+      {(running || logs.length > 0) && (
         <section className="panel panel--compact">
-          <h2 className="panel__title">실행 로그</h2>
+          <h2 className="panel__title">
+            실행 로그 {running && <span className="badge badge--live">LIVE</span>}
+          </h2>
           <div className="log-box">
             {logs.map((l, i) => (
               <div key={i} className="log-line">
@@ -169,7 +206,14 @@ export function ProductDataCollectApp() {
                 {l.message && <span className="log-msg"> — {l.message}</span>}
               </div>
             ))}
+            <div ref={logEndRef} />
           </div>
+        </section>
+      )}
+
+      {error && (
+        <section className="notice notice--error">
+          <p>{error}</p>
         </section>
       )}
     </div>

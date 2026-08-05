@@ -1220,6 +1220,29 @@ html.is-touch .btn:active:not(:disabled) {
 
 .workflow-steps li { margin-bottom: 0.2rem; }
 
+.workflow-steps__item.is-active {
+  color: #1d4ed8;
+  font-weight: 700;
+  background: #eff6ff;
+  border-radius: 0.25rem;
+  padding: 0.1rem 0.25rem;
+}
+
+.workflow-steps__now {
+  color: #dc2626;
+  font-weight: 700;
+}
+
+.badge--live {
+  background: #dc2626;
+  color: #fff;
+  animation: pulse-live 1s ease-in-out infinite;
+}
+
+@keyframes pulse-live {
+  50% { opacity: 0.7; }
+}
+
 .log-box {
   max-height: 220px;
   overflow: auto;

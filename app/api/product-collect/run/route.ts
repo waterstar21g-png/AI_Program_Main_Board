@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { runTmgCollectWorkflow } from '@/lib/product-data-collect/runner';
 import type { TmgCollectRequest } from '@/lib/product-data-collect/types';
 
@@ -10,14 +10,33 @@ export async function POST(req: NextRequest) {
   try {
     body = await req.json();
   } catch {
-    return NextResponse.json({ ok: false, message: 'JSON 본문이 필요합니다.' }, { status: 400 });
+    return new Response(JSON.stringify({ ok: false, message: 'JSON 본문이 필요합니다.' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
-  try {
-    const result = await runTmgCollectWorkflow(body);
-    return NextResponse.json(result, { status: result.ok ? 200 : 502 });
-  } catch (e) {
-    const message = e instanceof Error ? e.message : '실행 실패';
-    return NextResponse.json({ ok: false, message, logs: [], processedCount: 0 }, { status: 500 });
-  }
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (obj: object) => controller.enqueue(encoder.encode(`${JSON.stringify(obj)}\n`));
+      try {
+        const result = await runTmgCollectWorkflow(body, log => {
+          send({ type: 'log', log });
+        });
+        send({ type: 'done', ...result });
+      } catch (e) {
+        const message = e instanceof Error ? e.message : '실행 실패';
+        send({ type: 'done', ok: false, message, logs: [], processedCount: 0 });
+      }
+      controller.close();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-cache',
+    },
+  });
 }
