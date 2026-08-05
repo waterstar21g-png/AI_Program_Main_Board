@@ -1,11 +1,25 @@
-import { openBrowserToLoginUrl } from '@/lib/product-data-collect/browser-session';
 import { TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function POST() {
+  // Vercel(서버리스)에서는 Chromium 불가 — 로컬 PC 전용
+  if (process.env.VERCEL) {
+    return Response.json(
+      {
+        ok: false,
+        message:
+          '상품데이터수집(Chromium)은 로컬 PC에서만 실행됩니다.\n' +
+          'PC에서 .\\run.ps1 실행 후 사용하세요.\n' +
+          `보드 UI: https://sangpum-capture-price.vercel.app`,
+      },
+      { status: 400 },
+    );
+  }
+
   try {
+    const { openBrowserToLoginUrl } = await import('@/lib/product-data-collect/browser-session');
     const page = await openBrowserToLoginUrl(TMG_LOGIN_URL);
     const url = page.url();
     const onBulk = url.includes('getGoodsNew.php');

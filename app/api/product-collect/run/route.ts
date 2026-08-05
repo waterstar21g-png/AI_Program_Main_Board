@@ -1,11 +1,30 @@
 import { NextRequest } from 'next/server';
-import { runTmgCollectWorkflow } from '@/lib/product-data-collect/runner';
 import type { TmgCollectRequest } from '@/lib/product-data-collect/types';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
 export async function POST(req: NextRequest) {
+  if (process.env.VERCEL) {
+    return new Response(
+      JSON.stringify({
+        type: 'done',
+        ok: false,
+        message:
+          '상품데이터수집(Chromium)은 로컬 PC에서만 실행됩니다.\nPC에서 .\\run.ps1 실행 후 사용하세요.',
+        logs: [],
+        processedCount: 0,
+      }) + '\n',
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-cache',
+        },
+      },
+    );
+  }
+
   let body: TmgCollectRequest;
   try {
     body = await req.json();
@@ -15,6 +34,8 @@ export async function POST(req: NextRequest) {
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  const { runTmgCollectWorkflow } = await import('@/lib/product-data-collect/runner');
 
   const encoder = new TextEncoder();
   const stream = new ReadableStream({
