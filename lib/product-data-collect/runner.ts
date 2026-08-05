@@ -4,9 +4,55 @@ import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib
 
 /**
  * 속도 정책
- * - 필드 입력·버튼 클릭: 기계적 속도 (붙여넣기·즉시 클릭)
- * - 대기: 버튼 클릭 후 망고 팝업이 닫힐 때만 ([3] 검색 팝업, [6] 저장 팝업)
+ * - 필드·클릭: 즉시
+ * - 대기: 시간(sleep) 아님 — 팝업 닫힘·버튼 나타남 등 화면 상태 변화만 감지
  */
+
+/** 화면 안 검색 레이어(상품저장설정 제외)가 사라질 때까지 */
+async function waitInPageSearchLayerHidden(page: Page): Promise<void> {
+  await page
+    .waitForFunction(
+      () => {
+        const nodes = document.querySelectorAll(
+          '[role="dialog"], .ui-dialog, .modal, div[id*="layer"], div[id*="popup"], div[class*="layer"], div[class*="popup"]',
+        );
+        for (const el of nodes) {
+          const node = el as HTMLElement;
+          const style = window.getComputedStyle(node);
+          const visible =
+            style.display !== 'none' && style.visibility !== 'hidden' && node.offsetParent !== null;
+          if (visible && !node.textContent?.includes('상품저장설정')) return false;
+        }
+        return true;
+      },
+      null,
+      { timeout: 180000 },
+    )
+    .catch(() => undefined);
+}
+
+/** [3] 검색 완료 — 새창 팝업 닫힘 OR 화면안 레이어 사라짐 OR 저장버튼 표시 */
+async function waitSearchComplete(page: Page, popupClose: Promise<void>): Promise<void> {
+  const saveBtnReady = saveAllButton(page).first().waitFor({ state: 'visible', timeout: 180000 });
+  await Promise.race([popupClose, waitInPageSearchLayerHidden(page), saveBtnReady]);
+  await saveBtnReady;
+}
+
+/** 새 창 팝업이 열리면 닫힐 때까지 (없으면 즉시 통과) */
+function listenWindowPopupClose(page: Page): Promise<void> {
+  return new Promise(resolve => {
+    page.once('popup', async popup => {
+      await popup.waitForEvent('close').catch(() => undefined);
+      resolve();
+    });
+    saveAllButton(page)
+      .first()
+      .waitFor({ state: 'visible', timeout: 180000 })
+      .then(() => resolve())
+      .catch(() => resolve());
+  });
+}
+
 type LogCtx = {
   logs: WorkflowStepLog[];
   onLog?: (entry: WorkflowStepLog) => void;
