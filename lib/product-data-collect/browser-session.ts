@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
-import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
+import { TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 
 export const TMG_PROFILE_DIR = path.join(process.cwd(), '.local', 'tmg-chromium-profile');
 export const CDP_URL = 'http://127.0.0.1:9222';
@@ -46,9 +46,10 @@ export async function tryConnectCdp(): Promise<BrowserContext | null> {
   }
 }
 
-async function gotoMainUrl(page: Page, mainUrl: string) {
-  if (page.url().includes(TMG_BULK_PATH)) return;
-  await page.goto(mainUrl, { waitUntil: 'domcontentloaded', timeout: 120000 });
+async function gotoUrl(page: Page, url: string) {
+  const current = page.url();
+  if (current === url || current.startsWith(url.replace(/\/$/, ''))) return;
+  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120000 });
 }
 
 async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
@@ -61,11 +62,10 @@ async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
   });
   setStoredContext(ctx);
   const page = ctx.pages()[0] ?? (await ctx.newPage());
-  await gotoMainUrl(page, TMG_BULK_URL);
+  await gotoUrl(page, TMG_LOGIN_URL);
   return ctx;
 }
 
-/** ① 전용 — Chromium 열고 망고 메인 URL로 이동 */
 export async function attachBrowser(): Promise<BrowserContext> {
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
@@ -75,7 +75,6 @@ export async function attachBrowser(): Promise<BrowserContext> {
   return launchBrowserOnce(false);
 }
 
-/** ② 전용 — 이미 연 브라우저만 (새 창 안 열음) */
 export async function getCollectBrowserContext(): Promise<BrowserContext> {
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
@@ -84,7 +83,7 @@ export async function getCollectBrowserContext(): Promise<BrowserContext> {
 
   throw new Error(
     'Chromium이 연결되지 않았습니다.\n' +
-      '① 메인 URL 열기를 먼저 누른 뒤, 로그인 후 ② 수집 시작을 누르세요.',
+      '① 로그인 URL 열기 → 로그인 → 대량수집 메인 이동 → ② 수집 시작',
   );
 }
 
@@ -95,22 +94,15 @@ export function findBulkPage(context: BrowserContext): Page | null {
   return null;
 }
 
-/** ① 메인 URL로 Chromium 열기 — about:blank 금지, 항상 망고 주소 */
-export async function openBrowserToMainUrl(mainUrl = TMG_BULK_URL): Promise<Page> {
+/** ① 로그인 URL로 Chromium 열기 */
+export async function openBrowserToLoginUrl(loginUrl = TMG_LOGIN_URL): Promise<Page> {
   const context = await attachBrowser();
-
-  const bulk = findBulkPage(context);
-  if (bulk) {
-    await bulk.bringToFront();
-    return bulk;
-  }
-
   const page = context.pages().find(p => !p.isClosed()) ?? (await context.newPage());
-  await gotoMainUrl(page, mainUrl);
+  await gotoUrl(page, loginUrl);
   await page.bringToFront();
   return page;
 }
 
 export async function openTmgBrowserPage(): Promise<Page> {
-  return openBrowserToMainUrl();
+  return openBrowserToLoginUrl();
 }

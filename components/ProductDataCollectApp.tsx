@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { parseCategoryUrlExcel } from '@/lib/product-data-collect/excel-import';
-import { WORKFLOW_STEPS, TMG_BULK_URL } from '@/lib/product-data-collect/steps';
+import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepId, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 const SITE_NAME = '더망고';
@@ -120,8 +120,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>① 메인 URL 열기</strong> → 로그인 → <strong>② 수집 시작</strong>.
-            필드·클릭 <strong>즉시</strong>. 팝업은 <strong>닫힘·버튼 표시</strong> 감지 (시간 대기 아님).
+            <strong>① 로그인 URL 열기</strong> → 로그인 → 대량수집 메인 이동 → <strong>② 수집 시작</strong>.
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -130,7 +129,11 @@ export function ProductDataCollectApp() {
             <input className="input" value={SITE_NAME} readOnly />
           </label>
           <label className="field">
-            <span className="field__label">대량수집 URL</span>
+            <span className="field__label">로그인 URL (① 열기)</span>
+            <input className="input" value={TMG_LOGIN_URL} readOnly />
+          </label>
+          <label className="field">
+            <span className="field__label">대량수집 URL (② 시작 화면)</span>
             <input className="input" value={TMG_BULK_URL} readOnly />
           </label>
         </div>
@@ -183,7 +186,7 @@ export function ProductDataCollectApp() {
             disabled={opening || running}
             onClick={() => void openBrowser()}
           >
-            {opening ? '여는 중…' : browserOpen ? '① 메인 URL 다시 열기' : '① 메인 URL 열기'}
+            {opening ? '여는 중…' : browserOpen ? '① 로그인 URL 다시 열기' : '① 로그인 URL 열기'}
           </button>
           <button
             type="button"

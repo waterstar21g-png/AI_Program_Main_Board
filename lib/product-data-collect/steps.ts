@@ -1,5 +1,8 @@
 import type { WorkflowStepId } from '@/lib/product-data-collect/types';
 
+export const TMG_LOGIN_URL =
+  'https://tmg1898.cafe24.com/mall/admin/admin_login.php';
+
 export const TMG_BULK_URL =
   'https://tmg1898.cafe24.com/mall/admin/shop/getGoodsNew.php';
 
