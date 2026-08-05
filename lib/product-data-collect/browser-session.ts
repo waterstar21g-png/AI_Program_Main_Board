@@ -121,40 +121,89 @@ async function waitBulkReady(page: Page) {
     .waitFor({ state: 'visible', timeout: 30_000 });
 }
 
-/** 하위「상품데이터 대량수집 …」후보 (보이는 것 우선) */
-function bulkSubmenuLocators(page: Page) {
-  return [
-    // 가장 확실: getGoodsNew.php 링크
-    page.locator('a[href*="getGoodsNew.php"]'),
-    page.locator('a[href*="getGoodsNew"]'),
-    // 스크린샷 문구 전체
-    page.getByRole('link', { name: /상품데이터\s*대량수집/ }),
-    page.locator('a').filter({ hasText: /상품데이터\s*대량수집/ }),
-    page.locator('a, li, span, td, div').filter({ hasText: /상품데이터\s*대량수집/ }),
-    page.getByText(/상품데이터\s*대량수집\s*\(?\s*리스팅페이지/),
-    page.getByText(/상품데이터\s*대량수집/),
-  ];
-}
+/**
+ * DOM에 숨겨진(display:none) 드롭다운도 JS로 열어
+ * 「상품데이터수집」→「상품데이터 대량수집」클릭
+ * 프레임 포함 전체 탐색
+ */
+async function jsClickBulkSubmenu(page: Page): Promise<string> {
+  const contexts = [page.mainFrame(), ...page.frames().filter(f => f !== page.mainFrame())];
 
-async function clickFirstVisible(
-  locators: ReturnType<typeof bulkSubmenuLocators>,
-  timeoutMs = 2_500,
-): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    for (const loc of locators) {
-      const el = loc.first();
-      if (await el.isVisible().catch(() => false)) {
-        await el.scrollIntoViewIfNeeded().catch(() => undefined);
-        await el.click({ force: true }).catch(async () => {
-          await el.evaluate((n: HTMLElement) => n.click());
-        });
-        return true;
-      }
-    }
-    await sleep(200);
+  for (const ctx of contexts) {
+    const result = await ctx
+      .evaluate(() => {
+        const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
+
+        const fire = (el: Element, type: string) => {
+          el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+        };
+
+        const reveal = (el: HTMLElement) => {
+          let cur: HTMLElement | null = el;
+          while (cur) {
+            const st = cur.style;
+            if (st) {
+              if (st.display === 'none') st.display = 'block';
+              if (st.visibility === 'hidden') st.visibility = 'visible';
+            }
+            cur = cur.parentElement;
+          }
+        };
+
+        const clickEl = (el: HTMLElement) => {
+          reveal(el);
+          fire(el, 'mouseover');
+          fire(el, 'mouseenter');
+          fire(el, 'mousedown');
+          fire(el, 'mouseup');
+          el.click();
+        };
+
+        // A) href에 getGoodsNew 있는 링크 직접 클릭 (숨김 포함)
+        const hrefLinks = Array.from(
+          document.querySelectorAll('a[href*="getGoodsNew"]'),
+        ) as HTMLAnchorElement[];
+        if (hrefLinks.length) {
+          const preferred =
+            hrefLinks.find(a => /대량수집|리스팅/.test(norm(a.textContent || ''))) ?? hrefLinks[0]!;
+          clickEl(preferred);
+          return `href:${preferred.href}`;
+        }
+
+        // B) 상단「상품데이터수집」열기
+        const nodes = Array.from(document.querySelectorAll('a, li, span, td, th, div, button'));
+        const top = nodes.find(el => {
+          const t = norm(el.textContent || '');
+          // 하위메뉴 문구가 길게 섞인 노드는 제외
+          if (t.includes('대량수집')) return false;
+          return t === '상품데이터수집' || /^상품데이터수집$/.test(t);
+        }) as HTMLElement | undefined;
+
+        if (top) {
+          clickEl(top);
+          fire(top, 'mouseover');
+          fire(top, 'mouseenter');
+        }
+
+        // C) 하위「상품데이터 대량수집 …」
+        const sub = nodes.find(el => {
+          const t = norm(el.textContent || '');
+          return /상품데이터\s*대량수집/.test(t) || /대량수집.*리스팅페이지/.test(t);
+        }) as HTMLElement | undefined;
+
+        if (sub) {
+          const link = (sub.closest('a') as HTMLElement | null) || sub;
+          clickEl(link);
+          return `text:${norm(link.textContent || '').slice(0, 80)}`;
+        }
+
+        return '';
+      })
+      .catch(() => '');
+
+    if (result) return result;
   }
-  return false;
+  return '';
 }
 
 /**
@@ -164,52 +213,40 @@ async function clickFirstVisible(
 export async function clickBulkCollectMenu(page: Page): Promise<void> {
   await page.bringToFront().catch(() => undefined);
 
-  // 0) 하위 링크가 이미 보이면 바로 클릭
-  if (await clickFirstVisible(bulkSubmenuLocators(page), 800)) {
+  // 1) Playwright 가시 클릭 시도
+  const visibleSub = page
+    .locator('a[href*="getGoodsNew"]')
+    .or(page.getByRole('link', { name: /상품데이터\s*대량수집/ }))
+    .or(page.locator('a').filter({ hasText: /상품데이터\s*대량수집/ }))
+    .first();
+
+  const top = page
+    .locator('a, li, span, td')
+    .filter({ hasText: /^상품데이터수집$/ })
+    .first();
+
+  if (await top.isVisible().catch(() => false)) {
+    await top.hover({ force: true }).catch(() => undefined);
+    await sleep(300);
+    await top.click({ force: true }).catch(() => undefined);
+    await sleep(300);
+  }
+
+  if (await visibleSub.isVisible().catch(() => false)) {
+    await visibleSub.click({ force: true }).catch(() => undefined);
     await waitBulkReady(page);
     return;
   }
 
-  // 1) 상단 메뉴「상품데이터수집」열기 (호버 드롭다운)
-  const topMenus = [
-    page.getByRole('link', { name: /^상품데이터수집/ }),
-    page.locator('a').filter({ hasText: /^상품데이터수집/ }),
-    page.locator('li, span, td, div').filter({ hasText: /^상품데이터수집$/ }),
-    page.getByText('상품데이터수집', { exact: true }),
-    page.getByText(/상품데이터수집/),
-  ];
-
-  let topOpened = false;
-  for (const top of topMenus) {
-    const el = top.first();
-    if (!(await el.isVisible().catch(() => false))) continue;
-    await el.scrollIntoViewIfNeeded().catch(() => undefined);
-    await el.hover({ force: true }).catch(() => undefined);
-    await sleep(350);
-    // 호버만으로 안 열리면 클릭
-    if (!(await clickFirstVisible(bulkSubmenuLocators(page), 600))) {
-      await el.click({ force: true }).catch(() => undefined);
-      await sleep(400);
-    }
-    topOpened = true;
-    break;
+  // 2) 숨김 드롭다운/프레임 — JS로 강제 클릭
+  const viaJs = await jsClickBulkSubmenu(page);
+  if (viaJs) {
+    await sleep(500);
+    await waitBulkReady(page);
+    return;
   }
 
-  // 2) 하위 메뉴 클릭 (최대 2회 재시도)
-  for (let attempt = 0; attempt < 2; attempt++) {
-    if (await clickFirstVisible(bulkSubmenuLocators(page), 4_000)) {
-      await waitBulkReady(page);
-      return;
-    }
-    if (topOpened) {
-      // 다시 호버
-      const top = page.getByText(/상품데이터수집/).first();
-      await top.hover({ force: true }).catch(() => undefined);
-      await sleep(400);
-    }
-  }
-
-  // 3) 메뉴를 못 찾으면 URL 직접 이동 (초기화 목적 유지)
+  // 3) 최후: 대량수집 URL 직접 이동 (화면 초기화)
   await gotoUrl(page, TMG_BULK_URL);
   await waitBulkReady(page);
 }
@@ -252,6 +289,15 @@ export async function ensureBulkCollectPage(page: Page): Promise<Page> {
     await clickLoginIfNeeded(page);
   }
 
+  // 로그인 직후 상단 메뉴가 그려질 때까지 대기
+  if (!isBulkPage(page.url()) && !isLoginPage(page.url())) {
+    await page
+      .getByText(/상품데이터수집/)
+      .first()
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .catch(() => undefined);
+  }
+
   if (!isBulkPage(page.url())) {
     await openBulkMenuFromMain(page);
   }
@@ -263,6 +309,11 @@ export async function ensureBulkCollectPage(page: Page): Promise<Page> {
   // 세션 만료로 로그인으로 튕기면 재시도 1회
   if (isLoginPage(page.url())) {
     await clickLoginIfNeeded(page);
+    await page
+      .getByText(/상품데이터수집/)
+      .first()
+      .waitFor({ state: 'visible', timeout: 30_000 })
+      .catch(() => undefined);
     await openBulkMenuFromMain(page);
   }
 
