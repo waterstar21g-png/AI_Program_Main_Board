@@ -1,5 +1,6 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
 import { getCollectBrowserContext } from '@/lib/product-data-collect/browser-session';
+import { TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 type LogCtx = {
@@ -369,9 +370,9 @@ export async function runTmgCollectWorkflow(
   let processedCount = 0;
 
   try {
-    pushLog(ctx, 'open-page', 'Chromium 연결');
+    pushLog(ctx, 'open-page', 'Chromium 연결', undefined, TMG_LOGIN_URL);
     const context = await getCollectBrowserContext();
-    pushLog(ctx, 'open-page', 'Chromium 연결 — 완료');
+    pushLog(ctx, 'open-page', 'Chromium 연결 — 완료', undefined, TMG_LOGIN_URL);
 
     const page = await resolveBulkPageOrThrow(context, ctx);
     page.setDefaultTimeout(0);

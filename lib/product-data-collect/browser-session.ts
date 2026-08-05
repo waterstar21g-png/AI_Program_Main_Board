@@ -81,10 +81,8 @@ export async function getCollectBrowserContext(): Promise<BrowserContext> {
 
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
-  throw new Error(
-    'Chromium이 연결되지 않았습니다.\n' +
-      '① 로그인 URL 열기 → 로그인 → 대량수집 메인 이동 → ② 수집 시작',
-  );
+  // ① 안 눌러도 — Chromium 새로 열고 망고 로그인 URL로 이동 (프로그램이 인식)
+  return launchBrowserOnce(false);
 }
 
 export function findBulkPage(context: BrowserContext): Page | null {
