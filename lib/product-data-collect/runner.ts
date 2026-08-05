@@ -81,21 +81,43 @@ async function waitAbcPopupsGoneNaturally(page: Page, deadlineMs: number): Promi
   }
 }
 
-/** 검색 결과 상품이 화면에  manifest 있는가 (스크린샷 기준) */
+/** 검색 결과 상품이 하단에 보이는가 */
 async function hasProductResults(page: Page): Promise<boolean> {
-  if (await page.getByText(/검색된\s*상품\s*\d+/).first().isVisible().catch(() => false)) return true;
+  // 「검색된 상품 0개」는 결과 없음
+  if (await page.getByText(/검색된\s*상품\s*[1-9]\d*/).first().isVisible().catch(() => false)) {
+    return true;
+  }
   if (await page.getByText(/KRW\s*[\d,]+/).first().isVisible().catch(() => false)) return true;
-  const empty = await page
-    .getByText(/상품명 또는 검색 URL을 입력/)
-    .first()
-    .isVisible()
-    .catch(() => false);
-  if (empty) return false;
   return false;
 }
 
 /**
- * [1] URL검색 후: 팝업이 없어지고 + 검색상품이 보일 때까지
+ * 하단부 검색결과 없음 문구 (사용자 화면 그대로)
+ * [검색하신 검색에 대한 검색결과가 없습니다.]
+ * [정확한 검색어인지 다시한번 확인하시고 검색해 주세요.]
+ */
+async function hasNoSearchResults(page: Page): Promise<boolean> {
+  const patterns = [
+    /검색결과가\s*없습니다/,
+    /검색\s*결과가\s*없습니다/,
+    /검색하신\s*검색에\s*대한\s*검색결과가\s*없습니다/,
+    /정확한\s*검색어인지\s*다시한번\s*확인/,
+    /정확한\s*검색어인지\s*다시\s*한번\s*확인/,
+  ];
+  for (const re of patterns) {
+    if (await page.getByText(re).first().isVisible().catch(() => false)) return true;
+  }
+  // 「검색된 상품 0개」
+  if (await page.getByText(/검색된\s*상품\s*0\s*개/).first().isVisible().catch(() => false)) {
+    return true;
+  }
+  return false;
+}
+
+type SearchOutcome = 'products' | 'empty';
+
+/**
+ * [1] URL검색 후: 팝업이 없어지고 + (상품 있음 | 결과없음 문구) 보일 때까지
  * (팝업은 건드리지 않음)
  */
 async function waitSearchFinished(
@@ -103,7 +125,7 @@ async function waitSearchFinished(
   ctx: LogCtx,
   rowIndex: number,
   popupPromise: Promise<Page | null>,
-) {
+): Promise<SearchOutcome> {
   pushLog(ctx, 'wait-search-popup', '[1] 팝업 종료·검색결과 대기', rowIndex);
   void popupPromise.catch(() => undefined);
 
@@ -116,7 +138,14 @@ async function waitSearchFinished(
     if (Date.now() - lastBeat > 10_000) {
       lastBeat = Date.now();
       const results = await hasProductResults(page);
-      pushLog(ctx, 'wait-search-popup', '[1] 대기중…', rowIndex, `popup=${pops.length} results=${results}`);
+      const empty = await hasNoSearchResults(page);
+      pushLog(
+        ctx,
+        'wait-search-popup',
+        '[1] 대기중…',
+        rowIndex,
+        `popup=${pops.length} results=${results} empty=${empty}`,
+      );
     }
 
     // 팝업 있으면 닫힐 때만 기다림
@@ -128,10 +157,21 @@ async function waitSearchFinished(
       continue;
     }
 
+    // 팝업 없고 하단 「검색결과 없음」이면 저장 단계로 가지 않음
+    if (await hasNoSearchResults(page)) {
+      pushLog(
+        ctx,
+        'wait-search-popup',
+        '[1] 검색결과 없음 (하단 문구 확인) — 저장 스킵',
+        rowIndex,
+      );
+      return 'empty';
+    }
+
     // 팝업 없고 상품 결과 보이면 완료
     if (await hasProductResults(page)) {
       pushLog(ctx, 'wait-search-popup', '[1] 팝업 종료 + 검색결과 확인', rowIndex);
-      return;
+      return 'products';
     }
 
     await sleep(500);
@@ -495,7 +535,11 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
   pushLog(ctx, 'paste-url', '[1] URL 입력 확인', rowIndex, fieldValue);
 }
 
-async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
+async function clickUrlSearchAndWaitPopup(
+  page: Page,
+  ctx: LogCtx,
+  rowIndex: number,
+): Promise<SearchOutcome> {
   pushLog(ctx, 'url-search', '[1] URL상품검색하기 클릭', rowIndex);
 
   // 리스너만 등록 — 팝업을 직접 열지 않음
@@ -509,7 +553,7 @@ async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: num
   pushLog(ctx, 'url-search', '[1] URL상품검색하기 클릭 — 완료', rowIndex);
 
   // ABC 팝업: 인위적으로 띄우거나 건드리지 않음. 없어질 때까지만 대기
-  await waitSearchFinished(page, ctx, rowIndex, popupPromise);
+  return waitSearchFinished(page, ctx, rowIndex, popupPromise);
 }
 
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
@@ -619,8 +663,19 @@ async function processOneRow(
   await step0Init(page, ctx, rowIndex);
 
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
-  await clickUrlSearchAndWaitPopup(page, ctx, rowIndex);
+  const searchOutcome = await clickUrlSearchAndWaitPopup(page, ctx, rowIndex);
   await assertIdleBeforeInput(page, ctx, rowIndex, '검색 팝업 종료 후');
+
+  // 하단에 「검색결과가 없습니다」면 모두저장 하지 않고 다음 행([0])으로
+  if (searchOutcome === 'empty') {
+    pushLog(
+      ctx,
+      'next-row',
+      `[1] #${rowIndex} 검색결과 없음 → 저장 생략 → [4]다음 행 [0]`,
+      rowIndex,
+    );
+    return;
+  }
 
   await clickSaveAll(page, ctx, rowIndex);
   await fillSaveForm(page, topFinalLabel, saveCount, ctx, rowIndex);
