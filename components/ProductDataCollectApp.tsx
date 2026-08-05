@@ -120,8 +120,8 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>로그인·화면 이동은 직접.</strong> ① Chromium 연결(최초 1회) → 대량수집 메인 열기 →{' '}
-            <strong>② 수집 시작</strong> — <strong>열린 메인 화면</strong>에서 1~6단계만 진행 (새 창 안 열림).
+            <strong>① 메인 URL 열기</strong> → 로그인 → <strong>② 수집 시작</strong>.
+            입력은 엑셀 항목 <strong>붙여넣기</strong>, 클릭 즉시 — 망고 팝업 처리만 대기.
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -183,7 +183,7 @@ export function ProductDataCollectApp() {
             disabled={opening || running}
             onClick={() => void openBrowser()}
           >
-            {opening ? '연결 중…' : browserOpen ? '① Chromium 재연결' : '① Chromium 연결'}
+            {opening ? '여는 중…' : browserOpen ? '① 메인 URL 다시 열기' : '① 메인 URL 열기'}
           </button>
           <button
             type="button"
@@ -191,7 +191,7 @@ export function ProductDataCollectApp() {
             disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '단계별 실행 중…' : '② 수집 시작 (열린 메인 화면)'}
+            {running ? '수집 중…' : '② 수집 시작'}
           </button>
         </div>
       </section>

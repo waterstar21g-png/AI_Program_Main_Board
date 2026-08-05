@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
+import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
 
 export const TMG_PROFILE_DIR = path.join(process.cwd(), '.local', 'tmg-chromium-profile');
 export const CDP_URL = 'http://127.0.0.1:9222';
@@ -14,8 +15,6 @@ export const CHROMIUM_ARGS = [
   '--disable-session-crashed-bubble',
   '--remote-debugging-port=9222',
 ];
-
-export const ACTION_SLOW_MO = 800;
 
 type BrowserGlobal = { __tmgBrowserContext?: BrowserContext | null };
 const g = globalThis as BrowserGlobal;
@@ -36,7 +35,6 @@ function contextAlive(ctx: BrowserContext | null): ctx is BrowserContext {
   return !!ctx && ctx.pages().some(p => !p.isClosed());
 }
 
-/** 이미 떠 있는 Chromium에 CDP로 붙기 (새 창 안 연다) */
 export async function tryConnectCdp(): Promise<BrowserContext | null> {
   try {
     const browser = await chromium.connectOverCDP(CDP_URL, { timeout: 5000 });
@@ -48,12 +46,11 @@ export async function tryConnectCdp(): Promise<BrowserContext | null> {
   }
 }
 
-/** 최초 1회만 — 이후는 CDP로 재연결 */
 async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
   fs.mkdirSync(TMG_PROFILE_DIR, { recursive: true });
   const ctx = await chromium.launchPersistentContext(TMG_PROFILE_DIR, {
     headless,
-    slowMo: ACTION_SLOW_MO,
+    slowMo: 0,
     viewport: { width: 1400, height: 900 },
     args: CHROMIUM_ARGS,
   });
@@ -61,21 +58,6 @@ async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
   return ctx;
 }
 
-/** 수집 시작 — 열린 Chromium만 사용, 새 탭·새 창·goto 없음 */
-export async function requireExistingBrowserContext(): Promise<BrowserContext> {
-  if (contextAlive(getStoredContext())) return getStoredContext()!;
-
-  const cdp = await tryConnectCdp();
-  if (contextAlive(cdp)) return cdp!;
-
-  throw new Error(
-    '대량수집 메인(getGoodsNew.php)이 열린 Chromium을 찾지 못했습니다.\n' +
-      '① Chromium 연결(한 번) → 직접 대량수집 메인 열기 → ② 수집 시작.\n' +
-      '②는 새 창을 열지 않습니다.',
-  );
-}
-
-/** ① 연결 — CDP 재연결 또는 최초 1회만 Chromium 실행 (goto·새탭 없음) */
 export async function attachBrowser(): Promise<BrowserContext> {
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
@@ -85,6 +67,18 @@ export async function attachBrowser(): Promise<BrowserContext> {
   return launchBrowserOnce(false);
 }
 
+export async function requireExistingBrowserContext(): Promise<BrowserContext> {
+  if (contextAlive(getStoredContext())) return getStoredContext()!;
+
+  const cdp = await tryConnectCdp();
+  if (contextAlive(cdp)) return cdp!;
+
+  throw new Error(
+    'Chromium이 연결되지 않았습니다.\n' +
+      '① 메인 URL 열기를 먼저 누른 뒤, 로그인 후 ② 수집 시작을 누르세요.',
+  );
+}
+
 export function findBulkPage(context: BrowserContext): Page | null {
   for (const p of context.pages()) {
     if (!p.isClosed() && p.url().includes(TMG_BULK_PATH)) return p;
@@ -92,22 +86,23 @@ export function findBulkPage(context: BrowserContext): Page | null {
   return null;
 }
 
-/** @deprecated 새 화면 열지 않음 — attachBrowser 사용 */
-export async function getOrOpenBrowserContext(headless = false): Promise<BrowserContext> {
-  return attachBrowser();
+/** ① 메인 URL로 Chromium 열기 */
+export async function openBrowserToMainUrl(mainUrl = TMG_BULK_URL): Promise<Page> {
+  const context = await attachBrowser();
+  let page = findBulkPage(context);
+  if (!page) {
+    page =
+      context.pages().find(p => !p.isClosed() && !p.url().includes('about:blank')) ??
+      context.pages().find(p => !p.isClosed()) ??
+      (await context.newPage());
+  }
+  if (!page.url().includes(TMG_BULK_PATH)) {
+    await page.goto(mainUrl, { waitUntil: 'domcontentloaded', timeout: 120000 });
+  }
+  await page.bringToFront();
+  return page;
 }
 
 export async function openTmgBrowserPage(): Promise<Page> {
-  const context = await attachBrowser();
-  const bulk = findBulkPage(context);
-  if (bulk) {
-    await bulk.bringToFront();
-    return bulk;
-  }
-  const any = context.pages().find(p => !p.isClosed());
-  if (any) {
-    await any.bringToFront();
-    return any;
-  }
-  throw new Error('Chromium 탭이 없습니다. 대량수집 메인을 직접 열어주세요.');
+  return openBrowserToMainUrl();
 }
