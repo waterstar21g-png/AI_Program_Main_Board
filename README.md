@@ -1,36 +1,36 @@
-# AI_Program_Main_Board
+# AI_Program_Main_Board (로컬 실행)
 
-AI 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등
+## Windows — 가장 쉬운 방법
 
-**배포 URL:** https://ai-program-main-board.vercel.app
+1. **Node.js LTS** 설치: https://nodejs.org  
+2. 이 폴더에서 **`setup.bat`** 더블클릭 (최초 1회)  
+3. **`start.bat`** 더블클릭 → 브라우저가 `http://localhost:3000` 으로 열립니다.
 
-## 시작하기
+## Mac / Linux
 
 ```bash
-cd AI_Program_Main_Board
-cp .env.example .env.local   # 필요 시
 npm install
-npm run dev
+npm run dev:fast
 ```
 
-브라우저에서 http://localhost:3000 접속
+브라우저: http://localhost:3000
+
+## 포함 프로그램
+
+| 좌측 목록 | 설명 |
+|-----------|------|
+| Category_Item_Url_List | 카테고리 URL 엑셀 추출 (API 키 불필요) |
+| 상품캡처 및 가격조회 | 사진·키워드 가격 조회 (`.env.local` API 키 필요) |
 
 ## 프로그램 추가
 
-`lib/programs/registry.tsx` 의 `PROGRAMS` 배열에 항목을 추가합니다.
+`lib/programs/registry.tsx` → `PROGRAMS` 배열에 항목 추가
 
-## 환경 변수
+## 환경 변수 (상품캡처만 해당)
 
-```bash
-OPENAI_API_KEY=sk-...          # 상품 이미지 인식
-ITEMSCOUT_API_KEY=...          # 아이템스카우트 API
-BLOB_READ_WRITE_TOKEN=...      # Vercel Blob (이미지 저장)
+`.env.example` → `.env.local` 복사 후 입력:
+
 ```
-
-## 배포
-
-```bash
-npm run vercel:deploy
+OPENAI_API_KEY=...
+ITEMSCOUT_API_KEY=...
 ```
-
-Vercel 프로젝트명: `AI_Program_Main_Board`
