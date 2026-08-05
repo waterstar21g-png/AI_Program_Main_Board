@@ -898,14 +898,130 @@ html.is-touch .btn:active:not(:disabled) {
 .program-board__main-inner {
   flex: 1;
   overflow: auto;
-  padding: 0.75rem;
+  padding: 0.5rem 0.65rem;
+}
+
+.program-unit__summary {
+  margin: 0 0 0.35rem;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.program-unit__summary strong {
+  color: #e2e8f0;
+  font-weight: 600;
+}
+
+/* 보드 내 단위 프로그램 — compact (높이 약 50%) */
+.program-board__main-inner .program-unit .panel--compact,
+.program-board__main-inner .program-unit .panel {
+  padding: 0.4rem 0.55rem;
+  margin-bottom: 0.4rem;
+  border-radius: 0.45rem;
+}
+
+.program-board__main-inner .program-unit .panel__head {
+  margin-bottom: 0.25rem;
+  gap: 0.35rem;
+}
+
+.program-board__main-inner .program-unit .panel__title {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.program-board__main-inner .program-unit .field {
+  gap: 0.15rem;
+}
+
+.program-board__main-inner .program-unit .field__label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.program-board__main-inner .program-unit .input {
+  padding: 0.25rem 0.45rem;
+  font-size: 0.78rem;
+  line-height: 1.25;
+  min-height: 1.65rem;
+}
+
+.program-board__main-inner .program-unit .form-grid--compact {
+  display: grid;
+  grid-template-columns: minmax(7rem, 1fr) 2fr;
+  gap: 0.35rem 0.5rem;
+}
+
+.program-board__main-inner .program-unit .top-list--compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.3rem;
+}
+
+.program-board__main-inner .program-unit .top-list__item {
+  gap: 0.25rem;
+}
+
+.program-board__main-inner .program-unit .top-list__num {
+  width: 1.1rem;
+  font-size: 0.68rem;
+}
+
+.program-board__main-inner .program-unit .top-list__item .input {
+  min-width: 0;
+  min-height: 1.55rem;
+}
+
+.program-board__main-inner .program-unit .btn {
+  padding: 0.28rem 0.55rem;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.program-board__main-inner .program-unit .btn--sm {
+  padding: 0.22rem 0.5rem;
+  font-size: 0.7rem;
+}
+
+.program-board__main-inner .program-unit .btn--icon {
+  width: 1.4rem;
+  height: 1.4rem;
+  font-size: 0.95rem;
+}
+
+.program-board__main-inner .program-unit .btn--ghost {
+  padding: 0.22rem 0.45rem;
+}
+
+.program-board__main-inner .program-unit .panel__footer--compact {
+  margin-top: 0.35rem;
+}
+
+.program-board__main-inner .program-unit .badge {
+  font-size: 0.65rem;
+  padding: 0.05rem 0.35rem;
+}
+
+.program-board__main-inner .app-main--embedded {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  gap: 0.4rem;
 }
 
 .program-board__main-inner > .app,
-.program-board__main-inner > .category-app {
+.program-board__main-inner > .category-app,
+.program-board__main-inner > .program-unit {
   max-width: none;
   margin: 0;
   min-height: auto;
+  padding: 0;
 }
 
 /* ── Category URL Extractor (embedded) ── */
@@ -1037,6 +1153,8 @@ html.is-touch .btn:active:not(:disabled) {
 @media (max-width: 768px) {
   .program-board__body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .program-board__sidebar { max-height: 180px; }
+  .program-unit__summary { white-space: normal; }
+  .program-board__main-inner .program-unit .form-grid--compact { grid-template-columns: 1fr; }
   .category-app .form-grid { grid-template-columns: 1fr; }
 }
 

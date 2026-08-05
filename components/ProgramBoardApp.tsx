@@ -38,6 +38,9 @@ export function ProgramBoardApp() {
 
         <main className="program-board__main">
           <div className="program-board__main-inner">
+            <p className="program-unit__summary">
+              <strong>{active.name}</strong> — {active.summaryLine}
+            </p>
             <ActiveComponent />
           </div>
         </main>

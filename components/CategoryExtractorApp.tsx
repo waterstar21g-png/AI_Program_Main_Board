@@ -2,7 +2,6 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { downloadHierarchyExcel } from '@/lib/excel-export';
-import { CATEGORY_APP_NAME } from '@/lib/category-app-name';
 import { MAX_TOP_CATEGORIES } from '@/lib/types';
 import type { CrawlResult, HierarchyRow } from '@/lib/types';
 
@@ -89,24 +88,15 @@ export function CategoryExtractorApp() {
   const canSubmit = siteName.trim() && siteUrl.trim() && filledTopCount > 0;
 
   return (
-    <div className="category-app">
-      <header className="category-app__header">
-        <p className="category-app__eyebrow">웹 · 계층 카테고리 · 엑셀 저장</p>
-        <h1 className="category-app__title">{CATEGORY_APP_NAME}</h1>
-        <p className="category-app__desc">
-          사이트명·URL과 <strong>상위 카테고리</strong>를 지정하면, 해당 상위만 골라 중위→하위→최종
-          카테고리와 <strong>브라우저 주소창 URL</strong>을 엑셀로 저장합니다. (ABC마트 / A-RT 계열)
-        </p>
-      </header>
-
-      <section className="panel">
+    <div className="category-app program-unit">
+      <section className="panel panel--compact">
         <div className="panel__head">
           <h2 className="panel__title">1. 사이트 입력</h2>
-          <button type="button" className="btn btn--ghost" onClick={loadAbcDefaults}>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={loadAbcDefaults}>
             ABC마트 기본값
           </button>
         </div>
-        <div className="form-grid">
+        <div className="form-grid form-grid--compact">
           <label className="field">
             <span className="field__label">사이트명</span>
             <input
@@ -128,24 +118,21 @@ export function CategoryExtractorApp() {
         </div>
       </section>
 
-      <section className="panel">
+      <section className="panel panel--compact">
         <div className="panel__head">
           <h2 className="panel__title">
-            상위 카테고리 지정 <span className="badge">{filledTopCount}/{MAX_TOP_CATEGORIES}</span>
+            상위 카테고리 <span className="badge">{filledTopCount}/{MAX_TOP_CATEGORIES}</span>
           </h2>
           <button
             type="button"
-            className="btn btn--ghost"
+            className="btn btn--ghost btn--sm"
             onClick={addTopRow}
             disabled={topRows.length >= MAX_TOP_CATEGORIES}
           >
-            + 항목 추가
+            + 추가
           </button>
         </div>
-        <p className="panel__hint">
-          입력한 상위만 추출됩니다. ABC마트 예: MEN, WOMEN, KIDS
-        </p>
-        <ul className="top-list">
+        <ul className="top-list top-list--compact">
           {topRows.map((row, idx) => (
             <li key={row.id} className="top-list__item">
               <span className="top-list__num">{idx + 1}</span>
@@ -167,10 +154,10 @@ export function CategoryExtractorApp() {
             </li>
           ))}
         </ul>
-        <div className="panel__footer">
+        <div className="panel__footer panel__footer--compact">
           <button
             type="button"
-            className="btn btn--primary"
+            className="btn btn--primary btn--sm"
             disabled={loading || !canSubmit}
             onClick={runCrawl}
           >

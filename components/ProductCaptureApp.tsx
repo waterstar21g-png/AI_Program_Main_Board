@@ -319,19 +319,9 @@ export function ProductCaptureApp() {
   }
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <div className="app-header__inner">
-          <span className="app-header__logo" aria-hidden>📷</span>
-          <div>
-            <h1 className="app-header__title">상품캡처 및 가격조회</h1>
-            <p className="app-header__sub">입력창은 항상 유지 · 조작 시 바로 새 검색</p>
-          </div>
-        </div>
-      </header>
-
-      <main className="app-main">
-        <section className="panel">
+    <div className="app program-unit">
+      <main className="app-main app-main--embedded">
+        <section className="panel panel--compact">
           <h2 className="panel__title">상품캡처</h2>
 
           <div className="btn-row capture-actions">
