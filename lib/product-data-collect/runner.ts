@@ -350,14 +350,22 @@ async function clearGrid(page: Page, ctx: LogCtx, rowIndex: number) {
   }, rowIndex);
 }
 
+async function readInputValue(locator: Locator): Promise<string> {
+  const el = locator.first();
+  const tag = await el.evaluate(n => n.tagName.toLowerCase()).catch(() => '');
+  if (tag === 'textarea' || tag === 'input') {
+    return (await el.inputValue().catch(() => '')).trim();
+  }
+  return (await el.innerText().catch(() => '')).trim();
+}
+
 async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) {
   const normalized = normalizeUrl(url);
-  // 엑셀 「최종 카테고리 URL주소」만 로그 — 브라우저 주소창(getGoodsNew.php) 아님
-  pushLog(ctx, 'paste-url', '[2] 엑셀 URL 붙여넣기', rowIndex, normalized);
   await page.bringToFront();
   const input = await findUrlInput(page);
   await pasteField(page, input, normalized);
-  pushLog(ctx, 'paste-url', '[2] 엑셀 URL 붙여넣기 — 완료', rowIndex, normalized);
+  const fieldValue = (await readInputValue(input)) || normalized;
+  pushLog(ctx, 'paste-url', '[2] URL 입력', rowIndex, fieldValue);
 }
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
