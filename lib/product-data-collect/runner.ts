@@ -378,22 +378,23 @@ async function fillSaveForm(
     await modal.waitFor({ state: 'visible' });
     pushLog(ctx, 'fill-save-form', '[5] 상품저장설정 모달 표시됨', rowIndex);
 
-    // 순서: 검색필터명 → 저장상품수 → 저장하기 (즉시)
-    const filterInput = modal
-      .locator('tr, div')
-      .filter({ hasText: '검색필터명' })
-      .first()
-      .locator('input[type="text"], input:not([type])')
-      .first();
+    // 큰 부모 div가 잡히면 첫 input(=검색필터명)에 3이 덮어써짐 → tr 행 단위로만 찾음
+    const filterRow = modal.locator('tr').filter({ hasText: '검색필터명' }).first();
+    const filterInput = filterRow.locator('input[type="text"], input:not([type="hidden"])').first();
     await pasteField(page, filterInput, filterName);
+    pushLog(ctx, 'fill-save-form', '[5] 검색필터명', rowIndex, filterName);
 
-    const countInput = modal
-      .locator('tr, div')
-      .filter({ hasText: /저장상품수|검색결과\s*상위/ })
-      .first()
-      .locator('input[type="text"], input[type="number"], input:not([type])')
-      .first();
+    const countRow = modal.locator('tr').filter({ hasText: '저장상품수' }).first();
+    const countInput = countRow.locator('input[type="text"], input[type="number"], input:not([type="hidden"])').first();
     await pasteField(page, countInput, String(saveCount));
+    pushLog(ctx, 'fill-save-form', '[5] 저장상품수', rowIndex, String(saveCount));
+
+    // 필터명에 숫자가 들어갔으면 즉시 복구
+    const filterNow = await readInputValue(filterInput);
+    if (filterNow === String(saveCount) || /^\d+$/.test(filterNow)) {
+      await pasteField(page, filterInput, filterName);
+      pushLog(ctx, 'fill-save-form', '[5] 검색필터명 복구', rowIndex, filterName);
+    }
   }, rowIndex);
 
   pushLog(ctx, 'fill-save-form', '[5] 저장하기 클릭', rowIndex);
