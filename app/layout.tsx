@@ -12,12 +12,11 @@ const noto = Noto_Sans_KR({
 
 export const metadata: Metadata = {
   title: {
-    default: '상품캡처 및 가격조회',
-    template: '%s · 상품캡처',
+    default: 'Nutri-Farmer Front Program Board',
+    template: '%s · Nutri-Farmer',
   },
-  description:
-    '모바일에서 사진으로 상품을 인식하고 네이버·아이템스카우트 기반 시중 최저가·경쟁 강도·조회 추세를 조회합니다.',
-  applicationName: '상품캡처',
+  description: 'Nutri-Farmer 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등',
+  applicationName: 'Nutri-Farmer Front',
   keywords: ['상품캡처', '가격조회', '아이템스카우트', '네이버쇼핑', '쿠팡'],
   authors: [{ name: '함께온라인' }],
   creator: '함께온라인',
