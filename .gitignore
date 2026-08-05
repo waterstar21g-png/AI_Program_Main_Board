@@ -10,4 +10,4 @@ next-env.d.ts
 .vercel
 .data/
 카테고리별_상품목록_URL_LIST추출/
-My_Project/
+.local/
