@@ -16,15 +16,24 @@ D:\함께온라인\AI_Program_Main_Board\
 
 **`run.bat`** 또는 **`start.bat`** 더블클릭 (내용 동일)
 
-파일이 없다고 나오면:
+`run.bat`이 없다고 나오면 **`update.bat`** 실행 후 다시 시도:
 
 ```cmd
 cd /d C:\Users\water\AI_Program_Main_Board
-dir *.bat
-git pull
+.\update.bat
+.\run.bat
 ```
 
-`run.bat`이 목록에 없으면 GitHub에서 최신 소스를 다시 받거나, `start.bat`을 실행하세요.
+또는 Git이 있으면:
+
+```cmd
+git pull
+dir *.bat
+```
+
+`run.bat`이 목록에 없으면 GitHub에서 최신 소스를 다시 받거나 `start.bat`을 실행하세요.
+
+**`npm run dev:fast`만으로도 실행 가능** (브라우저: http://localhost:3000)
 
 - 주소: **http://localhost:3000**
 - 종료: 명령 창에서 **Ctrl+C**
