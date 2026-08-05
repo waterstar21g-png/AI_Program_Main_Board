@@ -1,6 +1,9 @@
-# 상품캡처 및 가격조회
+# Nutri-Farmer_Front_Program_Board
 
-사진 촬영 또는 이미지 업로드로 상품을 인식하고, **아이템스카우트** 데이터를 기반으로 시장 정보를 조회하는 웹 앱입니다.
+Nutri-Farmer 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등
+
+**배포 URL:** https://nutri-farmer-front-program-board.vercel.app  
+(기존 https://sangpum-capture-price.vercel.app — Vercel 프로젝트명 변경 후 자동 리다이렉트)
 
 ## 주요 기능
 

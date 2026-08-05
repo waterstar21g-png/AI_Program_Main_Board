@@ -1,11 +1,12 @@
 import type { MetadataRoute } from 'next';
+import { APP_NAME } from '@/lib/app-name';
 
 /** 모바일 홈 화면 추가(PWA) — Android Chrome · iOS Safari */
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: '상품캡처 및 가격조회',
-    short_name: '상품캡처',
-    description: '사진으로 상품을 인식하고 네이버·아이템스카우트 기반 가격·시장 정보를 조회합니다.',
+    name: APP_NAME,
+    short_name: APP_NAME,
+    description: 'Nutri-Farmer 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등',
     start_url: '/',
     scope: '/',
     id: '/',
