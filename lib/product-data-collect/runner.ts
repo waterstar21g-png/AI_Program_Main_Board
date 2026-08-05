@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { ensureBulkCollectPage, getCollectBrowserContext, maximizePage } from '@/lib/product-data-collect/browser-session';
+import { ensureBulkCollectPage, getCollectBrowserContext, maximizePage, TMG_ADMIN_HOST, TMG_BULK_PATH } from '@/lib/product-data-collect/browser-session';
 import { TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -18,6 +18,42 @@ function pushLog(
   const entry: WorkflowStepLog = { step, label, rowIndex, at: new Date().toISOString(), message };
   ctx.logs.push(entry);
   ctx.onLog?.(entry);
+}
+
+/** 망고 대량수집 창만 남기고 외부 창(ABC-MART 등) 닫기 → 모달이 뒤로 숨지 않게 */
+async function focusMangoBulk(page: Page) {
+  const ctx = page.context();
+  for (const p of ctx.pages()) {
+    if (p === page || p.isClosed()) continue;
+    const url = p.url();
+    // 망고 대량수집 탭만 유지 — ABC-MART 등 외부 창은 전부 닫음
+    if (!url.includes(TMG_BULK_PATH)) {
+      await p.close().catch(() => undefined);
+    }
+  }
+  await page.bringToFront().catch(() => undefined);
+  await maximizePage(page);
+}
+
+/** URL검색으로 뜬 외부 창 목록만 추적 (검색 중엔 닫지 않음) */
+function watchSearchPopups(page: Page): { closeTracked: () => Promise<void>; stop: () => void } {
+  const tracked = new Set<Page>();
+  const handler = (popup: Page) => {
+    tracked.add(popup);
+  };
+  page.context().on('page', handler);
+  return {
+    stop: () => page.context().off('page', handler),
+    closeTracked: async () => {
+      for (const p of tracked) {
+        if (!p.isClosed() && !p.url().includes(TMG_ADMIN_HOST)) {
+          await p.close().catch(() => undefined);
+        }
+      }
+      tracked.clear();
+      await focusMangoBulk(page);
+    },
+  };
 }
 
 async function pasteField(page: Page, locator: Locator, text: string) {
@@ -336,31 +372,42 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 
 async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭', rowIndex);
+  await focusMangoBulk(page);
+  const watch = watchSearchPopups(page);
+  (page as Page & { __popupWatch?: ReturnType<typeof watchSearchPopups> }).__popupWatch = watch;
   const ok = await clickFirstVisible(page, [urlSearchButton(page)]);
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
 }
 
-/** 검색 결과「모두저장」보이면 망설이지 말고 즉시 클릭 → 상품저장설정 모달 */
+/** 검색 결과「모두저장」보이면 즉시 클릭 → 상품저장설정 모달 (망고 창 앞으로) */
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
   pushLog(ctx, 'wait-search-popup', '[3] 모두저장 버튼 대기', rowIndex);
   const btn = await waitSaveAllButtonVisible(page);
+
+  // 검색 끝난 뒤 ABC-MART 등 외부 창 닫고 망고를 맨 앞으로 (모달이 뒤로 숨지 않게)
+  const watch = (page as Page & { __popupWatch?: ReturnType<typeof watchSearchPopups> }).__popupWatch;
+  watch?.stop();
+  await watch?.closeTracked();
+  delete (page as Page & { __popupWatch?: ReturnType<typeof watchSearchPopups> }).__popupWatch;
+  await focusMangoBulk(page);
 
   pushLog(ctx, 'save-all', '[4] 검색된 상품 모두저장 — 즉시 클릭', rowIndex);
   await btn.click({ force: true }).catch(async () => {
     await hardClick(page, btn);
   });
 
+  await focusMangoBulk(page);
   pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 대기', rowIndex);
   await waitSaveSettingsOpen(page);
   if (!(await isSaveSettingsOpen(page))) {
-    // 클릭 한 번 더 — 모달 안 떴을 때만
     await hardClick(page, saveAllButton(page));
     await waitSaveSettingsOpen(page);
   }
   if (!(await isSaveSettingsOpen(page))) {
     throw new Error(`#${rowIndex} 모두저장 클릭 후 상품저장설정 모달이 안 떴습니다.`);
   }
+  await focusMangoBulk(page);
   pushLog(ctx, 'save-all', '[4] 상품저장설정 모달 열림', rowIndex);
 }
 
@@ -418,13 +465,16 @@ async function processOneRow(
 ) {
   const { rowIndex, finalCategoryUrl, topFinalLabel } = row;
   pushLog(ctx, 'next-row', `━━━ 엑셀 #${rowIndex} 행 ━━━`, rowIndex);
+  await focusMangoBulk(page);
   await openBulkPage(page, ctx, rowIndex);
   await clearGrid(page, ctx, rowIndex);
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
   await clickUrlSearchAndWaitPopup(page, ctx, rowIndex);
   await clickSaveAll(page, ctx, rowIndex);
+  await focusMangoBulk(page);
   await fillSaveForm(page, topFinalLabel, saveCount, ctx, rowIndex);
   await waitSavePopupDone(page, ctx, rowIndex);
+  await focusMangoBulk(page);
   pushLog(ctx, 'next-row', `#${rowIndex} 행 완료`, rowIndex);
 }
 
