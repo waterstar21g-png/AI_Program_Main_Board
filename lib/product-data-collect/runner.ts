@@ -65,7 +65,7 @@ function mangoSaveLayerOpen(url: string): boolean {
   return url.includes('#layer');
 }
 
-/** ABC 팝업이 모두 스스로 닫힐 때까지 — 팝업/망고 일절 미터치 */
+/** ABC 팝업이 모두 스스로 닫힐 때까지 — 팝업 강제종료/포커스 금지 */
 async function waitAbcPopupsGoneNaturally(page: Page, deadlineMs: number): Promise<void> {
   while (abcSearchPopups(page).length > 0) {
     if (Date.now() >= deadlineMs) {
@@ -79,11 +79,29 @@ async function waitAbcPopupsGoneNaturally(page: Page, deadlineMs: number): Promi
   }
 }
 
+/** 망고 화면 읽기 전용 — 수집 중 UI (팝업/포커스 건드리지 않음) */
+async function mangoIsCollecting(page: Page): Promise<boolean> {
+  return page
+    .evaluate(() => {
+      const t = (document.body?.innerText || '').replace(/\s+/g, ' ');
+      // 스크린샷의 빨간 "…중입니다" 상태
+      return /중\s*입니다|수집\s*중|검색\s*중|상품\s*검색\s*중|기다려\s*주세요|Product\s*\.\./i.test(t);
+    })
+    .catch(() => false);
+}
+
+async function mangoSaveAllReady(page: Page): Promise<boolean> {
+  return saveAllButton(page)
+    .first()
+    .isVisible()
+    .catch(() => false);
+}
+
 /**
- * 2단계 완료 대기
- * - 팝업을 띄우거나/닫거나/앞으로가져오기 금지
- * - ABC 팝업(pmode=mango) close 이벤트만 대기
- * - 무한루프 방지: 명확한 deadline + 좁은 팝업 판정
+ * 2단계 완료 대기 (핵심)
+ * - 팝업을 열거나/닫거나/포커스하지 않음
+ * - Playwright가 ABC창을 못 볼 수 있음(확장) → 망고 화면「수집중」종료를 주 신호로 사용
+ * - extension_search_key 만으로 조기 통과하지 않음 (그게 무한실패/조기클릭 원인)
  */
 async function waitSearchFinished(
   page: Page,
@@ -91,57 +109,81 @@ async function waitSearchFinished(
   rowIndex: number,
   popupPromise: Promise<Page | null>,
 ) {
-  pushLog(ctx, 'wait-search-popup', '[2] ABC팝업 자연종료 대기 (미터치)', rowIndex);
+  pushLog(ctx, 'wait-search-popup', '[2] 망고 수집 완료 대기 (팝업 미터치)', rowIndex);
 
-  const APPEAR_MS = 60_000;
   const TOTAL_MS = 300_000;
   const deadline = Date.now() + TOTAL_MS;
-  const appearUntil = Date.now() + APPEAR_MS;
+  let sawPopup = false;
+  let sawCollecting = false;
+  let sawStart = mangoSearchStarted(page.url());
+  let didSettle = false;
+  let lastBeat = 0;
 
-  // 클릭 전 리스너 소비 (타임아웃 있음 — 무한대기 아님)
-  const first = await popupPromise.catch(() => null);
-  if (first && !first.isClosed() && isAbcSearchPopup(first)) {
-    pushLog(ctx, 'wait-search-popup', '[2] ABC팝업 감지', rowIndex, first.url().slice(0, 160));
-    await first.waitForEvent('close', { timeout: Math.max(5_000, deadline - Date.now()) }).catch(() => {
-      throw new Error(`#${rowIndex} ABC 검색 팝업이 닫히지 않았습니다.`);
-    });
-    // 이어지는 팝업이 있으면 그것만 추가 대기
-    await waitAbcPopupsGoneNaturally(page, deadline);
-    pushLog(ctx, 'wait-search-popup', '[2] ABC팝업 종료 — 수집 완료', rowIndex);
-    return;
-  }
+  // 팝업 promise는 백그라운드 소비 (여기서 await로 막지 않음)
+  void popupPromise
+    .then(p => {
+      if (p && !p.isClosed() && isAbcSearchPopup(p)) sawPopup = true;
+    })
+    .catch(() => undefined);
 
-  // 팝업이 아직 안 뜬 경우: 나타나길 기다림 (열지 않음)
-  while (Date.now() < appearUntil) {
+  while (Date.now() < deadline) {
     const pops = abcSearchPopups(page);
-    if (pops.length > 0) {
-      pushLog(ctx, 'wait-search-popup', '[2] ABC팝업 감지', rowIndex, pops[0]!.url().slice(0, 160));
-      await waitAbcPopupsGoneNaturally(page, deadline);
-      pushLog(ctx, 'wait-search-popup', '[2] ABC팝업 종료 — 수집 완료', rowIndex);
-      return;
+    if (pops.length > 0) sawPopup = true;
+
+    if (mangoSearchStarted(page.url())) sawStart = true;
+
+    const collecting = await mangoIsCollecting(page);
+    if (collecting) sawCollecting = true;
+
+    // 진행 로그 (10초마다)
+    if (Date.now() - lastBeat > 10_000) {
+      lastBeat = Date.now();
+      pushLog(
+        ctx,
+        'wait-search-popup',
+        '[2] 대기중…',
+        rowIndex,
+        `start=${sawStart} popup=${sawPopup} collecting=${collecting} openPopups=${pops.length}`,
+      );
     }
-    if (mangoSearchStarted(page.url()) && abcSearchPopups(page).length === 0) {
-      // URL 신호는 있는데 팝업이 아직/이미 없음 → 조금 더 팝업만 기다림
-      await sleep(500);
+
+    // 팝업이 보이면: 닫힐 때까지 기다리기만 (건드리지 않음)
+    if (pops.length > 0) {
+      await Promise.race([
+        ...pops.map(p => p.waitForEvent('close').catch(() => undefined)),
+        sleep(1000),
+      ]);
       continue;
     }
-    await sleep(400);
+
+    // 완료: 검색시작 + 팝업없음 + 수집중 아님 + 모두저장 보임
+    if (sawStart && pops.length === 0 && !collecting) {
+      const ready = await mangoSaveAllReady(page);
+      if (ready) {
+        if (sawCollecting || sawPopup) {
+          pushLog(ctx, 'wait-search-popup', '[2] 망고 수집 완료', rowIndex, 'popup/수집UI 종료');
+          return;
+        }
+        // 팝업·수집UI를 못 본 경우: 한 번만 8초 안정 대기 후 재확인
+        if (!didSettle) {
+          didSettle = true;
+          pushLog(ctx, 'wait-search-popup', '[2] 팝업 미감지 — 8초 안정 대기', rowIndex);
+          await sleep(8_000);
+          continue;
+        }
+        if (abcSearchPopups(page).length === 0 && !(await mangoIsCollecting(page)) && (await mangoSaveAllReady(page))) {
+          pushLog(ctx, 'wait-search-popup', '[2] 망고 수집 완료', rowIndex, '안정대기 후 진행');
+          return;
+        }
+      }
+    }
+
+    await sleep(500);
   }
 
-  // 나타남 시간 지나도 팝업이 있으면 닫힘만 대기
-  if (abcSearchPopups(page).length > 0) {
-    await waitAbcPopupsGoneNaturally(page, deadline);
-    pushLog(ctx, 'wait-search-popup', '[2] ABC팝업 종료 — 수집 완료', rowIndex);
-    return;
-  }
-
-  // 팝업을 Playwright가 못 본 경우: 망고 URL 신호만으로 통과 (버튼 조기클릭 금지 위해 짧게만)
-  if (mangoSearchStarted(page.url())) {
-    pushLog(ctx, 'wait-search-popup', '[2] 팝업 미감지·extension_search_key 확인', rowIndex);
-    return;
-  }
-
-  throw new Error(`#${rowIndex} ABC 검색 팝업/검색 시작 신호를 확인하지 못했습니다.`);
+  throw new Error(
+    `#${rowIndex} 망고 수집 완료 대기 시간 초과 (start=${sawStart}, popup=${sawPopup}, collecting=${sawCollecting})`,
+  );
 }
 
 async function pasteField(page: Page, locator: Locator, text: string) {
