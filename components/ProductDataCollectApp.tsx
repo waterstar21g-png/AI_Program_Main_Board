@@ -120,7 +120,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>①</strong> 로그인→대량수집 → <strong>② 수집 시작</strong> (매 행: 메뉴 재진입으로 초기화, CLEAR 없음)
+            <strong>①</strong> 로그인→getGoodsNew.php → <strong>② 수집 시작</strong> (매 행: URL진입→검색팝업대기→모두저장→저장)
           </p>
         </div>
         <div className="form-grid form-grid--compact">
