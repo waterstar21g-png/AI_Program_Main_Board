@@ -219,47 +219,39 @@ async function waitSearchFinished(
   );
 }
 
-async function pasteField(page: Page, locator: Locator, text: string) {
+async function setFieldValue(locator: Locator, text: string) {
   const el = locator.first();
-  await el.scrollIntoViewIfNeeded().catch(() => undefined);
-  await el.click({ force: true });
-  if (!text) {
-    await page.keyboard.press('Control+a');
-    await page.keyboard.press('Backspace');
-    return;
-  }
-  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']).catch(() => undefined);
-  await page.evaluate(async t => { await navigator.clipboard.writeText(t); }, text);
-  await page.keyboard.press('Control+a');
-  await page.keyboard.press('Control+v');
+  await el.evaluate(
+    (node, value) => {
+      if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
+        node.value = value;
+        node.dispatchEvent(new Event('input', { bubbles: true }));
+        node.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    },
+    text,
+  );
 }
 
-/** 클릭 — 일반/force/JS 순으로 시도 */
-async function hardClick(page: Page, locator: Locator) {
+/** 입력 — 클릭·스크롤·포커스·키보드 없이 value만 설정 */
+async function pasteField(_page: Page, locator: Locator, text: string) {
+  await setFieldValue(locator, text);
+}
+
+/** 클릭 — 스크롤·포커스·force 없이 DOM 이벤트만 */
+async function domClick(locator: Locator) {
   const el = locator.first();
-  await el.scrollIntoViewIfNeeded().catch(() => undefined);
-  await el.waitFor({ state: 'visible' });
-  try {
-    await el.click({ timeout: 3000 });
-    return;
-  } catch {
-    /* force */
-  }
-  try {
-    await el.click({ force: true, timeout: 3000 });
-    return;
-  } catch {
-    /* js */
-  }
-  await el.evaluate((node: HTMLElement) => {
-    node.focus?.();
-    node.click();
-    node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+  await el.waitFor({ state: 'attached' });
+  await el.evaluate(node => {
+    const n = node as HTMLElement;
+    n.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    n.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+    n.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
   });
 }
 
-async function fastClick(page: Page, locator: Locator) {
-  await hardClick(page, locator);
+async function fastClick(_page: Page, locator: Locator) {
+  await domClick(locator);
 }
 
 async function isSaveSettingsOpen(page: Page): Promise<boolean> {
@@ -600,12 +592,10 @@ async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
     throw new Error(`#${rowIndex} ABC 검색 팝업이 열린 채라 모두저장을 클릭할 수 없습니다.`);
   }
 
-  // 팝업 종료 후에만 망고 버튼 클릭 (bringToFront/maximize 없음)
+  // 팝업 종료 후에만 망고 버튼 클릭 (창순서·포커스 변경 없음)
   pushLog(ctx, 'save-all', '[2] 검색된 상품 모두저장 클릭', rowIndex);
   const btn = await waitSaveAllButtonVisible(page);
-  await btn.click({ timeout: 10_000 }).catch(async () => {
-    await btn.click({ force: true, timeout: 10_000 });
-  });
+  await domClick(btn);
 
   // 상품저장설정은 망고가 띄움 — 강제 재클릭/강제 오픈 금지
   pushLog(ctx, 'save-all', '[2] 상품저장설정 자연 오픈 대기', rowIndex);

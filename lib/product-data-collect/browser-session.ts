@@ -37,27 +37,10 @@ function contextAlive(ctx: BrowserContext | null): ctx is BrowserContext {
   return !!ctx && ctx.pages().some(p => !p.isClosed());
 }
 
-/** 창 최대화 — 모달·버튼이 잘리지 않도록 */
+/** 창 최대화 — 수집 중 호출 금지 (ABC 팝업이 뒤로 밀림) */
 export async function maximizePage(page: Page) {
-  try {
-    const session = await page.context().newCDPSession(page);
-    const { windowId } = await session.send('Browser.getWindowForTarget');
-    await session.send('Browser.setWindowBounds', {
-      windowId,
-      bounds: { windowState: 'maximized' },
-    });
-  } catch {
-    await page
-      .evaluate(() => {
-        try {
-          window.moveTo(0, 0);
-          window.resizeTo(screen.availWidth, screen.availHeight);
-        } catch {
-          /* ignore */
-        }
-      })
-      .catch(() => undefined);
-  }
+  // intentionally no-op during automated collection
+  void page;
 }
 
 export async function tryConnectCdp(): Promise<BrowserContext | null> {
@@ -211,10 +194,8 @@ async function jsClickBulkSubmenu(page: Page): Promise<string> {
  * (이미 대량수집 화면이어도 다시 클릭 — 초기화 효과)
  */
 export async function clickBulkCollectMenu(page: Page): Promise<void> {
-  // bringToFront 금지: ABC/수집 팝업이 뒤로 밀리면 수동과 다르게 결과 실패함
-  // (이미 대량수집 탭에서 메뉴만 클릭)
+  // bringToFront / hover / force 금지 — 창순서·팝업 건드리지 않음
 
-  // 1) Playwright 가시 클릭 시도
   const visibleSub = page
     .locator('a[href*="getGoodsNew"]')
     .or(page.getByRole('link', { name: /상품데이터\s*대량수집/ }))
@@ -227,19 +208,16 @@ export async function clickBulkCollectMenu(page: Page): Promise<void> {
     .first();
 
   if (await top.isVisible().catch(() => false)) {
-    await top.hover({ force: true }).catch(() => undefined);
-    await sleep(300);
-    await top.click({ force: true }).catch(() => undefined);
+    await top.click({ timeout: 5000 }).catch(() => undefined);
     await sleep(300);
   }
 
   if (await visibleSub.isVisible().catch(() => false)) {
-    await visibleSub.click({ force: true }).catch(() => undefined);
+    await visibleSub.click({ timeout: 5000 }).catch(() => undefined);
     await waitBulkReady(page);
     return;
   }
 
-  // 2) 숨김 드롭다운/프레임 — JS로 강제 클릭
   const viaJs = await jsClickBulkSubmenu(page);
   if (viaJs) {
     await sleep(500);
@@ -247,7 +225,6 @@ export async function clickBulkCollectMenu(page: Page): Promise<void> {
     return;
   }
 
-  // 3) 최후: 대량수집 URL 직접 이동 (화면 초기화)
   await gotoUrl(page, TMG_BULK_URL);
   await waitBulkReady(page);
 }
@@ -273,8 +250,7 @@ export async function resetBulkCollectViaMenu(page: Page): Promise<void> {
  * (사람 개입 최소화: ID/PW는 저장된 값, 로그인·메뉴만 클릭)
  */
 export async function ensureBulkCollectPage(page: Page): Promise<Page> {
-  await maximizePage(page);
-  await page.bringToFront();
+  // bringToFront / maximize 금지
 
   if (isBulkPage(page.url())) {
     return page;
@@ -324,7 +300,6 @@ export async function ensureBulkCollectPage(page: Page): Promise<Page> {
     );
   }
 
-  await maximizePage(page);
   return page;
 }
 
@@ -338,7 +313,6 @@ async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
   });
   setStoredContext(ctx);
   const page = ctx.pages()[0] ?? (await ctx.newPage());
-  await maximizePage(page);
   await gotoUrl(page, TMG_LOGIN_URL);
   return ctx;
 }
@@ -372,9 +346,7 @@ export function findBulkPage(context: BrowserContext): Page | null {
 export async function openBrowserToLoginUrl(loginUrl = TMG_LOGIN_URL): Promise<Page> {
   const context = await attachBrowser();
   const page = context.pages().find(p => !p.isClosed()) ?? (await context.newPage());
-  await maximizePage(page);
   await gotoUrl(page, loginUrl);
-  await page.bringToFront();
   return ensureBulkCollectPage(page);
 }
 
