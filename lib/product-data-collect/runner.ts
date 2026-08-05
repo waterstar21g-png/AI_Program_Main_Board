@@ -96,11 +96,13 @@ function urlSearchButton(page: Page) {
 }
 
 function saveAllButton(page: Page) {
+  // 화면 문구: 「검색된 상품 모두저장」(띄어쓰기 없음)
   return page
-    .locator('input[type="button"][value*="검색된"][value*="모두"]')
+    .locator('input[type="button"][value*="검색된"][value*="모두저장"]')
+    .or(page.locator('input[type="button"][value*="검색된"][value*="모두"][value*="저장"]'))
     .or(page.locator('input[type="submit"][value*="검색된"][value*="모두"]'))
     .or(page.getByRole('button', { name: /검색된\s*상품\s*모두\s*저장/ }))
-    .or(page.getByText(/검색된\s*상품\s*모두\s*저장/));
+    .or(page.locator('a, button, span, div').filter({ hasText: /검색된\s*상품\s*모두\s*저장/ }));
 }
 
 function urlSearchArea(page: Page) {
@@ -195,57 +197,89 @@ function catchWindowPopupClose(page: Page): Promise<void> {
 
 /** 화면 안 팝업/레이어가 DOM에서 사라질 때까지 (MutationObserver) */
 function catchInPagePopupHidden(page: Page, skipContains = ''): Promise<void> {
-  return page.evaluate(skip => {
-    return new Promise<void>(resolve => {
-      const isLayerVisible = () => {
-        const nodes = document.querySelectorAll(
-          '[role="dialog"], .ui-dialog, .modal, div[id*="layer"], div[id*="popup"], div[class*="layer"], div[class*="popup"]',
-        );
-        for (const el of nodes) {
-          const node = el as HTMLElement;
-          const style = window.getComputedStyle(node);
-          const visible =
-            style.display !== 'none' && style.visibility !== 'hidden' && node.offsetParent !== null;
-          if (visible && !(skip && node.textContent?.includes(skip))) return true;
-        }
-        return false;
-      };
+  return page
+    .evaluate(skip => {
+      return new Promise<void>(resolve => {
+        const isLayerVisible = () => {
+          const nodes = document.querySelectorAll(
+            '[role="dialog"], .ui-dialog, .modal, div[id*="layer"], div[id*="popup"], div[class*="layer"], div[class*="popup"]',
+          );
+          for (const el of nodes) {
+            const node = el as HTMLElement;
+            const style = window.getComputedStyle(node);
+            const visible =
+              style.display !== 'none' && style.visibility !== 'hidden' && node.offsetParent !== null;
+            if (visible && !(skip && node.textContent?.includes(skip))) return true;
+          }
+          return false;
+        };
 
-      if (!isLayerVisible()) {
-        resolve();
-        return;
-      }
-
-      const obs = new MutationObserver(() => {
         if (!isLayerVisible()) {
-          obs.disconnect();
           resolve();
+          return;
         }
+
+        const obs = new MutationObserver(() => {
+          if (!isLayerVisible()) {
+            obs.disconnect();
+            resolve();
+          }
+        });
+        obs.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['style', 'class', 'hidden'],
+        });
       });
-      obs.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['style', 'class', 'hidden'],
-      });
-    });
-  }, skipContains);
+    }, skipContains)
+    .catch(() => undefined); // 네비게이션으로 context 파괴돼도 오류로 중단하지 않음
 }
 
-/** [3] 검색 완료 대기 */
+function isNavDestroyedError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /Execution context was destroyed|Target closed|navigation/i.test(msg);
+}
+
+/** [3] 검색 완료 = 「검색된 상품 모두저장」 보이면 즉시 */
 async function waitForSearchPopupClosed(page: Page, windowClosed: Promise<void>): Promise<void> {
-  await Promise.race([
-    windowClosed,
-    catchInPagePopupHidden(page, '상품저장설정'),
-    page.waitForFunction(() => {
-      const text = document.body.innerText;
-      if (text.includes('검색결과가 없습니다')) return true;
-      if (text.includes('실시간 검색한 결과') && !text.includes('상품명 또는 검색 URL을 입력')) {
-        return true;
+  const saveAllReady = (async () => {
+    for (;;) {
+      try {
+        await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+        await saveAllButton(page).first().waitFor({ state: 'visible', timeout: 3000 });
+        return;
+      } catch (e) {
+        if (isNavDestroyedError(e)) continue;
+        // timeout → 결과 문구로 재시도
+        const hasResult = await page
+          .getByText(/실시간 검색한 결과/)
+          .first()
+          .isVisible()
+          .catch(() => false);
+        if (hasResult && (await saveAllButton(page).first().isVisible().catch(() => false))) return;
+        continue;
       }
-      return false;
-    }),
+    }
+  })();
+
+  await Promise.race([
+    windowClosed.catch(() => undefined),
+    catchInPagePopupHidden(page, '상품저장설정'),
+    saveAllReady,
   ]);
+
+  // 네비게이션 끝난 뒤 「검색된 상품 모두저장」 보일 때까지 (즉시 클릭 준비)
+  for (;;) {
+    try {
+      await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+      await saveAllButton(page).first().waitFor({ state: 'visible' });
+      return;
+    } catch (e) {
+      if (isNavDestroyedError(e)) continue;
+      throw e;
+    }
+  }
 }
 
 /** [6] 상품저장설정 팝업 닫힘 캐치 */
@@ -292,15 +326,16 @@ async function clickUrlSearchAndWaitPopup(page: Page, ctx: LogCtx, rowIndex: num
   if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
 
   pushLog(ctx, 'url-search', '[2] URL상품검색하기 클릭 — 완료', rowIndex);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 감지', rowIndex);
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 완료 대기 → 모두저장 버튼', rowIndex);
   await waitForSearchPopupClosed(page, windowClosed);
-  pushLog(ctx, 'wait-search-popup', '[3] 검색 팝업 닫힘 — 완료', rowIndex);
+  pushLog(ctx, 'wait-search-popup', '[3] 검색 완료 — 모두저장 버튼 확인', rowIndex);
 }
 
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
-  await actStep(page, ctx, 'save-all', '[4] 검색된 상품 모두 저장 클릭', async () => {
-    const ok = await clickFirstVisible(page, [saveAllButton(page)]);
-    if (!ok) throw new Error('검색된 상품 모두 저장 버튼을 찾지 못했습니다.');
+  await actStep(page, ctx, 'save-all', '[4] 검색된 상품 모두저장 즉시 클릭', async () => {
+    const btn = saveAllButton(page).first();
+    await btn.waitFor({ state: 'visible' });
+    await fastClick(page, btn);
     await saveSettingsModal(page).waitFor({ state: 'visible' });
   }, rowIndex);
 }
