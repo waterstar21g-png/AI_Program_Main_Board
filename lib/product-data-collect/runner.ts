@@ -1,8 +1,6 @@
 import { chromium, type Page } from 'playwright';
-import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
+import { TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
-
-const TMG_ADMIN = 'https://tmg1898.cafe24.com/mall/admin/';
 
 function log(
   logs: WorkflowStepLog[],
@@ -16,7 +14,7 @@ function log(
 
 async function login(page: Page, id: string, pw: string, logs: WorkflowStepLog[]) {
   log(logs, 'login', '더망고 로그인');
-  await page.goto(TMG_ADMIN, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.goto(TMG_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
   const idSel = [
     'input[name="login_id"]',

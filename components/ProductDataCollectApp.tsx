@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { parseCategoryUrlExcel } from '@/lib/product-data-collect/excel-import';
-import { WORKFLOW_STEPS, TMG_BULK_URL } from '@/lib/product-data-collect/steps';
+import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 const SITE_NAME = '더망고';
@@ -70,6 +70,10 @@ export function ProductDataCollectApp() {
           <label className="field">
             <span className="field__label">사이트명</span>
             <input className="input" value={SITE_NAME} readOnly />
+          </label>
+          <label className="field">
+            <span className="field__label">로그인 URL</span>
+            <input className="input" value={TMG_LOGIN_URL} readOnly />
           </label>
           <label className="field">
             <span className="field__label">대량수집 URL</span>
