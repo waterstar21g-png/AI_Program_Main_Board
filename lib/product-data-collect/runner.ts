@@ -85,6 +85,45 @@ async function clickFirstVisible(page: Page, locators: Locator[]) {
   return false;
 }
 
+function isLoginPageUrl(url: string) {
+  return url.includes('admin_login');
+}
+
+function isBulkCollectPageUrl(url: string) {
+  return url.includes('getGoodsNew.php');
+}
+
+/** 로그인 화면이면 즉시 중단 — URL 붙여넣기가 아이디 칸에 들어가는 것 방지 */
+async function assertNotOnLoginPage(page: Page, action: string) {
+  if (isLoginPageUrl(page.url())) {
+    throw new Error(`${action} 전에 로그인이 필요합니다. 로그인 ID/PW를 확인하세요.`);
+  }
+  const loginForm = page.locator('form#loginForm');
+  if (await loginForm.isVisible().catch(() => false)) {
+    throw new Error(`${action} 중 로그인 화면이 감지되었습니다. 로그인에 실패했습니다.`);
+  }
+}
+
+/** 대량수집 페이지인지 확인 */
+async function assertBulkCollectPage(page: Page) {
+  await assertNotOnLoginPage(page, '대량수집');
+  if (!isBulkCollectPageUrl(page.url())) {
+    throw new Error(`대량수집 페이지가 아닙니다: ${page.url()}`);
+  }
+  await urlSearchButton(page).first().waitFor({ state: 'visible', timeout: 60000 });
+}
+
+async function assertLoggedIn(page: Page) {
+  await page.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => undefined);
+  if (isLoginPageUrl(page.url())) {
+    throw new Error('로그인에 실패했습니다. ID/PW를 확인하세요.');
+  }
+  const loginForm = page.locator('form#loginForm');
+  if (await loginForm.isVisible().catch(() => false)) {
+    throw new Error('로그인에 실패했습니다. 로그인 화면이 남아 있습니다.');
+  }
+}
+
 /** 더망고 로그인 페이지(admin_login.php) — reCAPTCHA v3 포함 폼 제출 */
 async function login(page: Page, id: string, pw: string, ctx: LogCtx) {
   await actStep(page, ctx, 'login', '더망고 로그인 페이지 열기', async () => {
@@ -93,19 +132,23 @@ async function login(page: Page, id: string, pw: string, ctx: LogCtx) {
   });
 
   await actStep(page, ctx, 'login', '로그인 ID 입력 (아이디)', async () => {
-    const ok = await fillFirstVisible(page, [
-      'form#loginForm input[name="login_id"]',
-      'input[name="login_id"]',
-    ], id);
-    if (!ok) throw new Error('아이디 입력칸(login_id)을 찾지 못했습니다.');
+    const idInput = page.locator('form#loginForm input[name="login_id"]');
+    await idInput.waitFor({ state: 'visible', timeout: 30000 });
+    await highlight(page, idInput);
+    await pauseVisible(page, 500);
+    await idInput.fill('');
+    await idInput.fill(id);
+    const filled = await idInput.inputValue();
+    if (filled !== id) throw new Error(`아이디 입력 실패 (입력값: ${filled.slice(0, 20)})`);
   });
 
   await actStep(page, ctx, 'login', '로그인 PW 입력 (비밀번호)', async () => {
-    const ok = await fillFirstVisible(page, [
-      'form#loginForm input[name="login_pass"]',
-      'input[name="login_pass"]',
-    ], pw);
-    if (!ok) throw new Error('비밀번호 입력칸(login_pass)을 찾지 못했습니다.');
+    const pwInput = page.locator('form#loginForm input[name="login_pass"]');
+    await pwInput.waitFor({ state: 'visible', timeout: 30000 });
+    await highlight(page, pwInput);
+    await pauseVisible(page, 500);
+    await pwInput.fill('');
+    await pwInput.fill(pw);
   });
 
   await actStep(page, ctx, 'login', '로그인 버튼 클릭 (reCAPTCHA)', async () => {
@@ -115,21 +158,16 @@ async function login(page: Page, id: string, pw: string, ctx: LogCtx) {
     }
     await highlight(page, submit);
     await pauseVisible(page, 500);
-    await Promise.all([
-      page.waitForURL(url => !url.pathname.includes('admin_login'), { timeout: 90000 }),
-      submit.click(),
-    ]);
-    await page.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => undefined);
+    await submit.click();
+    await page.waitForLoadState('networkidle', { timeout: 90000 }).catch(() => undefined);
+    await assertLoggedIn(page);
   });
 }
 
 async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
   await actStep(page, ctx, 'open-page', '상품데이터 대량수집 페이지 이동', async () => {
-    await page.goto(TMG_BULK_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    if (page.url().includes('admin_login')) {
-      throw new Error('로그인 세션이 없습니다. ID/PW를 확인하세요.');
-    }
-    await urlSearchButton(page).waitFor({ state: 'visible', timeout: 60000 });
+    await page.goto(TMG_BULK_URL, { waitUntil: 'networkidle', timeout: 60000 });
+    await assertBulkCollectPage(page);
   }, rowIndex);
 }
 
@@ -149,32 +187,27 @@ function saveAllButton(page: Page) {
     .or(page.getByText('검색된 상품 모두 저장', { exact: true }));
 }
 
-/** URL상품검색하기 버튼 왼쪽 입력란 */
+/** URL상품검색하기 버튼 왼쪽 입력란 (로그인 폼 제외) */
 async function findUrlInput(page: Page): Promise<Locator> {
-  const btn = urlSearchButton(page).first();
-  await btn.waitFor({ state: 'visible', timeout: 30000 });
+  await assertBulkCollectPage(page);
 
+  const btn = urlSearchButton(page).first();
   const nearBtn = btn.locator(
-    'xpath=preceding::textarea[1]|preceding::input[@type="text"][1]|preceding::input[not(@type="hidden")][1]',
+    'xpath=preceding::textarea[1]|preceding::input[@type="text"][not(@name="login_id")][1]',
   );
   if (await nearBtn.isVisible().catch(() => false)) return nearBtn;
 
   const nearClear = page
     .locator('input[type="button"][value="CLEAR"], a:has-text("CLEAR"), *:text-is("CLEAR")')
-    .locator('xpath=following::textarea[1]|following::input[@type="text"][1]');
+    .locator('xpath=following::textarea[1]|following::input[@type="text"][not(@name="login_id")][1]');
   if (await nearClear.first().isVisible().catch(() => false)) return nearClear.first();
-
-  const byPlaceholder = page.locator('textarea, input[type="text"]').filter({
-    has: page.locator('xpath=..//*[contains(text(),"http")]'),
-  });
-  if (await byPlaceholder.first().isVisible().catch(() => false)) return byPlaceholder.first();
 
   const textareas = page.locator('textarea:visible');
   const count = await textareas.count();
   if (count >= 2) return textareas.nth(1);
   if (count === 1) return textareas.first();
 
-  return page.locator('input[type="text"]:visible').last();
+  throw new Error('대량수집 페이지에서 URL 입력란을 찾지 못했습니다. 로그인 상태를 확인하세요.');
 }
 
 function saveSettingsModal(page: Page) {
@@ -314,6 +347,14 @@ export async function runTmgCollectWorkflow(
 
   if (!req.loginId?.trim() || !req.loginPw?.trim()) {
     return { ok: false, logs, processedCount: 0, message: '로그인 ID·PW를 입력하세요.' };
+  }
+  if (/^https?:\/\//i.test(req.loginId.trim())) {
+    return {
+      ok: false,
+      logs,
+      processedCount: 0,
+      message: '로그인 ID에 URL이 들어가 있습니다. 더망고 아이디(예: waterstar21)를 입력하세요.',
+    };
   }
   if (!rows.length) {
     return { ok: false, logs, processedCount: 0, message: '처리할 엑셀 행이 없습니다.' };

@@ -35,6 +35,10 @@ export function ProductDataCollectApp() {
   }, []);
 
   const runCollect = async () => {
+    if (/^https?:\/\//i.test(loginId.trim())) {
+      setError('로그인 ID에 URL이 들어가 있습니다. 더망고 아이디를 입력하세요.');
+      return;
+    }
     setRunning(true);
     setError('');
     setLogs([]);
@@ -121,7 +125,8 @@ export function ProductDataCollectApp() {
               className="input"
               value={loginId}
               onChange={e => setLoginId(e.target.value)}
-              autoComplete="username"
+              autoComplete="off"
+              placeholder="더망고 아이디 (URL 아님)"
             />
           </label>
           <label className="field">
