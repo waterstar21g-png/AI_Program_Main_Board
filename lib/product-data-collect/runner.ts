@@ -115,18 +115,18 @@ async function assertBulkCollectPage(page: Page) {
 
 function urlSearchButton(page: Page) {
   return page
-    .locator('input[type="button"][value*="URL상품검색"]')
-    .or(page.locator('input[type="submit"][value*="URL상품검색"]'))
-    .or(page.getByRole('button', { name: /URL\s*상품\s*검색하기/ }))
-    .or(page.getByText('URL상품검색하기', { exact: true }));
+    .locator('input[type="button"][value*="URL"][value*="상품"][value*="검색"]')
+    .or(page.locator('input[type="submit"][value*="URL"][value*="상품"][value*="검색"]'))
+    .or(page.getByRole('button', { name: /URL\s*상품\s*검색/ }))
+    .or(page.getByText(/URL\s*상품\s*검색하기/));
 }
 
 function saveAllButton(page: Page) {
   return page
-    .locator('input[type="button"][value*="검색된 상품 모두 저장"]')
-    .or(page.locator('input[type="submit"][value*="검색된 상품 모두 저장"]'))
-    .or(page.getByRole('button', { name: /검색된 상품 모두 저장/ }))
-    .or(page.getByText('검색된 상품 모두 저장', { exact: true }));
+    .locator('input[type="button"][value*="검색된"][value*="모두"]')
+    .or(page.locator('input[type="submit"][value*="검색된"][value*="모두"]'))
+    .or(page.getByRole('button', { name: /검색된\s*상품\s*모두\s*저장/ }))
+    .or(page.getByText(/검색된\s*상품\s*모두\s*저장/));
 }
 
 /** URL상품검색하기 버튼과 같은 영역(행/블록) */
@@ -138,9 +138,14 @@ function urlSearchArea(page: Page) {
 async function findBulkReadyPage(context: BrowserContext): Promise<Page | null> {
   for (const p of context.pages()) {
     if (p.isClosed()) continue;
-    if (isBulkCollectPageUrl(p.url()) && (await urlSearchButton(p).first().isVisible().catch(() => false))) {
+    if (isBulkCollectPageUrl(p.url())) {
+      await p.bringToFront().catch(() => undefined);
       return p;
     }
+  }
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    if (await urlSearchButton(p).first().isVisible().catch(() => false)) return p;
   }
   return null;
 }
