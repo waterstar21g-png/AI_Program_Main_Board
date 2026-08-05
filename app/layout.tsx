@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from 'next';
 import { Noto_Sans_KR } from 'next/font/google';
 import { MobileEnv } from '@/components/MobileEnv';
+import { VersionBanner } from '@/components/VersionBanner';
 import { APP_NAME } from '@/lib/app-name';
+import { APP_VERSION } from '@/lib/app-version';
 import './globals.css';
 
 const noto = Noto_Sans_KR({
@@ -13,8 +15,8 @@ const noto = Noto_Sans_KR({
 
 export const metadata: Metadata = {
   title: {
-    default: APP_NAME,
-    template: `%s · ${APP_NAME}`,
+    default: `${APP_NAME} v${APP_VERSION}`,
+    template: `%s · ${APP_NAME} v${APP_VERSION}`,
   },
   description: 'AI_Program_Main_Board — 카테고리 URL 추출, 상품캡처·가격조회 등',
   applicationName: APP_NAME,
@@ -55,6 +57,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="ko" className={noto.variable}>
       <body>
         <MobileEnv>{children}</MobileEnv>
+        <VersionBanner />
       </body>
     </html>
   );
