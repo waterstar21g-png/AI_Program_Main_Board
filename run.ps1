@@ -1,41 +1,53 @@
 # AI_Program_Main_Board - run.ps1
-# GitHub main 최신 커밋 SHA로 동기화 (raw CDN 캐시 우회)
+# GitHub Contents API로 동기화 (raw.githubusercontent.com CDN 캐시 우회)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.0.9.2"
+$ExpectedVersion = "2.0.9.3"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Get-MainCommitSha {
   try {
-    $headers = @{
+    $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/main?t=$cb" -Headers @{
       "User-Agent"    = "AI_Program_Main_Board-run.ps1"
       "Cache-Control" = "no-cache"
       "Pragma"        = "no-cache"
     }
-    $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/main?t=$cb" -Headers $headers
     if ($meta.sha) { return $meta.sha }
   } catch {
-    Write-Host "[WARN] commits API 실패 — main raw 사용: $($_.Exception.Message)"
+    Write-Host "[WARN] commits API 실패: $($_.Exception.Message)"
   }
   return "main"
 }
 
-function Download-File([string]$RelPath, [string]$Url) {
+function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
+  $dir = Split-Path -Parent $LocalPath
+  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  $tmp = "$LocalPath.download"
   $headers = @{
     "User-Agent"    = "AI_Program_Main_Board-run.ps1"
     "Cache-Control" = "no-cache"
     "Pragma"        = "no-cache"
+    "Accept"        = "application/vnd.github.raw"
   }
-  $tmp = "$RelPath.download"
-  Invoke-WebRequest -Uri "$Url`?t=$cb" -OutFile $tmp -UseBasicParsing -Headers $headers
-  Move-Item -Force $tmp $RelPath
+  $apiUrl = "https://api.github.com/repos/$Repo/contents/$($RepoPath -replace '\\','/')?ref=$Sha&t=$cb"
+  try {
+    Invoke-WebRequest -Uri $apiUrl -OutFile $tmp -UseBasicParsing -Headers $headers
+  } catch {
+    # fallback: commit SHA raw (branch명 main raw 는 캐시됨 — 사용 금지)
+    $rawUrl = "https://raw.githubusercontent.com/$Repo/$Sha/$($RepoPath -replace '\\','/')?t=$cb"
+    Invoke-WebRequest -Uri $rawUrl -OutFile $tmp -UseBasicParsing -Headers @{
+      "User-Agent"    = "AI_Program_Main_Board-run.ps1"
+      "Cache-Control" = "no-cache"
+      "Pragma"        = "no-cache"
+    }
+  }
+  Move-Item -Force $tmp $LocalPath
 }
 
 $Sha = Get-MainCommitSha
-$Raw = "https://raw.githubusercontent.com/$Repo/$Sha"
 
 Write-Host "========================================"
 Write-Host "  AI_Program_Main_Board  v$ExpectedVersion"
@@ -48,35 +60,31 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-Write-Host "[SYNC] GitHub 최신 파일 다운로드 (캐시 우회)..."
-New-Item -ItemType Directory -Force -Path "lib\programs" | Out-Null
-New-Item -ItemType Directory -Force -Path "lib\product-data-collect" | Out-Null
-New-Item -ItemType Directory -Force -Path "components" | Out-Null
-New-Item -ItemType Directory -Force -Path "app\api\product-collect\run" | Out-Null
-New-Item -ItemType Directory -Force -Path "app\api\product-collect\open" | Out-Null
+Write-Host "[SYNC] GitHub API로 최신 파일 다운로드 (CDN 우회)..."
 
 $files = @(
-  @("lib\product-data-collect\browser-session.ts", "$Raw/lib/product-data-collect/browser-session.ts"),
-  @("lib\product-data-collect\runner.ts", "$Raw/lib/product-data-collect/runner.ts"),
-  @("lib\product-data-collect\steps.ts", "$Raw/lib/product-data-collect/steps.ts"),
-  @("lib\product-data-collect\types.ts", "$Raw/lib/product-data-collect/types.ts"),
-  @("lib\product-data-collect\excel-import.ts", "$Raw/lib/product-data-collect/excel-import.ts"),
-  @("components\ProgramBoardApp.tsx", "$Raw/components/ProgramBoardApp.tsx"),
-  @("components\ProductDataCollectApp.tsx", "$Raw/components/ProductDataCollectApp.tsx"),
-  @("app\layout.tsx", "$Raw/app/layout.tsx"),
-  @("app\globals.css", "$Raw/app/globals.css"),
-  @("lib\programs\registry.tsx", "$Raw/lib/programs/registry.tsx"),
-  @("lib\app-version.ts", "$Raw/lib/app-version.ts"),
-  @("package.json", "$Raw/package.json"),
-  @("app\api\product-collect\run\route.ts", "$Raw/app/api/product-collect/run/route.ts"),
-  @("app\api\product-collect\open\route.ts", "$Raw/app/api/product-collect/open/route.ts"),
-  @("run.ps1", "$Raw/run.ps1")
+  @("lib\product-data-collect\browser-session.ts", "lib/product-data-collect/browser-session.ts"),
+  @("lib\product-data-collect\runner.ts", "lib/product-data-collect/runner.ts"),
+  @("lib\product-data-collect\steps.ts", "lib/product-data-collect/steps.ts"),
+  @("lib\product-data-collect\types.ts", "lib/product-data-collect/types.ts"),
+  @("lib\product-data-collect\excel-import.ts", "lib/product-data-collect/excel-import.ts"),
+  @("components\ProgramBoardApp.tsx", "components/ProgramBoardApp.tsx"),
+  @("components\ProductDataCollectApp.tsx", "components/ProductDataCollectApp.tsx"),
+  @("app\layout.tsx", "app/layout.tsx"),
+  @("app\globals.css", "app/globals.css"),
+  @("lib\programs\registry.tsx", "lib/programs/registry.tsx"),
+  @("lib\app-version.ts", "lib/app-version.ts"),
+  @("package.json", "package.json"),
+  @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
+  @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
+  @("run.ps1", "run.ps1"),
+  @("run.bat", "run.bat")
 )
 
 $failed = @()
 foreach ($f in $files) {
   try {
-    Download-File $f[0] $f[1]
+    Download-RepoFile $f[0] $f[1]
     Write-Host "  OK $($f[0])"
   } catch {
     Write-Host "  FAIL $($f[0]) - $($_.Exception.Message)"
@@ -84,38 +92,33 @@ foreach ($f in $files) {
   }
 }
 
-$required = @(
+foreach ($r in @(
   "lib\product-data-collect\browser-session.ts",
   "lib\product-data-collect\runner.ts",
   "lib\app-version.ts",
   "app\api\product-collect\open\route.ts"
-)
-foreach ($r in $required) {
+)) {
   if (-not (Test-Path $r)) {
     Write-Host "[FATAL] 필수 파일 없음: $r"
-    Write-Host "        수동 다운로드: $Raw/$($r -replace '\\','/')"
     Read-Host "Press Enter"
     exit 1
   }
 }
 
 if ($failed.Count -gt 0) {
-  Write-Host "[WARN] 일부 파일 동기화 실패. 인터넷 확인 후 다시 run.ps1 실행"
+  Write-Host "[WARN] 일부 파일 동기화 실패 ($($failed.Count))"
 }
 
-# 동기화 후 실제 APP_VERSION 강제 확인
-if (Test-Path "lib\app-version.ts") {
-  $rawVer = Get-Content "lib\app-version.ts" -Raw
-  if ($rawVer -match "APP_VERSION\s*=\s*'([^']+)'") {
-    $TargetVersion = $Matches[1]
-  }
-  Write-Host "[CHECK] APP_VERSION = $TargetVersion  (sha=$Sha)"
+$rawVer = Get-Content "lib\app-version.ts" -Raw
+if ($rawVer -match "APP_VERSION\s*=\s*'([^']+)'") {
+  $TargetVersion = $Matches[1]
 }
+Write-Host "[CHECK] APP_VERSION = $TargetVersion  (sha=$Sha)"
 
 if ($TargetVersion -ne $ExpectedVersion) {
   Write-Host "[FATAL] 버전 불일치: 파일=$TargetVersion / 기대=$ExpectedVersion"
-  Write-Host "        GitHub main 반영·캐시 문제. 30초 후 다시 run.ps1 실행하세요."
-  Write-Host "        직접 확인: https://raw.githubusercontent.com/$Repo/$Sha/lib/app-version.ts"
+  Write-Host "        아래 한 줄을 PowerShell에 붙여 넣고 다시 실행하세요:"
+  Write-Host "        irm https://api.github.com/repos/$Repo/contents/run.ps1?ref=main -Headers @{Accept='application/vnd.github.raw';'User-Agent'='x'} -OutFile run.ps1; .\run.ps1"
   Read-Host "Press Enter"
   exit 1
 }
@@ -139,7 +142,6 @@ if (-not (Test-Path ".local\playwright-chromium.ok")) {
   if ($LASTEXITCODE -eq 0) { "ok" | Out-File ".local\playwright-chromium.ok" -Encoding ascii }
 }
 
-# Next 캐시에 옛 버전이 남으면 배너가 안 바뀜 → .next 삭제
 if (Test-Path ".next") {
   Write-Host "[CLEAN] .next 캐시 삭제 (버전 배지 갱신)"
   Remove-Item -Recurse -Force ".next" -ErrorAction SilentlyContinue
