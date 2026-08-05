@@ -1150,6 +1150,32 @@ html.is-touch .btn:active:not(:disabled) {
 .category-app .notice p { margin: 0; }
 .category-app .more { margin: 0.5rem 0.75rem; font-size: 0.8rem; color: #64748b; }
 
+.workflow-steps {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  color: #334155;
+}
+
+.workflow-steps li { margin-bottom: 0.2rem; }
+
+.log-box {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 0.72rem;
+  font-family: ui-monospace, monospace;
+  background: #0f172a;
+  color: #e2e8f0;
+  border-radius: 0.4rem;
+  padding: 0.45rem;
+}
+
+.log-line { margin-bottom: 0.15rem; }
+.log-time { color: #94a3b8; margin-right: 0.35rem; }
+.log-row { color: #60a5fa; margin-right: 0.35rem; }
+.log-msg { color: #fbbf24; }
+
 @media (max-width: 768px) {
   .program-board__body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
   .program-board__sidebar { max-height: 180px; }

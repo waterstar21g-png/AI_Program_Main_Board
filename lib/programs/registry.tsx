@@ -1,4 +1,5 @@
 import type { ComponentType } from 'react';
+import { ProductDataCollectApp } from '@/components/ProductDataCollectApp';
 import { CategoryExtractorApp } from '@/components/CategoryExtractorApp';
 import { ProductCaptureApp } from '@/components/ProductCaptureApp';
 
@@ -13,6 +14,13 @@ export type ProgramEntry = {
 
 /** 단위 프로그램 등록 — 새 프로그램은 이 배열에 항목만 추가 */
 export const PROGRAMS: ProgramEntry[] = [
+  {
+    id: 'product-data-collect',
+    name: '상품데이터수집',
+    description: '더망고 URL 엑셀 기반 상품 대량수집',
+    summaryLine: '엑셀 URL 불러오기 → 더망고 로그인 → 스텝별 자동 수집 반복',
+    component: ProductDataCollectApp,
+  },
   {
     id: 'category-item-url-list',
     name: 'Category_Item_Url_List',

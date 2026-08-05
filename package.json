@@ -1,6 +1,6 @@
 {
   "name": "ai-program-main-board",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "description": "AI_Program_Main_Board — 단위 프로그램 실행 보드",
   "scripts": {
@@ -19,8 +19,9 @@
   },
   "dependencies": {
     "@vercel/blob": "^2.5.0",
-    "cheerio": "^1.0.0",
+    "cheerio": "^1.2.0",
     "next": "^15.3.3",
+    "playwright": "^1.52.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "xlsx": "^0.18.5"
