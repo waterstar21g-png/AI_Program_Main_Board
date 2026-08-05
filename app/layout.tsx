@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Noto_Sans_KR } from 'next/font/google';
 import { MobileEnv } from '@/components/MobileEnv';
+import { APP_NAME } from '@/lib/app-name';
 import './globals.css';
 
 const noto = Noto_Sans_KR({
@@ -12,11 +13,11 @@ const noto = Noto_Sans_KR({
 
 export const metadata: Metadata = {
   title: {
-    default: 'Nutri-Farmer Front Program Board',
-    template: '%s · Nutri-Farmer',
+    default: APP_NAME,
+    template: `%s · ${APP_NAME}`,
   },
   description: 'Nutri-Farmer 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등',
-  applicationName: 'Nutri-Farmer Front',
+  applicationName: APP_NAME,
   keywords: ['상품캡처', '가격조회', '아이템스카우트', '네이버쇼핑', '쿠팡'],
   authors: [{ name: '함께온라인' }],
   creator: '함께온라인',
@@ -28,7 +29,7 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: 'black-translucent',
-    title: '상품캡처',
+    title: APP_NAME,
   },
   other: {
     'mobile-web-app-capable': 'yes',

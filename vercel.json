@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "name": "Nutri-Farmer_Front_Program_Board",
   "framework": "nextjs",
   "git": {
     "deploymentEnabled": {

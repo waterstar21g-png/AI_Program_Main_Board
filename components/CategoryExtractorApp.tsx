@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react';
 import { downloadHierarchyExcel } from '@/lib/excel-export';
-import { APP_NAME } from '@/lib/app-name';
+import { CATEGORY_APP_NAME } from '@/lib/category-app-name';
 import { MAX_TOP_CATEGORIES } from '@/lib/types';
 import type { CrawlResult, HierarchyRow } from '@/lib/types';
 
@@ -92,7 +92,7 @@ export function CategoryExtractorApp() {
     <div className="category-app">
       <header className="category-app__header">
         <p className="category-app__eyebrow">웹 · 계층 카테고리 · 엑셀 저장</p>
-        <h1 className="category-app__title">{APP_NAME}</h1>
+        <h1 className="category-app__title">{CATEGORY_APP_NAME}</h1>
         <p className="category-app__desc">
           사이트명·URL과 <strong>상위 카테고리</strong>를 지정하면, 해당 상위만 골라 중위→하위→최종
           카테고리와 <strong>브라우저 주소창 URL</strong>을 엑셀로 저장합니다. (ABC마트 / A-RT 계열)

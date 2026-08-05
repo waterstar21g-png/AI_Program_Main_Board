@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { APP_NAME } from '@/lib/app-name';
 import { DEFAULT_PROGRAM_ID, PROGRAMS } from '@/lib/programs/registry';
 
 export function ProgramBoardApp() {
@@ -11,7 +12,7 @@ export function ProgramBoardApp() {
   return (
     <div className="program-board">
       <header className="program-board__header">
-        <h1 className="program-board__title">Nutri-Farmer Front Program Board</h1>
+        <h1 className="program-board__title">{APP_NAME}</h1>
       </header>
 
       <div className="program-board__body">
