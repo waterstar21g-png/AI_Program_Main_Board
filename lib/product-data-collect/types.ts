@@ -35,6 +35,8 @@ export interface TmgCollectRequest {
   /** 검색결과상위 저장 개수 (기본 3) */
   saveCount?: number;
   headless?: boolean;
+  /** false면 Chromium 창을 자동으로 닫지 않음 (기본: 화면 보기 모드에서 true) */
+  keepBrowserOpen?: boolean;
   startRowIndex?: number;
 }
 

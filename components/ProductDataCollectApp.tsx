@@ -54,6 +54,7 @@ export function ProductDataCollectApp() {
           rows,
           saveCount,
           headless: false,
+          keepBrowserOpen: true,
         }),
       });
 
@@ -172,7 +173,7 @@ export function ProductDataCollectApp() {
       <section className="panel panel--compact">
         <h2 className="panel__title">2. 작업 흐름 — Chromium 창에서 단계별 확인</h2>
         <p className="panel__hint">
-          실행 시 더망고 Chromium 창이 열립니다. 클릭·입력 위치에 <strong>빨간 테두리</strong>가 표시되며, 단계마다 잠시 멈춥니다.
+          실행 시 더망고 Chromium 창이 열립니다. 작업·오류 확인 후 <strong>창을 직접 닫으세요</strong> (자동으로 안 닫힘).
         </p>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (

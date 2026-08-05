@@ -378,6 +378,7 @@ export async function runTmgCollectWorkflow(
   });
 
   let processedCount = 0;
+  let ok = false;
   try {
     const page = await browser.newPage();
     page.setDefaultTimeout(120000);
@@ -391,12 +392,25 @@ export async function runTmgCollectWorkflow(
       processedCount++;
     }
 
+    ok = true;
     return { ok: true, logs, processedCount };
   } catch (e) {
     const message = e instanceof Error ? e.message : '자동 수집 실패';
     pushLog(ctx, 'next-row', '오류', undefined, message);
     return { ok: false, logs, processedCount, message };
   } finally {
-    await browser.close();
+    const headless = req.headless ?? false;
+    const keepOpen = req.keepBrowserOpen ?? !headless;
+    if (keepOpen) {
+      pushLog(
+        ctx,
+        'next-row',
+        'Chromium 창 유지',
+        undefined,
+        ok ? '작업 완료 — 화면 확인 후 창을 직접 닫으세요' : '오류 화면 확인 — 창을 직접 닫으면 종료됩니다',
+      );
+      await browser.waitForEvent('disconnected', { timeout: 1_800_000 }).catch(() => undefined);
+    }
+    await browser.close().catch(() => undefined);
   }
 }
