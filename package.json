@@ -1,6 +1,6 @@
 {
   "name": "sangpum-capture-price",
-  "version": "1.2.3",
+  "version": "1.3.0",
   "private": true,
   "description": "상품캡처 및 가격조회 — 사진으로 상품을 인식하고 아이템스카우트 시장 데이터를 조회합니다.",
   "scripts": {
@@ -16,9 +16,11 @@
     "vercel:deploy": "vercel --prod --yes --scope nutrifarmer-front"
   },
   "dependencies": {
+    "cheerio": "^1.0.0",
     "next": "^15.3.3",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

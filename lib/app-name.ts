@@ -1,0 +1,2 @@
+/** 실행 프로그램 표시 이름 */
+export const APP_NAME = 'Category_Item_Url_List';

@@ -576,3 +576,218 @@ html.is-touch .btn:active:not(:disabled) {
 @media (max-width: 480px) {
   .is-stats { grid-template-columns: 1fr; }
 }
+
+/* ── Nutri-Farmer Program Board ── */
+.program-board {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #1a4d5c;
+}
+
+.program-board__header {
+  background: linear-gradient(180deg, #1a5f73 0%, #164a59 100%);
+  color: #fff;
+  text-align: center;
+  padding: 0.85rem 1rem;
+  border-bottom: 2px solid #0f3540;
+}
+
+.program-board__title {
+  margin: 0;
+  font-size: clamp(1rem, 2.5vw, 1.35rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.program-board__body {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  min-height: 0;
+}
+
+.program-board__sidebar {
+  background: #d9d9d9;
+  border-right: 2px solid #a8a8a8;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.program-board__sidebar-title {
+  background: #2563eb;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.9rem;
+  padding: 0.55rem 0.75rem;
+  border-bottom: 1px solid #1d4ed8;
+}
+
+.program-board__list {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.program-board__item {
+  width: 100%;
+  text-align: left;
+  border: 1px solid #b0b0b0;
+  background: #ececec;
+  border-radius: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  margin-bottom: 0.35rem;
+  cursor: pointer;
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.program-board__item:hover {
+  background: #fff;
+  border-color: #2563eb;
+}
+
+.program-board__item.is-active {
+  background: #dbeafe;
+  border-color: #2563eb;
+  box-shadow: inset 3px 0 0 #2563eb;
+}
+
+.program-board__item-name {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.program-board__item-desc {
+  font-size: 0.72rem;
+  color: #475569;
+}
+
+.program-board__main {
+  background: #1a4d5c;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.program-board__main-inner {
+  flex: 1;
+  overflow: auto;
+  padding: 0.75rem;
+}
+
+.program-board__main-inner > .app,
+.program-board__main-inner > .category-app {
+  max-width: none;
+  margin: 0;
+  min-height: auto;
+}
+
+/* ── Category URL Extractor (embedded) ── */
+.category-app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0.5rem 0.25rem 2rem;
+}
+
+.category-app__header { margin-bottom: 1rem; }
+
+.category-app__eyebrow {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.category-app__title {
+  margin: 0 0 0.5rem;
+  font-size: clamp(1.25rem, 3vw, 1.75rem);
+  font-weight: 800;
+  color: #fff;
+}
+
+.category-app__desc {
+  margin: 0;
+  max-width: 52rem;
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+.category-app .panel {
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.category-app .panel__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.category-app .panel__title { margin: 0; font-size: 1.05rem; }
+.category-app .panel__hint { margin: 0 0 0.75rem; font-size: 0.85rem; color: #64748b; }
+.category-app .panel__footer { margin-top: 1rem; display: flex; justify-content: flex-end; }
+.category-app .badge {
+  display: inline-block; margin-left: 0.35rem; padding: 0.1rem 0.45rem;
+  border-radius: 999px; background: #e2e8f0; font-size: 0.75rem; font-weight: 600; color: #64748b;
+}
+.category-app .top-list {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.5rem;
+}
+.category-app .top-list__item { display: flex; align-items: center; gap: 0.35rem; }
+.category-app .top-list__num { width: 1.5rem; font-size: 0.8rem; font-weight: 600; color: #64748b; text-align: right; }
+.category-app .form-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 0.75rem; }
+.category-app .field { display: flex; flex-direction: column; gap: 0.35rem; }
+.category-app .field__label { font-size: 0.85rem; font-weight: 600; color: #64748b; }
+.category-app .input {
+  width: 100%; padding: 0.55rem 0.65rem; border: 1px solid #e2e8f0;
+  border-radius: 0.5rem; font: inherit;
+}
+.category-app .btn {
+  border: none; border-radius: 0.5rem; padding: 0.55rem 1rem; font: inherit; font-weight: 600; cursor: pointer;
+}
+.category-app .btn--primary { background: #2563eb; color: #fff; }
+.category-app .btn--primary:hover:not(:disabled) { background: #1d4ed8; }
+.category-app .btn--ghost { background: #f1f5f9; color: #0f172a; border: 1px solid #e2e8f0; padding: 0.45rem 0.75rem; font-size: 0.85rem; }
+.category-app .btn--icon { width: 2rem; height: 2rem; padding: 0; background: transparent; color: #64748b; font-size: 1.25rem; border: none; cursor: pointer; }
+.category-app .summary {
+  margin-bottom: 1rem; padding: 0.75rem 1rem; background: #eff6ff;
+  border: 1px solid #bfdbfe; border-radius: 0.75rem; font-size: 0.9rem;
+}
+.category-app .summary p { margin: 0.2rem 0; }
+.category-app .summary__warn { color: #b45309; }
+.category-app .table-wrap { overflow: auto; border: 1px solid #e2e8f0; border-radius: 0.75rem; max-height: 420px; }
+.category-app .result-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.category-app .result-table th, .category-app .result-table td {
+  padding: 0.5rem 0.6rem; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top;
+}
+.category-app .result-table th { background: #f8fafc; font-weight: 600; position: sticky; top: 0; }
+.category-app .url-cell { max-width: 280px; word-break: break-all; font-size: 0.78rem; }
+.category-app .url-cell a { color: #2563eb; }
+.category-app .notice { padding: 0.85rem 1rem; border-radius: 0.75rem; margin-bottom: 1rem; font-size: 0.875rem; }
+.category-app .notice--error { background: #fef2f2; border: 1px solid #fca5a5; }
+.category-app .notice p { margin: 0; }
+.category-app .more { margin: 0.5rem 0.75rem; font-size: 0.8rem; color: #64748b; }
+
+@media (max-width: 768px) {
+  .program-board__body { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+  .program-board__sidebar { max-height: 180px; }
+  .category-app .form-grid { grid-template-columns: 1fr; }
+}
+
