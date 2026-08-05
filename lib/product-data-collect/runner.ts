@@ -1,6 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
 import { requireExistingBrowserContext } from '@/lib/product-data-collect/browser-session';
-import { TMG_BULK_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 /** 사람이 클릭하는 것처럼 — 망고 느린 UI에 맞춤 */
@@ -352,10 +351,10 @@ export async function runTmgCollectWorkflow(
     '로그인 제외 · getGoodsNew.php · 망고 속도',
   );
 
-  const useExisting = req.useExistingBrowser !== false;
   const context = await requireExistingBrowserContext();
 
   let processedCount = 0;
+  const headless = req.headless ?? false;
   try {
     const page = await resolveBulkPageOrThrow(context, ctx);
     page.setDefaultTimeout(180000);

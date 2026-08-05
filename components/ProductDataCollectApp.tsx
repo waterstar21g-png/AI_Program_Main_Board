@@ -183,7 +183,7 @@ export function ProductDataCollectApp() {
             disabled={opening || running}
             onClick={() => void openBrowser()}
           >
-            {opening ? '열는 중…' : browserOpen ? '① Chromium 다시 열기' : '① Chromium 열기'}
+            {opening ? '연결 중…' : browserOpen ? '① Chromium 재연결' : '① Chromium 연결'}
           </button>
           <button
             type="button"
@@ -191,7 +191,7 @@ export function ProductDataCollectApp() {
             disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '단계별 실행 중…' : '② 지금 화면에서 수집 시작'}
+            {running ? '단계별 실행 중…' : '② 수집 시작 (열린 메인 화면)'}
           </button>
         </div>
       </section>
