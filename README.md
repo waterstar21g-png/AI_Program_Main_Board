@@ -2,8 +2,8 @@
 
 Nutri-Farmer 단위 프로그램 실행 보드 — 카테고리 URL 추출, 상품캡처·가격조회 등
 
-**배포 URL:** https://nutri-farmer-front-program-board.vercel.app  
-(기존 https://sangpum-capture-price.vercel.app — Vercel 프로젝트명 변경 후 자동 리다이렉트)
+**배포 URL:** https://sangpum-capture-price.vercel.app  
+(실행 프로그램명: `Nutri-Farmer_Front_Program_Board`)
 
 ## 주요 기능
 

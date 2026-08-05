@@ -12,8 +12,8 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
-    "vercel:link": "vercel link --yes --scope nutrifarmer-front --project Nutri-Farmer_Front_Program_Board",
-    "vercel:deploy": "vercel --prod --yes --scope nutrifarmer-front --name Nutri-Farmer_Front_Program_Board"
+    "vercel:link": "vercel link --yes --scope nutrifarmer-front --project sangpum-capture-price",
+    "vercel:deploy": "vercel --prod --yes --scope nutrifarmer-front"
   },
   "dependencies": {
     "@vercel/blob": "^2.5.0",
