@@ -219,9 +219,9 @@ function catchInPagePopupHidden(page: Page, skipContains = ''): Promise<void> {
 }
 
 /** [3] 검색 팝업 닫힘 캐치 */
-async function waitForSearchPopupClosed(page: Page): Promise<void> {
+async function waitForSearchPopupClosed(page: Page, windowClosed: Promise<void>): Promise<void> {
   await Promise.race([
-    catchWindowPopupClose(page),
+    windowClosed,
     catchInPagePopupHidden(page, '상품저장설정'),
     saveAllButton(page)
       .first()
