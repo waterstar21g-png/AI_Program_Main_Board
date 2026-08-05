@@ -14,6 +14,7 @@ export const CHROMIUM_ARGS = [
   '--hide-crash-restore-bubble',
   '--disable-session-crashed-bubble',
   '--remote-debugging-port=9222',
+  '--start-maximized',
 ];
 
 type BrowserGlobal = { __tmgBrowserContext?: BrowserContext | null };
@@ -33,6 +34,27 @@ export function getSharedContext() {
 
 function contextAlive(ctx: BrowserContext | null): ctx is BrowserContext {
   return !!ctx && ctx.pages().some(p => !p.isClosed());
+}
+
+/** 창 최대화 — 모달·버튼이 잘리지 않도록 */
+export async function maximizePage(page: Page) {
+  try {
+    const session = await page.context().newCDPSession(page);
+    const { windowId } = await session.send('Browser.getWindowForTarget');
+    await session.send('Browser.setWindowBounds', {
+      windowId,
+      bounds: { windowState: 'maximized' },
+    });
+  } catch {
+    await page.evaluate(() => {
+      try {
+        window.moveTo(0, 0);
+        window.resizeTo(screen.availWidth, screen.availHeight);
+      } catch {
+        /* ignore */
+      }
+    }).catch(() => undefined);
+  }
 }
 
 export async function tryConnectCdp(): Promise<BrowserContext | null> {
@@ -57,11 +79,13 @@ async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
   const ctx = await chromium.launchPersistentContext(TMG_PROFILE_DIR, {
     headless,
     slowMo: 0,
-    viewport: { width: 1400, height: 900 },
+    // viewport 고정 해제 → --start-maximized 적용
+    viewport: null,
     args: CHROMIUM_ARGS,
   });
   setStoredContext(ctx);
   const page = ctx.pages()[0] ?? (await ctx.newPage());
+  await maximizePage(page);
   await gotoUrl(page, TMG_LOGIN_URL);
   return ctx;
 }
@@ -96,6 +120,7 @@ export function findBulkPage(context: BrowserContext): Page | null {
 export async function openBrowserToLoginUrl(loginUrl = TMG_LOGIN_URL): Promise<Page> {
   const context = await attachBrowser();
   const page = context.pages().find(p => !p.isClosed()) ?? (await context.newPage());
+  await maximizePage(page);
   await gotoUrl(page, loginUrl);
   await page.bringToFront();
   return page;
