@@ -120,7 +120,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>① 로그인 URL 열기</strong> → 로그인 → 대량수집 메인 이동 → <strong>② 수집 시작</strong>.
+            <strong>①</strong> 로그인 클릭 → 상품데이터수집 → 대량수집 자동 진입 → <strong>② 수집 시작</strong>
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -186,7 +186,7 @@ export function ProductDataCollectApp() {
             disabled={opening || running}
             onClick={() => void openBrowser()}
           >
-            {opening ? '여는 중…' : browserOpen ? '① 로그인 URL 다시 열기' : '① 로그인 URL 열기'}
+            {opening ? '이동 중…' : browserOpen ? '① 다시 열기 (로그인→대량수집)' : '① 로그인→대량수집 자동'}
           </button>
           <button
             type="button"

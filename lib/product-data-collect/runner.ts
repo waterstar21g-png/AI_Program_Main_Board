@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { getCollectBrowserContext, maximizePage } from '@/lib/product-data-collect/browser-session';
+import { ensureBulkCollectPage, getCollectBrowserContext, maximizePage } from '@/lib/product-data-collect/browser-session';
 import { TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -165,13 +165,16 @@ async function resolveBulkPageOrThrow(context: BrowserContext, logCtx: LogCtx): 
   const ready = await findBulkReadyPage(context);
   if (ready) {
     await ready.bringToFront();
-    pushLog(logCtx, 'open-page', '[1] 대량수집 메인 화면 확인', undefined, ready.url());
+    pushLog(logCtx, 'open-page', '[1] 대량수집 메인 화면 확인', undefined, ready.url().split('?')[0]);
     return ready;
   }
-  throw new Error(
-    '대량수집 메인(getGoodsNew.php)이 열려 있지 않습니다.\n' +
-      '① 메인 URL 열기 → 로그인 → ② 수집 시작',
-  );
+
+  // 없으면 로그인→메뉴→대량수집까지 자동 진입
+  pushLog(logCtx, 'open-page', '[0] 로그인·메뉴 자동 이동');
+  const page = context.pages().find(p => !p.isClosed()) ?? (await context.newPage());
+  await ensureBulkCollectPage(page);
+  pushLog(logCtx, 'open-page', '[1] 대량수집 메인 화면 확인', undefined, page.url().split('?')[0]);
+  return page;
 }
 
 async function findUrlInput(page: Page): Promise<Locator> {

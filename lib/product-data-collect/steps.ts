@@ -8,7 +8,7 @@ export const TMG_BULK_URL =
 
 /** 로그인 제외 — 대량수집 메인 진입 후 1~6 (엑셀 전체 반복 = 7~8) */
 export const WORKFLOW_STEPS: { id: WorkflowStepId; label: string }[] = [
-  { id: 'open-page', label: '[1] 상품데이터 대량수집 메인 (getGoodsNew.php)' },
+  { id: 'open-page', label: '[1] 로그인→대량수집 메인 (getGoodsNew.php)' },
   { id: 'clear-grid', label: '[2] 입력 그리드 CLEAR → URL 입력 → URL상품검색하기' },
   { id: 'wait-search-popup', label: '[3] 검색 팝업 닫힘 대기 (망고 속도)' },
   { id: 'save-all', label: '[4] 검색된 상품 모두 저장 클릭' },
