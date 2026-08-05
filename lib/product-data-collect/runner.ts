@@ -85,63 +85,107 @@ async function clickFirstVisible(page: Page, locators: Locator[]) {
   return false;
 }
 
+/** 더망고 로그인 페이지(admin_login.php) — reCAPTCHA v3 포함 폼 제출 */
 async function login(page: Page, id: string, pw: string, ctx: LogCtx) {
   await actStep(page, ctx, 'login', '더망고 로그인 페이지 열기', async () => {
     await page.goto(TMG_LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.locator('form#loginForm').waitFor({ state: 'visible', timeout: 30000 });
   });
 
-  await actStep(page, ctx, 'login', '로그인 ID 입력', async () => {
+  await actStep(page, ctx, 'login', '로그인 ID 입력 (아이디)', async () => {
     const ok = await fillFirstVisible(page, [
-      'input[name="mall_id"]',
+      'form#loginForm input[name="login_id"]',
       'input[name="login_id"]',
-      'input[name="m_id"]',
-      '#mall_id',
-      'input[type="text"]',
     ], id);
-    if (!ok) throw new Error('ID 입력칸을 찾지 못했습니다.');
+    if (!ok) throw new Error('아이디 입력칸(login_id)을 찾지 못했습니다.');
   });
 
-  await actStep(page, ctx, 'login', '로그인 PW 입력', async () => {
+  await actStep(page, ctx, 'login', '로그인 PW 입력 (비밀번호)', async () => {
     const ok = await fillFirstVisible(page, [
-      'input[name="mall_passwd"]',
-      'input[name="login_pw"]',
-      '#mall_passwd',
-      'input[type="password"]',
+      'form#loginForm input[name="login_pass"]',
+      'input[name="login_pass"]',
     ], pw);
-    if (!ok) throw new Error('PW 입력칸을 찾지 못했습니다.');
+    if (!ok) throw new Error('비밀번호 입력칸(login_pass)을 찾지 못했습니다.');
   });
 
-  await actStep(page, ctx, 'login', '로그인 버튼 클릭', async () => {
-    const ok = await clickFirstVisible(page, [
-      page.getByRole('button', { name: /로그인|login/i }),
-      page.locator('input[type="submit"]'),
-      page.locator('button[type="submit"]'),
-      page.locator('a.login, .btn_login'),
+  await actStep(page, ctx, 'login', '로그인 버튼 클릭 (reCAPTCHA)', async () => {
+    const submit = page.locator('form#loginForm button[type="submit"]');
+    if (!(await submit.isVisible().catch(() => false))) {
+      throw new Error('로그인 버튼을 찾지 못했습니다.');
+    }
+    await highlight(page, submit);
+    await pauseVisible(page, 500);
+    await Promise.all([
+      page.waitForURL(url => !url.pathname.includes('admin_login'), { timeout: 90000 }),
+      submit.click(),
     ]);
-    if (!ok) throw new Error('로그인 버튼을 찾지 못했습니다.');
-    await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => undefined);
+    await page.waitForLoadState('domcontentloaded', { timeout: 60000 }).catch(() => undefined);
   });
 }
 
 async function openBulkPage(page: Page, ctx: LogCtx, rowIndex?: number) {
   await actStep(page, ctx, 'open-page', '상품데이터 대량수집 페이지 이동', async () => {
     await page.goto(TMG_BULK_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    if (page.url().includes('admin_login')) {
+      throw new Error('로그인 세션이 없습니다. ID/PW를 확인하세요.');
+    }
+    await urlSearchButton(page).waitFor({ state: 'visible', timeout: 60000 });
   }, rowIndex);
 }
 
-async function findUrlInput(page: Page) {
-  const nearClear = page.getByRole('button', { name: /CLEAR/i }).locator('xpath=preceding::textarea[1]');
-  if (await nearClear.isVisible().catch(() => false)) return nearClear;
+function urlSearchButton(page: Page) {
+  return page
+    .locator('input[type="button"][value*="URL상품검색"]')
+    .or(page.locator('input[type="submit"][value*="URL상품검색"]'))
+    .or(page.getByRole('button', { name: /URL\s*상품\s*검색하기/ }))
+    .or(page.getByText('URL상품검색하기', { exact: true }));
+}
 
-  const textarea = page.locator('textarea').first();
-  if (await textarea.isVisible().catch(() => false)) return textarea;
+function saveAllButton(page: Page) {
+  return page
+    .locator('input[type="button"][value*="검색된 상품 모두 저장"]')
+    .or(page.locator('input[type="submit"][value*="검색된 상품 모두 저장"]'))
+    .or(page.getByRole('button', { name: /검색된 상품 모두 저장/ }))
+    .or(page.getByText('검색된 상품 모두 저장', { exact: true }));
+}
 
-  return page.locator('textarea, input[type="text"]').first();
+/** URL상품검색하기 버튼 왼쪽 입력란 */
+async function findUrlInput(page: Page): Promise<Locator> {
+  const btn = urlSearchButton(page).first();
+  await btn.waitFor({ state: 'visible', timeout: 30000 });
+
+  const nearBtn = btn.locator(
+    'xpath=preceding::textarea[1]|preceding::input[@type="text"][1]|preceding::input[not(@type="hidden")][1]',
+  );
+  if (await nearBtn.isVisible().catch(() => false)) return nearBtn;
+
+  const nearClear = page
+    .locator('input[type="button"][value="CLEAR"], a:has-text("CLEAR"), *:text-is("CLEAR")')
+    .locator('xpath=following::textarea[1]|following::input[@type="text"][1]');
+  if (await nearClear.first().isVisible().catch(() => false)) return nearClear.first();
+
+  const byPlaceholder = page.locator('textarea, input[type="text"]').filter({
+    has: page.locator('xpath=..//*[contains(text(),"http")]'),
+  });
+  if (await byPlaceholder.first().isVisible().catch(() => false)) return byPlaceholder.first();
+
+  const textareas = page.locator('textarea:visible');
+  const count = await textareas.count();
+  if (count >= 2) return textareas.nth(1);
+  if (count === 1) return textareas.first();
+
+  return page.locator('input[type="text"]:visible').last();
+}
+
+function saveSettingsModal(page: Page) {
+  return page.locator('body').locator('table, div, form').filter({ hasText: '상품저장설정' }).last();
 }
 
 async function clearGrid(page: Page, ctx: LogCtx, rowIndex: number) {
-  await actStep(page, ctx, 'clear-grid', '입력 그리드 CLEAR', async () => {
-    const clearBtn = page.getByRole('button', { name: /^CLEAR$/i }).or(page.getByText(/^CLEAR$/i));
+  await actStep(page, ctx, 'clear-grid', 'URL 입력란 CLEAR', async () => {
+    const clearBtn = page
+      .locator('input[type="button"][value="CLEAR"]')
+      .or(page.getByText(/^CLEAR$/i));
     if (await clearBtn.first().isVisible().catch(() => false)) {
       await highlight(page, clearBtn);
       await pauseVisible(page, 500);
@@ -165,34 +209,35 @@ async function pasteUrl(page: Page, url: string, ctx: LogCtx, rowIndex: number) 
 
 async function clickUrlSearch(page: Page, ctx: LogCtx, rowIndex: number) {
   await actStep(page, ctx, 'url-search', 'URL상품검색하기 클릭', async () => {
-    const btn = page
-      .getByRole('button', { name: /URL상품검색하기/ })
-      .or(page.getByText('URL상품검색하기'));
-    await highlight(page, btn);
-    await pauseVisible(page, 500);
-    await btn.first().click();
+    const btn = urlSearchButton(page);
+    const ok = await clickFirstVisible(page, [btn]);
+    if (!ok) throw new Error('URL상품검색하기 버튼을 찾지 못했습니다.');
   }, rowIndex);
 }
 
-async function waitPopupDone(page: Page, ctx: LogCtx, step: WorkflowStepLog['step'], rowIndex: number) {
-  pushLog(ctx, step, '팝업 종료 대기 (화면 확인)', rowIndex);
+async function waitSearchPopupDone(page: Page, ctx: LogCtx, rowIndex: number) {
+  pushLog(ctx, 'wait-search-popup', 'URL 검색 완료 대기', rowIndex);
   await pauseVisible(page, 1500);
-  const dialog = page.locator('.layer, .popup, [role="dialog"], .modal, #layer');
-  await dialog.first().waitFor({ state: 'hidden', timeout: 180000 }).catch(async () => {
-    await page.waitForLoadState('networkidle', { timeout: 180000 }).catch(() => undefined);
-  });
-  pushLog(ctx, step, '팝업 종료됨', rowIndex, page.url());
+
+  const popup = await page.waitForEvent('popup', { timeout: 8000 }).catch(() => null);
+  if (popup) {
+    await popup.waitForEvent('close', { timeout: 180000 }).catch(() => undefined);
+    await popup.close().catch(() => undefined);
+  }
+
+  await saveAllButton(page).first().waitFor({ state: 'visible', timeout: 180000 });
+  await page.waitForLoadState('networkidle', { timeout: 180000 }).catch(() => undefined);
+
+  pushLog(ctx, 'wait-search-popup', '검색 완료 — 저장 버튼 표시됨', rowIndex, page.url());
   await pauseVisible(page);
 }
 
 async function clickSaveAll(page: Page, ctx: LogCtx, rowIndex: number) {
   await actStep(page, ctx, 'save-all', '검색된 상품 모두 저장 클릭', async () => {
-    const btn = page
-      .getByRole('button', { name: /검색된 상품 모두 저장/ })
-      .or(page.getByText('검색된 상품 모두 저장'));
-    await highlight(page, btn);
-    await pauseVisible(page, 500);
-    await btn.first().click();
+    const btn = saveAllButton(page);
+    const ok = await clickFirstVisible(page, [btn]);
+    if (!ok) throw new Error('검색된 상품 모두 저장 버튼을 찾지 못했습니다.');
+    await saveSettingsModal(page).waitFor({ state: 'visible', timeout: 60000 });
   }, rowIndex);
 }
 
@@ -204,25 +249,39 @@ async function fillSaveForm(
   rowIndex: number,
 ) {
   await actStep(page, ctx, 'fill-save-form', `저장상품수 ${saveCount} · 검색필터명 입력`, async () => {
-    const countLabel = page.getByText(/검색결과상위/);
-    const countInput = countLabel.locator('xpath=following::input[1]').or(page.locator('input').nth(0));
-    await highlight(page, countInput);
-    await countInput.first().fill(String(saveCount));
-    await pauseVisible(page, 600);
+    const modal = saveSettingsModal(page);
+    await modal.waitFor({ state: 'visible', timeout: 30000 });
 
-    const filterLabel = page.getByText(/검색필터명/);
-    const filterInput = filterLabel.locator('xpath=following::input[1]').or(page.locator('input[type="text"]').last());
+    const filterRow = modal.locator('tr, div').filter({ hasText: '검색필터명' }).first();
+    const filterInput = filterRow.locator('input[type="text"]').first();
     await highlight(page, filterInput);
-    await filterInput.first().fill(filterName);
+    await filterInput.fill(filterName);
     await pauseVisible(page, 600);
 
-    const saveBtn = page
-      .getByRole('button', { name: /^저장하기$/ })
-      .or(page.getByText(/^저장하기$/));
-    await highlight(page, saveBtn);
-    await pauseVisible(page, 500);
-    await saveBtn.first().click();
+    const countRow = modal.locator('tr, div').filter({ hasText: /저장상품수|검색결과\s*상위/ }).first();
+    const countInput = countRow.locator('input[type="text"], input[type="number"]').first();
+    await highlight(page, countInput);
+    await countInput.fill(String(saveCount));
+    await pauseVisible(page, 600);
+
+    const saveBtn = modal
+      .locator('input[type="button"][value="저장하기"], input[type="submit"][value="저장하기"]')
+      .or(modal.getByRole('button', { name: /^저장하기$/ }))
+      .or(modal.getByText(/^저장하기$/, { exact: true }));
+    const ok = await clickFirstVisible(page, [saveBtn]);
+    if (!ok) throw new Error('상품저장설정 — 저장하기 버튼을 찾지 못했습니다.');
   }, rowIndex);
+}
+
+async function waitSavePopupDone(page: Page, ctx: LogCtx, rowIndex: number) {
+  pushLog(ctx, 'wait-save-popup', '상품저장설정 팝업 종료 대기', rowIndex);
+  await pauseVisible(page, 1000);
+  await saveSettingsModal(page).waitFor({ state: 'hidden', timeout: 180000 }).catch(async () => {
+    await page.locator('text=상품저장설정').waitFor({ state: 'hidden', timeout: 180000 }).catch(() => undefined);
+    await page.waitForLoadState('networkidle', { timeout: 180000 }).catch(() => undefined);
+  });
+  pushLog(ctx, 'wait-save-popup', '저장 팝업 종료됨', rowIndex, page.url());
+  await pauseVisible(page);
 }
 
 async function processOneRow(
@@ -237,10 +296,10 @@ async function processOneRow(
   await clearGrid(page, ctx, rowIndex);
   await pasteUrl(page, finalCategoryUrl, ctx, rowIndex);
   await clickUrlSearch(page, ctx, rowIndex);
-  await waitPopupDone(page, ctx, 'wait-search-popup', rowIndex);
+  await waitSearchPopupDone(page, ctx, rowIndex);
   await clickSaveAll(page, ctx, rowIndex);
   await fillSaveForm(page, topFinalLabel, saveCount, ctx, rowIndex);
-  await waitPopupDone(page, ctx, 'wait-save-popup', rowIndex);
+  await waitSavePopupDone(page, ctx, rowIndex);
   pushLog(ctx, 'next-row', `엑셀 #${rowIndex} 행 완료`, rowIndex);
 }
 

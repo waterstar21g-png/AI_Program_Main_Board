@@ -14,7 +14,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-$TargetVersion = "1.6.6"
+$TargetVersion = "1.6.7"
 $needDownload = $false
 if (-not (Test-Path "components\ProductDataCollectApp.tsx")) { $needDownload = $true }
 if (-not (Test-Path "lib\product-data-collect\runner.ts")) { $needDownload = $true }
