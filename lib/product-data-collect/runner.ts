@@ -1,5 +1,5 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
-import { requireExistingBrowserContext } from '@/lib/product-data-collect/browser-session';
+import { attachBrowser } from '@/lib/product-data-collect/browser-session';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 /**
