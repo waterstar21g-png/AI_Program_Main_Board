@@ -12,29 +12,46 @@ export type ProgramEntry = {
   component: ComponentType;
 };
 
-/** 단위 프로그램 등록 — 새 프로그램은 이 배열에 항목만 추가 */
-export const PROGRAMS: ProgramEntry[] = [
+export type ProgramSection = {
+  /** 좌측 사이드바 그룹 제목 (없으면 일반 목록) */
+  title?: string;
+  programs: ProgramEntry[];
+};
+
+/** 단위 프로그램 등록 — 새 프로그램은 섹션·배열에 항목 추가 */
+export const PROGRAM_SECTIONS: ProgramSection[] = [
   {
-    id: 'product-data-collect',
-    name: '상품데이터수집',
-    description: '더망고 URL 엑셀 기반 상품 대량수집',
-    summaryLine: '엑셀 URL 불러오기 → 더망고 로그인 → 스텝별 자동 수집 반복',
-    component: ProductDataCollectApp,
+    title: '상품데이터수집',
+    programs: [
+      {
+        id: 'product-data-collect',
+        name: '상품데이터 대량수집',
+        description: '더망고 URL 엑셀 기반 상품 대량수집',
+        summaryLine: '엑셀 URL 불러오기 → 더망고 로그인 → 스텝별 자동 수집 반복',
+        component: ProductDataCollectApp,
+      },
+    ],
   },
   {
-    id: 'category-item-url-list',
-    name: 'Category_Item_Url_List',
-    description: '카테고리별 상품 URL 리스트 추출',
-    summaryLine: '사이트·상위 카테고리 지정 → 계층 URL 엑셀 저장 (ABC마트/A-RT)',
-    component: CategoryExtractorApp,
-  },
-  {
-    id: 'product-capture-price',
-    name: '상품캡처 및 가격조회',
-    description: '사진으로 상품 인식 · 가격 조회',
-    summaryLine: '사진·키워드 입력 → 상품 인식·가격·시장 정보 조회',
-    component: ProductCaptureApp,
+    programs: [
+      {
+        id: 'category-item-url-list',
+        name: 'Category_Item_Url_List',
+        description: '카테고리별 상품 URL 리스트 추출',
+        summaryLine: '사이트·상위 카테고리 지정 → 계층 URL 엑셀 저장 (ABC마트/A-RT)',
+        component: CategoryExtractorApp,
+      },
+      {
+        id: 'product-capture-price',
+        name: '상품캡처 및 가격조회',
+        description: '사진으로 상품 인식 · 가격 조회',
+        summaryLine: '사진·키워드 입력 → 상품 인식·가격·시장 정보 조회',
+        component: ProductCaptureApp,
+      },
+    ],
   },
 ];
+
+export const PROGRAMS: ProgramEntry[] = PROGRAM_SECTIONS.flatMap(section => section.programs);
 
 export const DEFAULT_PROGRAM_ID = PROGRAMS[0].id;

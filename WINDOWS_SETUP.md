@@ -35,8 +35,19 @@ cd AI_Program_Main_Board
 
 ## 4. 프로그램
 
-- **Category_Item_Url_List** — API 키 없이 사용
-- **상품캡처 및 가격조회** — `.env.local` API 키 필요
+좌측 **프로그램 목록**에서 선택합니다.
+
+| 그룹 / 프로그램 | 설명 |
+|-----------------|------|
+| **상품데이터수집** › 상품데이터 대량수집 | 더망고 로그인 + 엑셀 URL 자동 수집 (Playwright) |
+| Category_Item_Url_List | 카테고리 URL 엑셀 추출 (API 키 불필요) |
+| 상품캡처 및 가격조회 | `.env.local` API 키 필요 |
+
+상품데이터수집은 `setup.bat`에서 Chromium을 설치합니다. 실패 시:
+
+```cmd
+npx playwright install chromium
+```
 
 ## Node.js
 

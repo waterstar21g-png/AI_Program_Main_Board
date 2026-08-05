@@ -5,6 +5,7 @@ import { parseCategoryUrlExcel } from '@/lib/product-data-collect/excel-import';
 import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
+const PROGRAM_TITLE = '상품데이터 대량수집';
 const SITE_NAME = '더망고';
 
 export function ProductDataCollectApp() {
@@ -62,6 +63,7 @@ export function ProductDataCollectApp() {
 
   return (
     <div className="category-app program-unit">
+      <p className="program-unit__breadcrumb">상품데이터수집 › {PROGRAM_TITLE}</p>
       <section className="panel panel--compact">
         <div className="panel__head">
           <h2 className="panel__title">1. 로그인 · 엑셀</h2>

@@ -17,12 +17,12 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [1/3] Node.js OK
+echo [1/4] Node.js OK
 node -v
 npm -v
 echo.
 
-echo [2/3] 패키지 설치...
+echo [2/4] 패키지 설치...
 call npm install
 if errorlevel 1 (
   echo [오류] npm install 실패
@@ -31,7 +31,15 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] 환경파일 (선택)
+echo [3/4] Playwright Chromium (상품데이터수집용)...
+call npx playwright install chromium
+if errorlevel 1 (
+  echo [경고] Playwright Chromium 설치 실패 — 상품데이터수집 실행 전 수동 설치:
+  echo   npx playwright install chromium
+)
+
+echo.
+echo [4/4] 환경파일 (선택)
 if not exist ".env.local" (
   if exist ".env.example" (
     copy /Y ".env.example" ".env.local" >nul
