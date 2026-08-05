@@ -360,6 +360,16 @@ export async function runTmgCollectWorkflow(
     return { ok: false, logs, processedCount: 0, message: '처리할 엑셀 행이 없습니다.' };
   }
 
+  const loginId = req.loginId.trim();
+  const loginPw = req.loginPw.trim();
+  pushLog(
+    ctx,
+    'login',
+    'UI 입력값 → Chromium 전달',
+    undefined,
+    `아이디: ${loginId} / PW: ${loginPw ? '●'.repeat(Math.min(loginPw.length, 10)) : '(없음)'}`,
+  );
+
   const browser = await chromium.launch({
     headless: req.headless ?? false,
     slowMo: ACTION_SLOW_MO,
@@ -371,7 +381,7 @@ export async function runTmgCollectWorkflow(
     page.setDefaultTimeout(120000);
     await page.setViewportSize({ width: 1400, height: 900 });
 
-    await login(page, req.loginId.trim(), req.loginPw.trim(), ctx);
+    await login(page, loginId, loginPw, ctx);
 
     const start = req.startRowIndex ?? 0;
     for (let i = start; i < rows.length; i++) {
