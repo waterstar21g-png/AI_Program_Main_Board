@@ -6,6 +6,9 @@ export const TMG_LOGIN_URL =
 export const TMG_BULK_URL =
   'https://tmg1898.cafe24.com/mall/admin/shop/getGoodsNew.php';
 
+export const TMG_ADMIN_HOST = 'tmg1898.cafe24.com';
+export const TMG_BULK_PATH = 'getGoodsNew.php';
+
 /**
  * URL 신호 기준 1~4단계 (공식 API 없음)
  * 1) getGoodsNew.php 진입

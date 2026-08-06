@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.3"
+$ExpectedVersion = "2.2.4"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -148,8 +148,12 @@ if (-not (Test-Path ".local\playwright-chromium.ok")) {
 }
 
 if (Test-Path ".next") {
-  Write-Host "[CLEAN] .next 캐시 삭제 (버전 배지 갱신)"
+  Write-Host "[CLEAN] .next 캐시 삭제"
   Remove-Item -Recurse -Force ".next" -ErrorAction SilentlyContinue
+}
+if (Test-Path ".next-dev") {
+  Write-Host "[CLEAN] .next-dev 캐시 삭제 (dev 컴파일용)"
+  Remove-Item -Recurse -Force ".next-dev" -ErrorAction SilentlyContinue
 }
 
 Write-Host ""
@@ -159,4 +163,4 @@ Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
 
 Start-Process "http://localhost:3000"
-npm run dev:fast
+npm run dev

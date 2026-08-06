@@ -19,7 +19,7 @@ async function main() {
     }
   }
 
-  const child = spawn('npx', ['next', 'dev', '-p', String(port)], {
+  const child = spawn('npx', ['next', 'dev', '-p', String(port), '-H', '0.0.0.0'], {
     cwd: projectRoot,
     stdio: 'inherit',
     shell: true,

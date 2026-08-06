@@ -1,12 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
-import { TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
+import { TMG_BULK_URL, TMG_LOGIN_URL, TMG_ADMIN_HOST, TMG_BULK_PATH } from '@/lib/product-data-collect/steps';
+import { looksLikeMangoBulkScreen } from '@/lib/product-data-collect/screen-state';
 
 export const TMG_PROFILE_DIR = path.join(process.cwd(), '.local', 'tmg-chromium-profile');
 export const CDP_URL = 'http://127.0.0.1:9222';
-export const TMG_BULK_PATH = 'getGoodsNew.php';
-export const TMG_ADMIN_HOST = 'tmg1898.cafe24.com';
+export { TMG_ADMIN_HOST, TMG_BULK_PATH } from '@/lib/product-data-collect/steps';
 
 export const CHROMIUM_ARGS = [
   '--disable-blink-features=AutomationControlled',
@@ -362,7 +362,6 @@ export function findBulkPage(context: BrowserContext): Page | null {
 
 /** 열린 탭 중 망고 대량수집 비슷한 화면 찾기 */
 export async function findMangoWorkPage(context: BrowserContext): Promise<Page | null> {
-  const { looksLikeMangoBulkScreen } = await import('@/lib/product-data-collect/screen-state');
   for (const p of context.pages()) {
     if (p.isClosed()) continue;
     if (await looksLikeMangoBulkScreen(p)) return p;

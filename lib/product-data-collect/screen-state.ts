@@ -1,5 +1,5 @@
 import type { Page } from 'playwright';
-import { TMG_ADMIN_HOST } from '@/lib/product-data-collect/browser-session';
+import { TMG_ADMIN_HOST } from '@/lib/product-data-collect/steps';
 
 /**
  * 망고 메인화면 비슷하면 처리 — 스크린샷 4상태
