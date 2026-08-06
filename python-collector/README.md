@@ -1,6 +1,8 @@
 # 더망고 상품데이터 대량수집 (Python)
 
 Next.js/npm 없이 파이썬 스크립트 하나로 끝냅니다.
+**Playwright 전용 Chromium을 따로 내려받지 않습니다** — PC에 이미 설치된
+Chrome 또는 Edge(평소 망고 화면을 여는 그 브라우저)에 그대로 연결해서 씁니다.
 
 ## 순서 (요건 원문)
 
@@ -18,13 +20,21 @@ Next.js/npm 없이 파이썬 스크립트 하나로 끝냅니다.
 
 1. Python이 없으면 먼저 설치: https://www.python.org/downloads/
    (설치 화면에서 **"Add python.exe to PATH"** 체크)
-2. 엑셀 파일을 **`run.bat`에 드래그 앤 드롭**
+2. Chrome 또는 Edge는 원래 쓰던 그대로 두면 됩니다 (별도 설치 불필요)
+3. 엑셀 파일을 **`run.bat`에 드래그 앤 드롭**
    - 또는 `run.bat` 더블클릭 후 엑셀 경로를 직접 입력
 
 `run.bat`이 자동으로 하는 일:
-- 패키지 설치 (`pip install`)
-- Chromium 설치 (최초 1회만, `.browser.ok` 파일로 스킵 여부 판단)
+- 패키지 설치 (`pip install` — Playwright는 CDP 연결용으로만 사용)
 - `collect.py` 실행
+
+## 브라우저 동작 방식
+
+- 이미 더망고 화면을 열어둔 Chrome/Edge 창이 있으면 **그 탭을 그대로** 이어서 씁니다(로그인 다시 안 함, 새 창 안 뜸).
+- 열려 있는 게 없으면 평소 쓰는 Chrome(없으면 Edge)을 디버그 모드로 새로 띄우고, 메인화면(`admin.php`)에서 시작합니다.
+- 세션이 살아있으면 로그인 화면을 거치지 않고 바로 메인화면 → 0.초기화(대량데이터수집)로 진행합니다.
+- 세션이 만료됐을 때만 화면에서 직접 로그인 후, 실행 중인 검은 창(터미널)에서 **Enter**를 누르면 계속 진행됩니다.
+- 로그인 정보는 `.chrome-profile` 폴더(새 창을 띄운 경우만 해당)에 저장됩니다.
 
 ## 수동 설치 · 실행 (선택)
 
@@ -33,7 +43,6 @@ Windows PowerShell에서:
 ```powershell
 cd python-collector
 pip install -r requirements.txt
-python -m playwright install chromium
 python collect.py 엑셀파일.xlsx
 python collect.py 엑셀파일.xlsx 5    # 저장수 5개 (기본 3)
 ```
@@ -43,14 +52,6 @@ python collect.py 엑셀파일.xlsx 5    # 저장수 5개 (기본 3)
 | 상위 최종 카테고리명 | 최종 카테고리 URL주소 |
 |---|---|
 | 예: 스니커즈 | https://... |
-
-## 로그인
-
-처음 실행하면 브라우저가 열립니다. 로그인 화면이면 직접 로그인한 뒤,
-실행 중인 검은 창(터미널)에서 **Enter**를 누르면 계속 진행됩니다.
-
-로그인 정보는 `.chrome-profile` 폴더에 저장되어 다음 실행부터는
-다시 로그인할 필요가 없습니다.
 
 ## 문제 생김
 

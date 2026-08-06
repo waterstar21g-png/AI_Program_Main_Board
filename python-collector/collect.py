@@ -13,25 +13,46 @@
 
 엑셀 헤더(1행): 상위 최종 카테고리명 | 최종 카테고리 URL주소
 
-최초 1회는 브라우저에서 직접 로그인하세요. 이후에는 같은 폴더의
-.chrome-profile 에 로그인이 저장되어 자동으로 로그인 상태가 유지됩니다.
+Playwright의 별도 Chromium(다운로드본)을 쓰지 않는다. PC에 이미 설치된
+Chrome/Edge — 평소 망고 화면을 여는 그 브라우저 — 를 디버그 모드로 열어
+그대로 이어서 작업한다(CDP 연결). 이미 그 창이 열려 있고 로그인도 되어
+있으면 로그인 화면을 거치지 않고 바로 메인화면에서 시작한다.
 팝업창은 스크립트가 절대 열거나 닫지 않습니다 — 항상 "스스로 닫힐 때까지" 기다립니다.
 """
 
 import re
+import socket
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 import openpyxl
-from playwright.sync_api import Page, TimeoutError as PWTimeout, sync_playwright
+from playwright.sync_api import (
+    Browser,
+    BrowserContext,
+    Page,
+    TimeoutError as PWTimeout,
+    sync_playwright,
+)
 
 LOGIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin_login.php"
+MAIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin.php"
 BULK_URL = "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsNew.php"
 ADMIN_HOST = "tmg1898.cafe24.com"
 BULK_PATH = "getGoodsNew.php"
 
+CDP_PORT = 9222
+CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 PROFILE_DIR = Path(__file__).parent / ".chrome-profile"
+
+CHROME_CANDIDATES = [
+    r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+]
+
 POPUP_WAIT_SEC = 600
 MODAL_WAIT_SEC = 180
 DEFAULT_SAVE_COUNT = 3
@@ -42,6 +63,82 @@ SAVE_COUNT_LABEL = re.compile(r"저장\s*상품\s*수|검색결과\s*상위")
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# ── 브라우저 연결 (기존 Chrome/Edge에 CDP로 붙기, Chromium 다운로드 없음) ──
+
+def cdp_port_open(port: int = CDP_PORT) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        try:
+            s.connect(("127.0.0.1", port))
+            return True
+        except OSError:
+            return False
+
+
+def find_browser_exe() -> str | None:
+    for path in CHROME_CANDIDATES:
+        if Path(path).exists():
+            return path
+    return None
+
+
+def launch_debug_browser() -> None:
+    """평소 쓰는 Chrome/Edge를 디버그 포트로 실행 — Playwright Chromium 미사용"""
+    exe = find_browser_exe()
+    if not exe:
+        raise SystemExit(
+            "Chrome 또는 Edge를 찾지 못했습니다.\n"
+            "https://www.google.com/chrome/ 에서 설치 후 다시 실행하세요."
+        )
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    log(f"브라우저 실행: {exe}")
+    subprocess.Popen(
+        [
+            exe,
+            f"--remote-debugging-port={CDP_PORT}",
+            f"--user-data-dir={PROFILE_DIR}",
+            "--no-first-run",
+            "--no-default-browser-check",
+            MAIN_URL,
+        ],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    for _ in range(60):
+        if cdp_port_open():
+            return
+        time.sleep(0.5)  # 소켓 연결 대기 — Playwright 이벤트루프와 무관하므로 안전
+    raise SystemExit("브라우저가 디버그 모드로 열리지 않았습니다.")
+
+
+def pick_working_page(context: BrowserContext) -> Page:
+    """이미 망고 화면이 열려 있으면 그 탭을 그대로 사용(기본 화면 유지)"""
+    for p in context.pages:
+        if p.is_closed():
+            continue
+        try:
+            if ADMIN_HOST in p.url:
+                return p
+        except Exception:
+            continue
+    return context.pages[0] if context.pages else context.new_page()
+
+
+def connect_browser(p) -> tuple[Browser, Page]:
+    """
+    1) 이미 디버그 모드로 열린 Chrome/Edge가 있으면 그대로 연결(= 망고 기본 화면 그대로)
+    2) 없으면 평소 쓰는 Chrome/Edge를 디버그 모드로 새로 열어서 연결
+    Playwright 전용 Chromium은 내려받지 않는다.
+    """
+    if not cdp_port_open():
+        launch_debug_browser()
+
+    browser = p.chromium.connect_over_cdp(CDP_URL)
+    context = browser.contexts[0] if browser.contexts else browser.new_context()
+    page = pick_working_page(context)
+    return browser, page
 
 
 # ── 엑셀 ──────────────────────────────────────────────────────
@@ -313,6 +410,24 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
     log("4. -> 0. 초기화")
 
 
+def ensure_ready_page(page: Page) -> None:
+    """이미 망고 화면이면 그대로, 아니면 메인화면 진입 → 필요시 로그인 대기 → 0.초기화"""
+    if ADMIN_HOST not in page.url or page.url in ("about:blank", ""):
+        log("메인화면으로 이동: " + MAIN_URL)
+        page.goto(MAIN_URL, wait_until="domcontentloaded")
+
+    if "admin_login" in page.url:
+        input("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
+        if "admin_login" in page.url:
+            page.goto(MAIN_URL, wait_until="domcontentloaded")
+
+    log("0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭")
+    if BULK_PATH in page.url:
+        wait_bulk_ready(page)
+    else:
+        reset_to_bulk_menu(page)
+
+
 def main() -> None:
     if len(sys.argv) < 2:
         print("사용법: python collect.py 엑셀파일.xlsx [저장수(기본 3)]")
@@ -327,26 +442,10 @@ def main() -> None:
         sys.exit(1)
     print(f"엑셀 {len(rows)}행 로드 완료. 저장수={save_count}")
 
-    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            str(PROFILE_DIR),
-            headless=False,
-            viewport=None,
-            args=["--start-maximized"],
-        )
-        page = context.pages[0] if context.pages else context.new_page()
+        _browser, page = connect_browser(p)
         page.set_default_timeout(120_000)
-
-        page.goto(LOGIN_URL, wait_until="domcontentloaded")
-        if "admin_login" in page.url:
-            input("브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
-
-        if BULK_PATH in page.url:
-            wait_bulk_ready(page)
-        else:
-            reset_to_bulk_menu(page)
+        ensure_ready_page(page)
 
         ok = 0
         for row in rows:
@@ -359,8 +458,7 @@ def main() -> None:
                     break
 
         print(f"완료: {ok}/{len(rows)}행 처리")
-        input("Enter 를 누르면 브라우저를 닫습니다...")
-        context.close()
+        print("브라우저는 그대로 열어둡니다 (이 창만 닫으면 됩니다).")
 
 
 if __name__ == "__main__":

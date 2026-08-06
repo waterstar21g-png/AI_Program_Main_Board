@@ -25,7 +25,7 @@ pause
 exit /b 1
 
 :havepy
-echo [1/3] checking packages ...
+echo [1/2] checking packages ...
 call %PY% -m pip install --quiet --disable-pip-version-check -r requirements.txt
 if errorlevel 1 goto pipfail
 goto pipok
@@ -36,22 +36,6 @@ pause
 exit /b 1
 
 :pipok
-if exist ".browser.ok" goto skipbrowser
-echo [2/3] installing Chromium for Playwright, first time only, may take a few minutes ...
-call %PY% -m playwright install chromium
-if errorlevel 1 goto browserfail
-echo ok > ".browser.ok"
-goto afterbrowser
-
-:browserfail
-echo [ERROR] playwright install failed
-pause
-exit /b 1
-
-:skipbrowser
-echo [2/3] Chromium already installed, skip
-
-:afterbrowser
 set "EXCEL=%~1"
 if not "%EXCEL%"=="" goto haveexcel
 echo.
@@ -65,7 +49,8 @@ pause
 exit /b 1
 
 :runcollect
-echo [3/3] starting collection: %EXCEL%
+echo [2/2] starting collection: %EXCEL%
+echo (uses your own Chrome or Edge - no separate browser download)
 echo.
 call %PY% collect.py "%EXCEL%"
 
