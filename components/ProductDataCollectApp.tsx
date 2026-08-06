@@ -12,10 +12,31 @@ export function ProductDataCollectApp() {
   const [rows, setRows] = useState<TmgCollectRow[]>([]);
   const [fileName, setFileName] = useState('');
   const [running, setRunning] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [openMessage, setOpenMessage] = useState('');
   const [logs, setLogs] = useState<WorkflowStepLog[]>([]);
   const [activeStep, setActiveStep] = useState<WorkflowStepId | null>(null);
   const [error, setError] = useState('');
   const logEndRef = useRef<HTMLDivElement>(null);
+
+  const openBrowser = async () => {
+    setOpening(true);
+    setError('');
+    setOpenMessage('');
+    try {
+      const res = await fetch('/api/product-collect/open', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        setError(data.message ?? '브라우저 열기 실패');
+        return;
+      }
+      setOpenMessage(data.message ?? '브라우저 준비 완료');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '요청 실패');
+    } finally {
+      setOpening(false);
+    }
+  };
 
   const onExcelPick = useCallback(async (file?: File | null) => {
     if (!file) return;
@@ -98,6 +119,9 @@ export function ProductDataCollectApp() {
 
   return (
     <div className="product-data-collect-app program-unit">
+      <div className="panel__breadcrumb">
+        상품데이터수집 → 수집용 엑셀 업로드 → 대량수집 로그인 → 스텝별 자동 수집 반복
+      </div>
       <section className="panel panel--compact">
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
@@ -177,7 +201,7 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 실행</h2>
+        <h2 className="panel__title">2. 실행 (메인 진입 후 0~4단계)</h2>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map(s => (
             <li
@@ -189,16 +213,28 @@ export function ProductDataCollectApp() {
             </li>
           ))}
         </ol>
-        <div className="panel__footer panel__footer--compact">
+        <div
+          className="panel__footer panel__footer--compact"
+          style={{ gap: '0.75rem', justifyContent: 'space-between' }}
+        >
+          <button
+            type="button"
+            className="btn btn--secondary"
+            disabled={opening || running}
+            onClick={() => void openBrowser()}
+          >
+            {opening ? '여는 중…' : '① 로그인→대량수집 자동'}
+          </button>
           <button
             type="button"
             className="btn btn--primary"
             disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '수집 중…' : '▶ 실행 (0 → 1 → 2 → 3 → 4)'}
+            {running ? '수집 중…' : '② 수집 시작'}
           </button>
         </div>
+        {openMessage && <p className="panel__hint" style={{ marginTop: '0.5rem' }}>{openMessage}</p>}
       </section>
 
       {(running || logs.length > 0) && (
