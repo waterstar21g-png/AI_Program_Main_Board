@@ -529,6 +529,25 @@ def with_nav_retry(page: Page, fn, retries: int = 3):
     return None
 
 
+def handle_possible_login_page(page: Page) -> None:
+    """
+    세션이 갑자기 만료돼(또는 애초에 로그인이 안 된 채) admin_login.php로
+    튕기는 경우가 있다. 이걸 놓치면 있지도 않은 화면 요소를 60초씩
+    기다리다 타임아웃만 나므로, 즉시 감지해서 로그인을 요청한다.
+    """
+    if "admin_login" not in page.url:
+        return
+    log("  [경고] 로그인 화면으로 이동됨 — 세션이 없거나 만료된 것 같습니다")
+    input("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15_000)
+    except Exception:  # noqa: BLE001
+        pass
+    page.wait_for_timeout(1000)
+    if "admin_login" in page.url:
+        raise RuntimeError("로그인 후에도 여전히 로그인 화면입니다 — 다시 확인해 주세요")
+
+
 def _wait_bulk_ready_once(page: Page) -> None:
     try:
         page.wait_for_load_state("domcontentloaded", timeout=15_000)
@@ -536,6 +555,10 @@ def _wait_bulk_ready_once(page: Page) -> None:
         pass
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
+    handle_possible_login_page(page)
+    if BULK_PATH not in page.url:
+        safe_goto(page, BULK_URL)
+        handle_possible_login_page(page)
     log("  대량수집 화면 로딩 확인 중...")
     url_search_button(page).first.wait_for(state="visible", timeout=60_000)
 
@@ -552,6 +575,7 @@ def _reset_to_bulk_menu_once(page: Page) -> None:
         except PWTimeout:
             href.evaluate("(node) => node.click()")
         page.wait_for_timeout(800)
+        handle_possible_login_page(page)
         if BULK_PATH in page.url:
             wait_bulk_ready(page)
             return
@@ -573,6 +597,7 @@ def _reset_to_bulk_menu_once(page: Page) -> None:
         }"""
     )
     page.wait_for_timeout(1000)
+    handle_possible_login_page(page)
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
     wait_bulk_ready(page)

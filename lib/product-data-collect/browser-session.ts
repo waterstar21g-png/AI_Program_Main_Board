@@ -130,10 +130,30 @@ async function clickLoginIfNeeded(page: Page) {
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);
 }
 
+/**
+ * 세션이 갑자기 만료돼(또는 애초에 로그인이 안 된 채) admin_login.php로
+ * 튕기는 경우가 있다. 이걸 놓치면 있지도 않은 화면 요소를 60초씩
+ * 기다리다 타임아웃만 나므로, 즉시 감지해서 로그인 화면을 벗어날 때까지
+ * (사용자가 실제 브라우저 창에서 직접 로그인할 시간을) 기다린다.
+ */
+async function handlePossibleLoginPage(page: Page): Promise<void> {
+  if (!isLoginPage(page.url())) return;
+  await page.waitForURL(u => !isLoginPage(u.toString()), { timeout: 120_000 }).catch(() => undefined);
+  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+  if (isLoginPage(page.url())) {
+    throw new Error('로그인 후에도 여전히 로그인 화면입니다 — 브라우저에서 직접 로그인해 주세요');
+  }
+}
+
 async function waitBulkReadyOnce(page: Page) {
   await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined);
   if (!isBulkPage(page.url())) {
     await safeGoto(page, TMG_BULK_URL);
+  }
+  await handlePossibleLoginPage(page);
+  if (!isBulkPage(page.url())) {
+    await safeGoto(page, TMG_BULK_URL);
+    await handlePossibleLoginPage(page);
   }
   await page
     .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
@@ -154,6 +174,7 @@ async function resetBulkCollectViaMenuOnce(page: Page): Promise<void> {
       await href.evaluate(el => (el as HTMLElement).click());
     });
     await sleep(800);
+    await handlePossibleLoginPage(page);
     if (isBulkPage(page.url())) {
       await waitBulkReady(page);
       return;
@@ -185,6 +206,7 @@ async function resetBulkCollectViaMenuOnce(page: Page): Promise<void> {
   }).catch(() => undefined);
 
   await sleep(1000);
+  await handlePossibleLoginPage(page);
   if (!isBulkPage(page.url())) {
     await safeGoto(page, TMG_BULK_URL);
   }
