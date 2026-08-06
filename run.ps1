@@ -8,8 +8,17 @@ chcp 65001 > $null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Set-Location $PSScriptRoot
 
+if ($PSScriptRoot -match 'OneDrive') {
+  Write-Host "[경고] 이 폴더가 OneDrive 동기화 경로 안에 있습니다:" -ForegroundColor Yellow
+  Write-Host "       $PSScriptRoot" -ForegroundColor Yellow
+  Write-Host "       OneDrive가 node_modules(파일 2만개+)를 계속 감시/동기화하면" -ForegroundColor Yellow
+  Write-Host "       컴파일이 수십 배 느려질 수 있습니다(26분+ 사례 있음)." -ForegroundColor Yellow
+  Write-Host "       가능하면 C:\Projects 같은 OneDrive 밖 폴더로 옮기는 걸 권장합니다." -ForegroundColor Yellow
+  Write-Host ""
+}
+
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.4.7"
+$ExpectedVersion = "2.4.8"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 

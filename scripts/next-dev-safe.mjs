@@ -24,7 +24,7 @@ async function main() {
     cwd: projectRoot,
     stdio: 'inherit',
     shell: true,
-    env: { ...process.env, FORCE_COLOR: '1' },
+    env: { ...process.env, FORCE_COLOR: '1', NEXT_TELEMETRY_DISABLED: '1' },
   });
 
   child.on('exit', (code, signal) => {
