@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
+import { APP_VERSION } from '@/lib/app-version';
 import { parseCategoryUrlExcel } from '@/lib/product-data-collect/excel-import';
 import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepId, WorkflowStepLog } from '@/lib/product-data-collect/types';
@@ -120,7 +121,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>①</strong> 로그인→getGoodsNew.php → <strong>② 수집 시작</strong> (매 행: URL진입→검색팝업대기→모두저장→저장)
+            <strong>v{APP_VERSION}</strong> · ① 로그인→대량수집 → ② 수집 (새 창 없음 · 팝업 미터치)
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -219,7 +220,8 @@ export function ProductDataCollectApp() {
           <button
             type="button"
             className="btn btn--primary btn--sm"
-            disabled={running || !rows.length}
+            disabled={running || !rows.length || !browserOpen}
+            title={!browserOpen ? '먼저 ① 로그인→대량수집 을 누르세요' : undefined}
             onClick={() => void runCollect()}
           >
             {running ? '수집 중…' : '② 수집 시작'}

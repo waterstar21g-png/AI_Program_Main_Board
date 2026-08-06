@@ -10,13 +10,16 @@ import { TMG_ADMIN_HOST } from '@/lib/product-data-collect/browser-session';
  * D) 상품저장설정 모달 — 검색필터명 입력 + 저장하기
  */
 export type MangoScreen =
-  | 'bulk_main' // A: 입력 가능
-  | 'abc_popup' // B: ABC 창 열림 → 대기만
-  | 'loading' // C: load product → 대기만
-  | 'results_ready' // A + 검색된 상품 N개
-  | 'save_modal' // D: 상품저장설정
-  | 'no_results' // 결과 없음 (로딩 끝난 뒤)
+  | 'bulk_main'
+  | 'abc_popup'
+  | 'loading'
+  | 'results_ready'
+  | 'save_modal'
+  | 'no_results'
   | 'unknown';
+
+/** URL 입력 가능한 A화면 (이전 검색결과가 남아 있어도 OK) */
+export const URL_INPUT_SCREENS: MangoScreen[] = ['bulk_main', 'results_ready', 'no_results'];
 
 export function isAbcPopupUrl(url: string): boolean {
   if (!url || url === 'about:blank') return false;
@@ -39,17 +42,19 @@ export function abcPopupPages(main: Page): Page[] {
 /** 스크린샷 A — 대량수집 메인 화면 시그니처 */
 export async function matchesBulkMainScreen(page: Page): Promise<boolean> {
   if (!page.url().includes('getGoodsNew.php')) return false;
-  const hasTitle = await page
-    .getByText(/상품데이터\s*대량수집.*리스팅페이지\s*URL/)
-    .first()
-    .isVisible()
-    .catch(() => false);
   const hasUrlBtn = await page
-    .getByText(/URL\s*상품\s*검색하기/)
+    .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
+    .or(page.getByText(/URL\s*상품\s*검색하기/))
     .first()
     .isVisible()
     .catch(() => false);
-  return hasTitle && hasUrlBtn;
+  if (!hasUrlBtn) return false;
+  const hasTitle = await page
+    .getByText(/상품데이터\s*대량수집/)
+    .first()
+    .isVisible()
+    .catch(() => false);
+  return hasTitle || hasUrlBtn;
 }
 
 /** 스크린샷 C — 빨간 load product 로딩 */

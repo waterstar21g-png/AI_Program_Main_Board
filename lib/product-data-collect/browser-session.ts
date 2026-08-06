@@ -333,8 +333,8 @@ export async function getCollectBrowserContextForRun(): Promise<BrowserContext> 
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
   throw new Error(
-    'Chromium(CDP 9222)에 연결되지 않았습니다.\n' +
-      '① Chromium 열기로 로그인·대량수집 화면을 연 뒤 ② 수집을 누르세요.\n' +
+    'Chromium에 연결되지 않았습니다.\n' +
+      '먼저 ① 로그인→대량수집 을 누른 뒤 ② 수집을 누르세요.\n' +
       '(수집 중 새 창/탭을 열지 않습니다)',
   );
 }
