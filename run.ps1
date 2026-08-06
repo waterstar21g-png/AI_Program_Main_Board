@@ -6,7 +6,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.8"
+$ExpectedVersion = "2.2.9"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -25,6 +25,37 @@ function Get-MainCommitSha {
     }
   }
   throw "GitHub commits API failed. Cannot sync. Check network / rate limit."
+}
+
+function Write-Utf8NoBomFile([string]$Path, [byte[]]$Bytes) {
+  # Convert UTF-16 (BOM) -> UTF-8 no BOM (fixes broken .bat on cmd.exe)
+  if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) {
+    $text = [System.Text.Encoding]::Unicode.GetString($Bytes, 2, $Bytes.Length - 2)
+    $enc = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $text, $enc)
+    return
+  }
+  if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) {
+    $text = [System.Text.Encoding]::BigEndianUnicode.GetString($Bytes, 2, $Bytes.Length - 2)
+    $enc = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $text, $enc)
+    return
+  }
+  # Strip UTF-8 BOM
+  if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
+    $rest = New-Object byte[] ($Bytes.Length - 3)
+    [Array]::Copy($Bytes, 3, $rest, 0, $rest.Length)
+    $Bytes = $rest
+  }
+  $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+  if ($ext -eq ".bat" -or $ext -eq ".cmd") {
+    # cmd.exe needs CRLF; LF-only breaks caret continuations and can garble lines
+    $text = [System.Text.Encoding]::UTF8.GetString($Bytes) -replace "`r`n", "`n" -replace "`n", "`r`n"
+    $enc = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($Path, $text, $enc)
+    return
+  }
+  [System.IO.File]::WriteAllBytes($Path, $Bytes)
 }
 
 function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
@@ -48,7 +79,16 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
       "Pragma"        = "no-cache"
     }
   }
-  Move-Item -Force $tmp $LocalPath
+  $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $tmp))
+  Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+  Write-Utf8NoBomFile $LocalPath $bytes
+}
+
+function Show-RecoverHint {
+  Write-Host "Paste this in PowerShell (fixes broken run.bat encoding):" -ForegroundColor Yellow
+  Write-Host @"
+`$h=@{Accept='application/vnd.github.raw';'User-Agent'='x'}; `$e=New-Object Text.UTF8Encoding `$false; `$t=irm 'https://api.github.com/repos/$Repo/contents/boot.ps1?ref=main' -Headers `$h; [IO.File]::WriteAllText("$PWD\boot.ps1",`$t,`$e); `$t=irm 'https://api.github.com/repos/$Repo/contents/run.bat?ref=main' -Headers `$h; [IO.File]::WriteAllText("$PWD\run.bat",`$t,`$e); `$t=irm 'https://api.github.com/repos/$Repo/contents/run.ps1?ref=main' -Headers `$h; [IO.File]::WriteAllText("$PWD\run.ps1",`$t,`$e); .\run.bat
+"@ -ForegroundColor Gray
 }
 
 $Sha = Get-MainCommitSha
@@ -87,6 +127,7 @@ $files = @(
   @("next.config.ts", "next.config.ts"),
   @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
   @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
+  @("boot.ps1", "boot.ps1"),
   @("run.ps1", "run.ps1"),
   @("run.bat", "run.bat")
 )
@@ -104,6 +145,7 @@ foreach ($f in $files) {
 
 if ($failed.Count -gt 0) {
   Write-Host "[FATAL] sync failed: $($failed -join ', ')"
+  Show-RecoverHint
   Read-Host "Press Enter"
   exit 1
 }
@@ -116,8 +158,7 @@ Write-Host "[CHECK] APP_VERSION = $TargetVersion  (sha=$Sha)"
 
 if ($TargetVersion -ne $ExpectedVersion) {
   Write-Host "[FATAL] version mismatch: file=$TargetVersion / expected=$ExpectedVersion"
-  Write-Host "Paste this ONE line in PowerShell:"
-  Write-Host "irm https://api.github.com/repos/$Repo/contents/run.ps1?ref=main -Headers @{Accept='application/vnd.github.raw';'User-Agent'='x'} -OutFile run.ps1; .\run.bat"
+  Show-RecoverHint
   Read-Host "Press Enter"
   exit 1
 }
@@ -128,7 +169,7 @@ if (Test-Path "VERSION.txt") {
   $prevRaw = Get-Content "VERSION.txt" -Raw
   if ($prevRaw -match '([\d.]+)') { $prevVer = $Matches[1] }
 }
-"version $TargetVersion" | Out-File -FilePath "VERSION.txt" -Encoding utf8
+"version $TargetVersion" | Out-File -FilePath "VERSION.txt" -Encoding ascii
 
 Write-Host "[STOP] kill port 3000..."
 Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue |
