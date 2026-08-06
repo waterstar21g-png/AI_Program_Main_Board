@@ -146,15 +146,27 @@ def launch_debug_browser() -> None:
 
 def pick_working_page(context: BrowserContext) -> Page:
     """이미 망고 화면이 열려 있으면 그 탭을 그대로 사용(기본 화면 유지)"""
-    for p in context.pages:
-        if p.is_closed():
-            continue
+    open_pages = [p for p in context.pages if not p.is_closed()]
+    for p in open_pages:
         try:
             if ADMIN_HOST in p.url:
                 return p
-        except Exception:
+        except Exception:  # noqa: BLE001
             continue
-    return context.pages[0] if context.pages else context.new_page()
+    return open_pages[0] if open_pages else context.new_page()
+
+
+def refresh_if_closed(page: Page) -> Page:
+    """
+    로그인 성공 후 사이트가 원래 탭을 닫고 새 창을 띄우는 경우가 있다
+    (예: 로그인 중계 페이지가 자기 자신을 닫음). 그러면 이전 page
+    객체로는 더 이상 아무 것도 할 수 없으므로(TargetClosedError),
+    같은 컨텍스트에서 살아있는 페이지를 다시 찾아온다.
+    """
+    if not page.is_closed():
+        return page
+    log("  탭이 닫힘 감지 — 새 탭을 다시 찾는 중...")
+    return pick_working_page(page.context)
 
 
 def connect_browser(p) -> tuple[Browser, Page]:
@@ -217,22 +229,38 @@ def popups(page: Page) -> list:
 
 
 def wait_popups_gone(
-    page: Page, timeout_sec: int = POPUP_WAIT_SEC, grace_sec: float = 2.0
-) -> None:
+    page: Page,
+    timeout_sec: int = POPUP_WAIT_SEC,
+    grace_sec: float = 2.0,
+    warn_if_never_opened: bool = False,
+) -> bool:
     """팝업이 스스로 닫힐 때까지 대기 — 절대 건드리지 않음
 
     grace_sec: 클릭 직후 팝업이 뜨기까지 잠깐 기다리는 시간.
     팝업이 아예 안 뜨는 경우(이미 닫혀 있음)까지 대비해 대기 시간은 짧게 둔다
     (없는 팝업을 기다리며 매 행마다 시간을 허비하지 않도록).
+    warn_if_never_opened=True 이면, grace_sec 동안 팝업이 단 한 번도
+    뜨지 않았을 때 경고 로그를 남긴다(예: URL 검색 클릭이 안 먹혔을 때).
 
     주의: Playwright Python 동기 API는 이벤트(새 창 열림/닫힘)를
     time.sleep() 중에는 처리하지 않는다. 반드시 page.wait_for_timeout()
     으로 기다려야 context.pages()가 실시간으로 갱신된다.
+
+    반환값: 팝업이 한 번이라도 열렸으면 True.
     """
     end = time.time() + timeout_sec
     grace_end = time.time() + grace_sec
-    while not popups(page) and time.time() < grace_end:
+    ever_seen = False
+    while time.time() < grace_end:
+        if popups(page):
+            ever_seen = True
+            break
         page.wait_for_timeout(200)
+
+    if not ever_seen:
+        if warn_if_never_opened:
+            log("  [경고] 팝업이 뜨지 않음 — 클릭이 제대로 안 됐거나 사이트가 응답하지 않았을 수 있음")
+        return False
 
     last_beat = 0.0
     while popups(page):
@@ -242,6 +270,7 @@ def wait_popups_gone(
             last_beat = time.time()
             log(f"  팝업창 대기중... (열린 팝업 {len(popups(page))}개)")
         page.wait_for_timeout(500)
+    return True
 
 
 # ── 입력 · 클릭 (망고 구형 input 대응) ────────────────────────
@@ -287,14 +316,37 @@ def type_into(page: Page, locator, value: str) -> None:
         log(f"  [경고] 입력값 불일치 — 넣으려던 값: {value!r} / 실제 값: {got!r}")
 
 
-def click_it(locator) -> None:
+def click_it(locator) -> bool:
+    """
+    반환값: 신뢰할 수 있는(trusted) 클릭으로 처리됐으면 True.
+    el.evaluate(...node.click()...) 같은 JS 강제클릭은 브라우저가
+    "진짜 사용자 클릭"으로 인정하지 않아, 그 안에서 호출되는
+    window.open()(팝업)이 조용히 차단될 수 있다. 그래서 실패해도
+    좌표 기반 실제 마우스 클릭(신뢰됨)을 먼저 시도하고,
+    그것마저 안 될 때만 최후 수단으로 JS 클릭을 쓴다.
+    """
     el = locator.first
     el.wait_for(state="visible", timeout=60_000)
     el.scroll_into_view_if_needed()
     try:
         el.click(timeout=20_000)
+        return True
     except PWTimeout:
-        el.evaluate("(node) => node.click()")
+        pass
+
+    try:
+        box = el.bounding_box()
+        if box:
+            el.page.mouse.click(
+                box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+            )
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    log("  [경고] 실제 클릭 실패 — JS 강제클릭 사용 (팝업이 안 뜰 수 있음)")
+    el.evaluate("(node) => node.click()")
+    return False
 
 
 # ── 화면 요소 ─────────────────────────────────────────────────
@@ -498,10 +550,28 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
         pass
     log(f"  입력칸 최종 값: {actual!r}")
     log("1. URL상품검색하기 클릭")
-    click_it(url_search_button(page))
+    trusted = click_it(url_search_button(page))
 
     log("1. 팝업창이 없어질 때까지 대기")
-    wait_popups_gone(page)
+    opened = wait_popups_gone(page, grace_sec=15.0, warn_if_never_opened=True)
+
+    if not opened:
+        # 클릭이 신뢰되는 클릭이 아니었거나(JS 강제클릭), 사이트가 늦게
+        # 반응하는 경우 — 키보드로 실제 클릭을 한 번 더 시도한다.
+        log("  키보드로 재시도 (Enter)")
+        try:
+            btn = url_search_button(page).first
+            btn.focus()
+            page.keyboard.press("Enter")
+        except Exception:  # noqa: BLE001
+            pass
+        opened = wait_popups_gone(page, grace_sec=10.0, warn_if_never_opened=True)
+
+    if not opened:
+        raise RuntimeError(
+            f"#{row['row']} URL상품검색하기 클릭 후 팝업이 뜨지 않음 "
+            f"(trusted_click={trusted}) — 화면을 직접 확인해 주세요"
+        )
     log("1. 팝업창 닫힘")
 
     log("2. 검색된 상품 모두저장 클릭")
@@ -541,21 +611,34 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
     log("4. -> 0. 초기화")
 
 
-def ensure_ready_page(page: Page) -> None:
-    """이미 망고 화면이면 그대로, 아니면 메인화면 진입 → 필요시 로그인 대기 → 0.초기화"""
+def ensure_ready_page(page: Page) -> Page:
+    """이미 망고 화면이면 그대로, 아니면 메인화면 진입 → 필요시 로그인 대기 → 0.초기화
+
+    로그인 성공 후 사이트가 원래 탭을 닫아버리는 경우가 있어(예: 로그인
+    중계 페이지가 스스로를 닫음) 매 단계 사이마다 탭이 살아있는지
+    확인하고, 닫혔으면 같은 브라우저에서 새 탭을 다시 찾아온다.
+    """
+    page = refresh_if_closed(page)
+
     if ADMIN_HOST not in page.url or page.url in ("about:blank", ""):
         log("메인화면으로 이동: " + MAIN_URL)
         safe_goto(page, MAIN_URL)
 
     if "admin_login" in page.url:
         input("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
+        page = refresh_if_closed(page)
         # 로그인 직후 사이트 자체가 리다이렉트 중일 수 있으므로(m_login_ok.php 등)
         # 안정될 때까지 잠깐 기다린 뒤에 필요하면 이동한다.
         try:
             page.wait_for_load_state("domcontentloaded", timeout=15_000)
         except Exception:  # noqa: BLE001
             pass
-        page.wait_for_timeout(1000)
+        page = refresh_if_closed(page)
+        try:
+            page.wait_for_timeout(1000)
+        except Exception:  # noqa: BLE001
+            pass
+        page = refresh_if_closed(page)
         if "admin_login" in page.url or ADMIN_HOST not in page.url:
             safe_goto(page, MAIN_URL)
 
@@ -564,6 +647,8 @@ def ensure_ready_page(page: Page) -> None:
         wait_bulk_ready(page)
     else:
         reset_to_bulk_menu(page)
+
+    return page
 
 
 def main() -> None:
@@ -583,11 +668,12 @@ def main() -> None:
     with sync_playwright() as p:
         _browser, page = connect_browser(p)
         page.set_default_timeout(120_000)
-        ensure_ready_page(page)
+        page = ensure_ready_page(page)
 
         ok = 0
         for row in rows:
             try:
+                page = refresh_if_closed(page)
                 process_row(page, row, save_count)
                 ok += 1
             except Exception as e:  # noqa: BLE001
