@@ -377,6 +377,11 @@ def _describe(loc) -> str:
 
 
 def url_input(page: Page):
+    """페이지 전환 중이면 재시도(_url_input_once 참고)"""
+    return with_nav_retry(page, lambda: _url_input_once(page))
+
+
+def _url_input_once(page: Page):
     """
     URL상품검색하기 버튼과 실제 입력칸이 서로 다른 <tr>/<table>에 있는
     화면이 있어(선택자가 넓으면 엉뚱한 textarea를 골라 "검색결과 없음"이
@@ -485,7 +490,46 @@ def safe_goto(page: Page, url: str, retries: int = 3) -> None:
         raise last_err
 
 
-def wait_bulk_ready(page: Page) -> None:
+NAV_ERROR_MARKERS = (
+    "Execution context was destroyed",
+    "context was destroyed",
+    "Target closed",
+    "Target page, context or browser has been closed",
+)
+
+
+def is_navigation_error(e: Exception) -> bool:
+    msg = str(e)
+    return any(m in msg for m in NAV_ERROR_MARKERS)
+
+
+def with_nav_retry(page: Page, fn, retries: int = 3):
+    """
+    사이트가 리다이렉트/네비게이션 중일 때 DOM을 조회하면
+    "Execution context was destroyed" 같은 오류가 난다.
+    페이지가 안정될 때까지 기다렸다가 재시도한다.
+    """
+    last_err: Exception | None = None
+    for attempt in range(retries):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if is_navigation_error(e):
+                last_err = e
+                log(f"  [정보] 페이지 전환 중이라 재시도합니다 ({attempt + 1}/{retries})")
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                except Exception:  # noqa: BLE001
+                    pass
+                page.wait_for_timeout(800)
+                continue
+            raise
+    if last_err:
+        raise last_err
+    return None
+
+
+def _wait_bulk_ready_once(page: Page) -> None:
     try:
         page.wait_for_load_state("domcontentloaded", timeout=15_000)
     except Exception:  # noqa: BLE001
@@ -496,8 +540,11 @@ def wait_bulk_ready(page: Page) -> None:
     url_search_button(page).first.wait_for(state="visible", timeout=60_000)
 
 
-def reset_to_bulk_menu(page: Page) -> None:
-    """0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭"""
+def wait_bulk_ready(page: Page) -> None:
+    with_nav_retry(page, lambda: _wait_bulk_ready_once(page))
+
+
+def _reset_to_bulk_menu_once(page: Page) -> None:
     href = page.locator('a[href*="getGoodsNew"]').first
     if href.count() > 0:
         try:
@@ -529,6 +576,11 @@ def reset_to_bulk_menu(page: Page) -> None:
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
     wait_bulk_ready(page)
+
+
+def reset_to_bulk_menu(page: Page) -> None:
+    """0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭"""
+    with_nav_retry(page, lambda: _reset_to_bulk_menu_once(page))
 
 
 def process_row(page: Page, row: dict, save_count: int) -> None:
