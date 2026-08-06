@@ -9,7 +9,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.4.1"
+$ExpectedVersion = "2.4.2"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -162,13 +162,6 @@ if (-not (Test-Path "node_modules")) {
   npm install
 }
 
-if (-not (Test-Path ".local\playwright-chromium.ok")) {
-  Write-Host "[INSTALL] Playwright Chromium..."
-  New-Item -ItemType Directory -Force -Path ".local" | Out-Null
-  npx playwright install chromium
-  if ($LASTEXITCODE -eq 0) { "ok" | Out-File ".local\playwright-chromium.ok" -Encoding ascii }
-}
-
 if ($prevVer -ne $TargetVersion) {
   Write-Host "[CLEAN] version changed ($prevVer -> $TargetVersion) — clear .next/.next-dev"
   Remove-Item -Recurse -Force ".next", ".next-dev" -ErrorAction SilentlyContinue
@@ -181,5 +174,36 @@ Write-Host "  VERSION: $TargetVersion"
 Write-Host "  http://localhost:3000"
 Write-Host ""
 
-Start-Process "http://localhost:3000"
-npm run dev
+# npm run dev를 백그라운드로 띄우고, 포트 3000이 실제로 열릴 때까지
+# 기다린 뒤에 브라우저를 연다. (먼저 브라우저부터 열면 서버가 아직
+# 안 떠서 "연결할 수 없음 / ERR_CONNECTION_REFUSED"가 뜬다.)
+Write-Host "[START] npm run dev ..."
+$devProc = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" -NoNewWindow -PassThru
+
+$ready = $false
+for ($i = 0; $i -lt 120; $i++) {
+  Start-Sleep -Milliseconds 500
+  if ($devProc.HasExited) {
+    Write-Host "[FATAL] npm run dev 가 예기치 않게 종료됨 (exit code $($devProc.ExitCode))"
+    break
+  }
+  try {
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    $tcp.Connect("127.0.0.1", 3000)
+    $ready = $tcp.Connected
+    $tcp.Close()
+  } catch {
+    $ready = $false
+  }
+  if ($ready) { break }
+}
+
+if ($ready) {
+  Write-Host "[READY] http://localhost:3000"
+  Start-Process "http://localhost:3000"
+} elseif (-not $devProc.HasExited) {
+  Write-Host "[WARN] 60초 안에 3000 포트가 응답하지 않았습니다."
+  Write-Host "       브라우저를 자동으로 열지 않았으니, 잠시 후 직접 http://localhost:3000 을 열어보세요."
+}
+
+Wait-Process -Id $devProc.Id -ErrorAction SilentlyContinue
