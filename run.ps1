@@ -7,7 +7,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.15"
+$ExpectedVersion = "2.2.16"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -222,29 +222,35 @@ foreach ($junk in @("app\elastic-beanstalk", "app\elastic_beanstalk", "app\aws-d
   }
 }
 
-Write-Host "  VERSION: $TargetVersion  (webpack dev — stable on Windows)"
+Write-Host "  VERSION: $TargetVersion  (production — Windows 안정 모드)"
 Write-Host "  FLOW: [0]->[1]->[2]->[3]->[4]"
 Write-Host "  http://localhost:3000"
 Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
 
+$buildStamp = Join-Path ".local" "build-$TargetVersion.ok"
+$needBuild = $true
+if ((Test-Path $buildStamp) -and (Test-Path ".next\BUILD_ID")) {
+  $needBuild = $false
+}
+if ($prevVer -ne $TargetVersion) { $needBuild = $true }
+
+if ($needBuild) {
+  Write-Host "[BUILD] compiling (~1-3 min, 줄마다 진행 표시)..." -ForegroundColor Cyan
+  Remove-Item Env:TURBO, Env:TURBOPACK, Env:IS_TURBOPACK_TEST -ErrorAction SilentlyContinue
+  npm run build
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[FATAL] build failed" -ForegroundColor Red
+    Read-Host "Press Enter"
+    exit 1
+  }
+  New-Item -ItemType Directory -Force -Path ".local" | Out-Null
+  "ok" | Out-File $buildStamp -Encoding ascii
+  Write-Host "[BUILD] OK" -ForegroundColor Green
+} else {
+  Write-Host "[CACHE] skip build (version $TargetVersion already built)"
+}
+
 Start-Process "http://localhost:3000"
-
-# Turbopack 절대 사용 금지
-$devSafe = Get-Content "scripts\next-dev-safe.mjs" -Raw
-if ($devSafe -match "['\`"]--turbo['\`"]" -or $devSafe -match 'dev --turbo') {
-  Write-Host "[FATAL] next-dev-safe.mjs still launches Turbopack — sync broken" -ForegroundColor Red
-  Show-RecoverHint
-  Read-Host "Press Enter"
-  exit 1
-}
-if (Test-Path "node_modules\next\package.json") {
-  $nv = (Get-Content "node_modules\next\package.json" -Raw | ConvertFrom-Json).version
-  Write-Host "[CHECK] next = $nv (webpack dev, no turbopack)"
-}
-
-$env:DEV_FRESH = "1"
-Remove-Item Env:TURBO -ErrorAction SilentlyContinue
-Remove-Item Env:TURBOPACK -ErrorAction SilentlyContinue
-Remove-Item Env:IS_TURBOPACK_TEST -ErrorAction SilentlyContinue
-npm run dev
+Remove-Item Env:TURBO, Env:TURBOPACK, Env:IS_TURBOPACK_TEST -ErrorAction SilentlyContinue
+npm run start
