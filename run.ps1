@@ -7,7 +7,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.16"
+$ExpectedVersion = "2.2.17"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -121,6 +121,7 @@ $files = @(
   @("lib\programs\registry.tsx", "lib/programs/registry.tsx"),
   @("lib\app-version.ts", "lib/app-version.ts"),
   @("package.json", "package.json"),
+  @("package-lock.json", "package-lock.json"),
   @("scripts\next-dev-safe.mjs", "scripts/next-dev-safe.mjs"),
   @("scripts\clean-next.mjs", "scripts/clean-next.mjs"),
   @("next.config.ts", "next.config.ts"),
@@ -183,20 +184,42 @@ Get-Process -Name node -ErrorAction SilentlyContinue |
   }
 Start-Sleep -Seconds 2
 
-$needNpm = -not (Test-Path "node_modules")
-if (-not $needNpm -and (Test-Path "node_modules\next\package.json")) {
-  $haveNext = (Get-Content "node_modules\next\package.json" -Raw | ConvertFrom-Json).version
-  $wantNext = (Get-Content "package.json" -Raw | ConvertFrom-Json).dependencies.next
-  $wantNext = ($wantNext -replace '[\^~]', '')
-  if ($haveNext -ne $wantNext) {
-    Write-Host "[INSTALL] next $haveNext -> $wantNext"
-    $needNpm = $true
+$needNpm = $false
+$wantNext = "15.5.20"
+try {
+  $pkgJson = Get-Content "package.json" -Raw | ConvertFrom-Json
+  if ($pkgJson.dependencies.next) {
+    $wantNext = ($pkgJson.dependencies.next -replace '[\^~]', '')
   }
+} catch {}
+
+$haveNext = ""
+if (Test-Path "node_modules\next\package.json") {
+  $haveNext = (Get-Content "node_modules\next\package.json" -Raw | ConvertFrom-Json).version
 }
-if ($prevVer -ne $TargetVersion) { $needNpm = $true }
-if ($needNpm) {
-  Write-Host "[INSTALL] npm install..."
+
+if (-not (Test-Path "node_modules") -or -not $haveNext -or $haveNext -ne $wantNext -or $prevVer -ne $TargetVersion) {
+  if ($haveNext -and $haveNext -ne $wantNext) {
+    Write-Host "[RESET] Next.js $haveNext found — need $wantNext (old node_modules causes 30min hang)" -ForegroundColor Yellow
+  }
+  if (Test-Path "node_modules") {
+    Write-Host "[RESET] deleting node_modules ..."
+    Remove-Item -Recurse -Force "node_modules" -ErrorAction SilentlyContinue
+  }
+  Write-Host "[INSTALL] npm install (2~5 min) ..."
   npm install
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[FATAL] npm install failed" -ForegroundColor Red
+    Read-Host "Press Enter"
+    exit 1
+  }
+  $haveNext = (Get-Content "node_modules\next\package.json" -Raw | ConvertFrom-Json).version
+  if ($haveNext -ne $wantNext) {
+    Write-Host "[FATAL] Next.js $haveNext after install — expected $wantNext" -ForegroundColor Red
+    Read-Host "Press Enter"
+    exit 1
+  }
+  Write-Host "[OK] Next.js $haveNext" -ForegroundColor Green
 }
 
 if (-not (Test-Path ".local\playwright-chromium.ok")) {
@@ -222,35 +245,15 @@ foreach ($junk in @("app\elastic-beanstalk", "app\elastic_beanstalk", "app\aws-d
   }
 }
 
-Write-Host "  VERSION: $TargetVersion  (production — Windows 안정 모드)"
+Write-Host "  VERSION: $TargetVersion"
+Write-Host "  Next.js $haveNext — dev mode (webpack)"
 Write-Host "  FLOW: [0]->[1]->[2]->[3]->[4]"
 Write-Host "  http://localhost:3000"
+Write-Host "  first compile: wait until 'Compiled /' (not 30 min — if stuck, Next version wrong)"
 Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
 
-$buildStamp = Join-Path ".local" "build-$TargetVersion.ok"
-$needBuild = $true
-if ((Test-Path $buildStamp) -and (Test-Path ".next\BUILD_ID")) {
-  $needBuild = $false
-}
-if ($prevVer -ne $TargetVersion) { $needBuild = $true }
-
-if ($needBuild) {
-  Write-Host "[BUILD] compiling (~1-3 min, 줄마다 진행 표시)..." -ForegroundColor Cyan
-  Remove-Item Env:TURBO, Env:TURBOPACK, Env:IS_TURBOPACK_TEST -ErrorAction SilentlyContinue
-  npm run build
-  if ($LASTEXITCODE -ne 0) {
-    Write-Host "[FATAL] build failed" -ForegroundColor Red
-    Read-Host "Press Enter"
-    exit 1
-  }
-  New-Item -ItemType Directory -Force -Path ".local" | Out-Null
-  "ok" | Out-File $buildStamp -Encoding ascii
-  Write-Host "[BUILD] OK" -ForegroundColor Green
-} else {
-  Write-Host "[CACHE] skip build (version $TargetVersion already built)"
-}
-
 Start-Process "http://localhost:3000"
 Remove-Item Env:TURBO, Env:TURBOPACK, Env:IS_TURBOPACK_TEST -ErrorAction SilentlyContinue
-npm run start
+$env:DEV_FRESH = "1"
+npm run dev

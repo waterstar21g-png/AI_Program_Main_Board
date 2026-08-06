@@ -13,6 +13,7 @@ $files = @(
   "run.ps1",
   "recover.ps1",
   "package.json",
+  "package-lock.json",
   "next.config.ts",
   "lib/app-version.ts",
   "scripts/next-dev-safe.mjs",
