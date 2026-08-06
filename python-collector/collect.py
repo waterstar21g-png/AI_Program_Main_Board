@@ -84,6 +84,23 @@ def find_browser_exe() -> str | None:
     return None
 
 
+def _clear_stale_singleton_locks() -> None:
+    """
+    이전 실행이 비정상 종료되어 남은 잠금파일이 있으면, 새 Chrome이
+    "이미 실행 중"이라고 착각해 디버그 포트 없이 조용히 기존 창에만
+    메시지를 보내고 끝나버릴 수 있다(=화면에 아무 반응도 없어 보임).
+    cdp_port_open()이 False라는 건 우리 프로필로 살아있는 프로세스가
+    없다는 뜻이므로 안전하게 지운다.
+    """
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        f = PROFILE_DIR / name
+        try:
+            if f.exists() or f.is_symlink():
+                f.unlink()
+        except OSError:
+            pass
+
+
 def launch_debug_browser() -> None:
     """평소 쓰는 Chrome/Edge를 디버그 포트로 실행 — Playwright Chromium 미사용"""
     exe = find_browser_exe()
@@ -93,7 +110,13 @@ def launch_debug_browser() -> None:
             "https://www.google.com/chrome/ 에서 설치 후 다시 실행하세요."
         )
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+    _clear_stale_singleton_locks()
     log(f"브라우저 실행: {exe}")
+    # 주의: stdout/stderr를 DEVNULL로 버리면 일부 환경(보안 소프트웨어·
+    # 컨테이너 등)에서 Chrome이 바로 죽는 경우가 있다(무반응처럼 보임).
+    # 로그 파일로 받아두면 안전하고, 문제 생기면 이 파일로 원인도 알 수 있다.
+    log_path = PROFILE_DIR / "chrome_debug.log"
+    log_file = open(log_path, "ab")
     subprocess.Popen(
         [
             exe,
@@ -103,14 +126,22 @@ def launch_debug_browser() -> None:
             "--no-default-browser-check",
             MAIN_URL,
         ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=log_file,
+        stderr=log_file,
     )
-    for _ in range(60):
+    log("디버그 모드 연결 대기 중 (최대 30초)...")
+    for i in range(60):
         if cdp_port_open():
+            log("브라우저 연결 확인됨")
             return
+        if i > 0 and i % 6 == 0:
+            log(f"  아직 대기 중... ({i * 0.5:.0f}초 경과 — 화면에 Chrome 창이 떴는지 확인해 주세요)")
         time.sleep(0.5)  # 소켓 연결 대기 — Playwright 이벤트루프와 무관하므로 안전
-    raise SystemExit("브라우저가 디버그 모드로 열리지 않았습니다.")
+    raise SystemExit(
+        "브라우저가 디버그 모드로 열리지 않았습니다.\n"
+        "열려있는 Chrome/Edge 창을 모두 닫고 다시 실행해 보세요.\n"
+        f"(참고 로그: {log_path})"
+    )
 
 
 def pick_working_page(context: BrowserContext) -> Page:
@@ -409,6 +440,7 @@ def wait_bulk_ready(page: Page) -> None:
         pass
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
+    log("  대량수집 화면 로딩 확인 중...")
     url_search_button(page).first.wait_for(state="visible", timeout=60_000)
 
 
