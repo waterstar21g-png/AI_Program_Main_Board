@@ -2,7 +2,8 @@
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
-$repo = "waterstar21g-png/sangpum-capture-price"
+$repo = "waterstar21g-png/AI_Program_Main_Board"
+$repoFallback = "waterstar21g-png/sangpum-capture-price"
 # Sync from main
 $ref = "main"
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
@@ -23,10 +24,12 @@ function Save-Bytes([string]$Path, [byte[]]$Bytes) {
 }
 
 function Download-Raw([string]$RepoPath, [string]$LocalPath) {
-  $urls = @(
-    "https://raw.githubusercontent.com/$repo/$ref/$RepoPath`?t=$cb",
-    "https://cdn.jsdelivr.net/gh/${repo}@$ref/$RepoPath"
-  )
+  $repos = @($repo, $repoFallback) | Select-Object -Unique
+  $urls = @()
+  foreach ($r in $repos) {
+    $urls += "https://raw.githubusercontent.com/$r/$ref/$RepoPath`?t=$cb"
+    $urls += "https://cdn.jsdelivr.net/gh/${r}@$ref/$RepoPath"
+  }
   $last = $null
   foreach ($url in $urls) {
     try {
@@ -56,7 +59,7 @@ try {
 } catch {
   Write-Host "[FATAL] boot download failed: $($_.Exception.Message)" -ForegroundColor Red
   Write-Host "Paste this ONE line in PowerShell:" -ForegroundColor Yellow
-  Write-Host "Invoke-WebRequest -Uri 'https://cdn.jsdelivr.net/gh/waterstar21g-png/sangpum-capture-price@main/recover.ps1' -OutFile recover.ps1 -UseBasicParsing; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1" -ForegroundColor Gray
+  Write-Host "Invoke-WebRequest -Uri 'https://cdn.jsdelivr.net/gh/waterstar21g-png/AI_Program_Main_Board@main/recover.ps1' -OutFile recover.ps1 -UseBasicParsing; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1" -ForegroundColor Gray
   exit 1
 }
 

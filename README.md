@@ -1,6 +1,18 @@
 # AI_Program_Main_Board
 
-가볍고 단순한 배치 자동화 도구 모음입니다. 프로젝트 구성은 [PROJECTS.md](./PROJECTS.md) 참고.
+가볍고 단순한 배치 자동화 도구 모음입니다.  
+GitHub 저장소: `waterstar21g-png/AI_Program_Main_Board`  
+프로젝트 구성은 [PROJECTS.md](./PROJECTS.md) 참고.
+
+## 공식 프로젝트명
+
+| 프로그램 | 설명 |
+|----------|------|
+| **P1_Category_Url_Extract** | 카테고리별 상품 URL 리스트 추출 (ABC마트/A-RT) |
+| **P2_Product_Capture_App** | 더망고 URL 엑셀 기반 상품 대량수집 (Next.js + Playwright) |
+| **P3_Python_Item_Collector** | P2와 같은 작업의 파이썬 독립 버전 (`python-collector/`) |
+
+모노레포 + 논리 분리를 유지합니다. (폴더 4개로 물리 분리하지 않음)
 
 ## Windows — 웹앱 (P1, P2)
 
@@ -23,19 +35,15 @@ npm install
 npm run dev
 ```
 
-## 포함 프로그램 (웹앱 보드)
+## P3 — 파이썬 독립 실행
 
-| 프로그램 | 설명 |
-|----------|------|
-| **P1_Category_Url_Extract** | 카테고리별 상품 URL 리스트 추출 (ABC마트/A-RT) |
-| **P2_Product_Capture_App** | 더망고 URL 엑셀 기반 상품 대량수집 (Next.js + Playwright) |
-
-**P3_Python_Item_Collector**는 P2와 같은 작업을 하는 파이썬 독립 버전입니다.
 웹앱 없이 [`python-collector/`](./python-collector) 폴더만으로 실행됩니다 — 자세한 건 그 폴더의 README 참고.
 
 ## run.ps1 없을 때 (최초 1회만)
 
 ```powershell
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main/run.ps1' -OutFile run.ps1 -UseBasicParsing
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/run.ps1' -OutFile run.ps1 -UseBasicParsing
 .\run.ps1 -Sync
 ```
+
+> 저장소 rename 직전이면 구 URL(`sangpum-capture-price`)도 스크립트가 자동 폴백합니다.
