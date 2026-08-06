@@ -1,14 +1,24 @@
 # AI_Program_Main_Board - run.ps1
-# One command: run.bat
+# 평소: .\run.ps1          (동기화 생략, 바로 실행)
+# 업데이트: .\run.ps1 -Sync (GitHub에서 전체 받기)
+param([switch]$Sync)
+
 $ErrorActionPreference = "Stop"
 chcp 65001 > $null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.18"
+$ExpectedVersion = "2.2.19"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+function Get-LocalAppVersion {
+  if (-not (Test-Path "lib\app-version.ts")) { return "" }
+  $raw = Get-Content "lib\app-version.ts" -Raw
+  if ($raw -match "APP_VERSION\s*=\s*'([^']+)'") { return $Matches[1] }
+  return ""
+}
 
 function Get-MainCommitSha {
   for ($i = 1; $i -le 4; $i++) {
@@ -51,11 +61,8 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
   Move-Item -Force $tmp $LocalPath
 }
 
-$Sha = Get-MainCommitSha
-
 Write-Host "========================================"
 Write-Host "  AI_Program_Main_Board  v$ExpectedVersion"
-Write-Host "  sync sha: $Sha"
 Write-Host "========================================"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -64,65 +71,69 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-Write-Host "[SYNC] GitHub API download..."
+$localVer = Get-LocalAppVersion
+$skipSync = (-not $Sync) -and ($localVer -eq $ExpectedVersion) -and (Test-Path "node_modules")
 
-$files = @(
-  @("lib\product-data-collect\browser-session.ts", "lib/product-data-collect/browser-session.ts"),
-  @("lib\product-data-collect\screen-state.ts", "lib/product-data-collect/screen-state.ts"),
-  @("lib\product-data-collect\runner.ts", "lib/product-data-collect/runner.ts"),
-  @("lib\product-data-collect\steps.ts", "lib/product-data-collect/steps.ts"),
-  @("lib\product-data-collect\types.ts", "lib/product-data-collect/types.ts"),
-  @("lib\product-data-collect\excel-import.ts", "lib/product-data-collect/excel-import.ts"),
-  @("lib\excel-export.ts", "lib/excel-export.ts"),
-  @("lib\top-final-label.ts", "lib/top-final-label.ts"),
-  @("components\ProgramBoardApp.tsx", "components/ProgramBoardApp.tsx"),
-  @("components\ProductDataCollectApp.tsx", "components/ProductDataCollectApp.tsx"),
-  @("app\layout.tsx", "app/layout.tsx"),
-  @("app\globals.css", "app/globals.css"),
-  @("lib\programs\registry.tsx", "lib/programs/registry.tsx"),
-  @("lib\app-version.ts", "lib/app-version.ts"),
-  @("package.json", "package.json"),
-  @("scripts\next-dev-safe.mjs", "scripts/next-dev-safe.mjs"),
-  @("scripts\clean-next.mjs", "scripts/clean-next.mjs"),
-  @("next.config.ts", "next.config.ts"),
-  @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
-  @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
-  @("run.ps1", "run.ps1"),
-  @("run.bat", "run.bat")
-)
+if ($skipSync) {
+  $TargetVersion = $localVer
+  Write-Host "[SKIP] sync — local v$localVer OK (update: .\run.ps1 -Sync)"
+} else {
+  $Sha = Get-MainCommitSha
+  Write-Host "  sync sha: $Sha"
+  Write-Host "[SYNC] GitHub download..."
 
-$failed = @()
-foreach ($f in $files) {
-  try {
-    Download-RepoFile $f[0] $f[1]
-    Write-Host "  OK $($f[0])"
-  } catch {
-    Write-Host "  FAIL $($f[0]) - $($_.Exception.Message)"
-    $failed += $f[0]
+  $files = @(
+    @("lib\product-data-collect\browser-session.ts", "lib/product-data-collect/browser-session.ts"),
+    @("lib\product-data-collect\screen-state.ts", "lib/product-data-collect/screen-state.ts"),
+    @("lib\product-data-collect\runner.ts", "lib/product-data-collect/runner.ts"),
+    @("lib\product-data-collect\steps.ts", "lib/product-data-collect/steps.ts"),
+    @("lib\product-data-collect\types.ts", "lib/product-data-collect/types.ts"),
+    @("lib\product-data-collect\excel-import.ts", "lib/product-data-collect/excel-import.ts"),
+    @("lib\excel-export.ts", "lib/excel-export.ts"),
+    @("lib\top-final-label.ts", "lib/top-final-label.ts"),
+    @("components\ProgramBoardApp.tsx", "components/ProgramBoardApp.tsx"),
+    @("components\ProductDataCollectApp.tsx", "components/ProductDataCollectApp.tsx"),
+    @("app\layout.tsx", "app/layout.tsx"),
+    @("app\globals.css", "app/globals.css"),
+    @("lib\programs\registry.tsx", "lib/programs/registry.tsx"),
+    @("lib\app-version.ts", "lib/app-version.ts"),
+    @("package.json", "package.json"),
+    @("scripts\next-dev-safe.mjs", "scripts/next-dev-safe.mjs"),
+    @("scripts\clean-next.mjs", "scripts/clean-next.mjs"),
+    @("next.config.ts", "next.config.ts"),
+    @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
+    @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
+    @("run.ps1", "run.ps1"),
+    @("run.bat", "run.bat")
+  )
+
+  $failed = @()
+  foreach ($f in $files) {
+    try {
+      Download-RepoFile $f[0] $f[1]
+      Write-Host "  OK $($f[0])"
+    } catch {
+      Write-Host "  FAIL $($f[0]) - $($_.Exception.Message)"
+      $failed += $f[0]
+    }
+  }
+
+  if ($failed.Count -gt 0) {
+    Write-Host "[FATAL] sync failed: $($failed -join ', ')"
+    Read-Host "Press Enter"
+    exit 1
+  }
+
+  $TargetVersion = Get-LocalAppVersion
+  Write-Host "[CHECK] APP_VERSION = $TargetVersion"
+
+  if ($TargetVersion -ne $ExpectedVersion) {
+    Write-Host "[FATAL] version mismatch: file=$TargetVersion / expected=$ExpectedVersion"
+    Read-Host "Press Enter"
+    exit 1
   }
 }
 
-if ($failed.Count -gt 0) {
-  Write-Host "[FATAL] sync failed: $($failed -join ', ')"
-  Read-Host "Press Enter"
-  exit 1
-}
-
-$rawVer = Get-Content "lib\app-version.ts" -Raw
-if ($rawVer -match "APP_VERSION\s*=\s*'([^']+)'") {
-  $TargetVersion = $Matches[1]
-}
-Write-Host "[CHECK] APP_VERSION = $TargetVersion  (sha=$Sha)"
-
-if ($TargetVersion -ne $ExpectedVersion) {
-  Write-Host "[FATAL] version mismatch: file=$TargetVersion / expected=$ExpectedVersion"
-  Write-Host "Paste this ONE line in PowerShell:"
-  Write-Host "irm https://api.github.com/repos/$Repo/contents/run.ps1?ref=main -Headers @{Accept='application/vnd.github.raw';'User-Agent'='x'} -OutFile run.ps1; .\run.bat"
-  Read-Host "Press Enter"
-  exit 1
-}
-
-# 버전이 바뀐 때만 캐시 삭제 — 매번 지우면 Compiling이 매번 처음부터라 느림
 $prevVer = ""
 if (Test-Path "VERSION.txt") {
   $prevRaw = Get-Content "VERSION.txt" -Raw
@@ -158,14 +169,12 @@ if ($prevVer -ne $TargetVersion) {
   Write-Host "[CLEAN] version changed ($prevVer -> $TargetVersion) — clear .next/.next-dev"
   Remove-Item -Recurse -Force ".next", ".next-dev" -ErrorAction SilentlyContinue
 } else {
-  Write-Host "[CACHE] keep .next-dev (same version $TargetVersion) — fast start"
+  Write-Host "[CACHE] keep .next-dev (same version $TargetVersion)"
 }
 
 Write-Host ""
-Write-Host "  VERSION: $TargetVersion  (Turbopack)"
-Write-Host "  FLOW: [0]->[1]->[2]->[3]->[4]"
+Write-Host "  VERSION: $TargetVersion"
 Write-Host "  http://localhost:3000"
-Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
 
 Start-Process "http://localhost:3000"
