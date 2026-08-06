@@ -1,17 +1,25 @@
+import dynamic from 'next/dynamic';
 import type { ComponentType } from 'react';
-import { ProductDataCollectApp } from '@/components/ProductDataCollectApp';
-import { CategoryExtractorApp } from '@/components/CategoryExtractorApp';
 
 export type ProgramEntry = {
   id: string;
   name: string;
   description: string;
-  /** 우측 상단 1줄 요약 (작은 글씨) */
   summaryLine: string;
   component: ComponentType;
 };
 
-/** 단위 프로그램 등록 — 기존 프로그램은 수정하지 말고, 신규는 항목만 추가 */
+const CategoryExtractorApp = dynamic(
+  () => import('@/components/CategoryExtractorApp').then(m => m.CategoryExtractorApp),
+  { ssr: false, loading: () => <p className="panel__hint">로딩…</p> },
+);
+
+const ProductDataCollectApp = dynamic(
+  () => import('@/components/ProductDataCollectApp').then(m => m.ProductDataCollectApp),
+  { ssr: false, loading: () => <p className="panel__hint">로딩…</p> },
+);
+
+/** 단위 프로그램 등록 — 신규는 항목만 추가 (lazy load) */
 export const PROGRAMS: ProgramEntry[] = [
   {
     id: 'category-item-url-list',

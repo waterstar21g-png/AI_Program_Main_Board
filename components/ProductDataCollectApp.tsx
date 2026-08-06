@@ -2,7 +2,6 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { APP_VERSION } from '@/lib/app-version';
-import { parseCategoryUrlExcel } from '@/lib/product-data-collect/excel-import';
 import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepId, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -22,6 +21,8 @@ export function ProductDataCollectApp() {
     if (!file) return;
     setError('');
     try {
+      // xlsx는 파일 선택할 때만 로드 (초기 컴파일 부담 제거)
+      const { parseCategoryUrlExcel } = await import('@/lib/product-data-collect/excel-import');
       const buf = await file.arrayBuffer();
       const parsed = parseCategoryUrlExcel(buf);
       setRows(parsed);

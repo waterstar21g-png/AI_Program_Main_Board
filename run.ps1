@@ -6,7 +6,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.5"
+$ExpectedVersion = "2.2.6"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -122,6 +122,12 @@ if ($TargetVersion -ne $ExpectedVersion) {
   exit 1
 }
 
+# 버전이 바뀐 때만 캐시 삭제 — 매번 지우면 Compiling이 매번 처음부터라 느림
+$prevVer = ""
+if (Test-Path "VERSION.txt") {
+  $prevRaw = Get-Content "VERSION.txt" -Raw
+  if ($prevRaw -match '([\d.]+)') { $prevVer = $Matches[1] }
+}
 "version $TargetVersion" | Out-File -FilePath "VERSION.txt" -Encoding utf8
 
 Write-Host "[STOP] kill port 3000..."
@@ -148,12 +154,16 @@ if (-not (Test-Path ".local\playwright-chromium.ok")) {
   if ($LASTEXITCODE -eq 0) { "ok" | Out-File ".local\playwright-chromium.ok" -Encoding ascii }
 }
 
-Write-Host "[CLEAN] .next + .next-dev"
-Remove-Item -Recurse -Force ".next", ".next-dev" -ErrorAction SilentlyContinue
+if ($prevVer -ne $TargetVersion) {
+  Write-Host "[CLEAN] version changed ($prevVer -> $TargetVersion) — clear .next/.next-dev"
+  Remove-Item -Recurse -Force ".next", ".next-dev" -ErrorAction SilentlyContinue
+} else {
+  Write-Host "[CACHE] keep .next-dev (same version $TargetVersion) — fast start"
+}
 
 Write-Host ""
-Write-Host "  VERSION: $TargetVersion"
-Write-Host "  FLOW: [0]init -> [1]URL search+wait popup -> [2]save all+filter+save -> [3]wait popup -> [4]->[0]"
+Write-Host "  VERSION: $TargetVersion  (Turbopack)"
+Write-Host "  FLOW: [0]->[1]->[2]->[3]->[4]"
 Write-Host "  http://localhost:3000"
 Write-Host "  Press Ctrl+C to stop"
 Write-Host ""

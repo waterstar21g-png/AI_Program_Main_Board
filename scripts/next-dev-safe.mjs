@@ -19,7 +19,8 @@ async function main() {
     }
   }
 
-  const child = spawn('npx', ['next', 'dev', '-p', String(port), '-H', '0.0.0.0'], {
+  // --turbo: 작은 보드앱 첫 컴파일·HMR 빠르게
+  const child = spawn('npx', ['next', 'dev', '--turbo', '-p', String(port), '-H', '0.0.0.0'], {
     cwd: projectRoot,
     stdio: 'inherit',
     shell: true,
