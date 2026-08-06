@@ -7,7 +7,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.10"
+$ExpectedVersion = "2.2.11"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -204,11 +204,20 @@ if ($prevVer -ne $TargetVersion) {
 }
 
 Write-Host ""
-Write-Host "  VERSION: $TargetVersion  (Turbopack)"
+# 잔여 잘못된 라우트 (TurbopackInternalError /elastic-beanstalk 원인)
+foreach ($junk in @("app\elastic-beanstalk", "app\elastic_beanstalk", "app\aws-deploy")) {
+  if (Test-Path $junk) {
+    Write-Host "[CLEAN] remove stray $junk"
+    Remove-Item -Recurse -Force $junk -ErrorAction SilentlyContinue
+  }
+}
+
+Write-Host "  VERSION: $TargetVersion  (webpack dev — stable on Windows)"
 Write-Host "  FLOW: [0]->[1]->[2]->[3]->[4]"
 Write-Host "  http://localhost:3000"
 Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
 
 Start-Process "http://localhost:3000"
+# 버전 바뀐 직후이거나 캐시 깨짐 시: DEV_FRESH=1 npm run dev
 npm run dev
