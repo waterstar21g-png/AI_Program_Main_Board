@@ -1,8 +1,8 @@
 {
   "name": "ai-program-main-board",
-  "version": "3.0.0",
+  "version": "3.1.1",
   "private": true,
-  "description": "AI_Program_Main_Board — 단위 프로그램 실행 보드",
+  "description": "AI_Program_Main_Board — P1_Category_Url_Extract / P2_Product_Capture_App / P3_Python_Item_Collector",
   "scripts": {
     "dev": "node scripts/next-dev-safe.mjs",
     "dev:fresh": "node scripts/next-dev-safe.mjs --fresh",

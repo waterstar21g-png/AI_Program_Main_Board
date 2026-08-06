@@ -17,8 +17,8 @@ if ($PSScriptRoot -match 'OneDrive') {
   Write-Host ""
 }
 
-$Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "3.0.0"
+$Repo = "waterstar21g-png/AI_Program_Main_Board"
+$ExpectedVersion = "3.1.1"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 

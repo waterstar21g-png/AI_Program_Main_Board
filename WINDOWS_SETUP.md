@@ -30,7 +30,7 @@ run.bat
 
 ```cmd
 cd /d C:\Users\water\AI_Program_Main_Board
-curl -o run.bat https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main/run.bat
+curl -o run.bat https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/run.bat
 run.bat
 ```
 

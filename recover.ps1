@@ -3,7 +3,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
-$Repo = "waterstar21g-png/sangpum-capture-price"
+$Repo = "waterstar21g-png/AI_Program_Main_Board"
 $Ref = "main"
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $base = "https://cdn.jsdelivr.net/gh/$Repo@$Ref"

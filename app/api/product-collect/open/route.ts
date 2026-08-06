@@ -12,7 +12,7 @@ export async function POST() {
         message:
           '상품데이터수집(Chromium)은 로컬 PC에서만 실행됩니다.\n' +
           'PC에서 .\\run.ps1 실행 후 사용하세요.\n' +
-          `보드 UI: https://sangpum-capture-price.vercel.app`,
+          `보드 UI: https://ai-program-main-board.vercel.app`,
       },
       { status: 400 },
     );

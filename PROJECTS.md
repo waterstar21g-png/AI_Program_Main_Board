@@ -1,6 +1,16 @@
-# AI_Program_Main_Board — 프로젝트 구성
+# AI_Program_Main_Board — 공식 프로젝트 구성
 
-가볍고 단순한 배치 자동화 도구 3개로 구성됩니다.
+GitHub 저장소 루트: **`AI_Program_Main_Board`** (모노레포 + 논리 분리 유지)
+
+공식 프로젝트명(캡처 기준)은 아래 3개입니다.
+
+| # | 공식 프로젝트명 | 역할 |
+|---|----------------|------|
+| 1 | **P1_Category_Url_Extract** | 카테고리별 URL 추출 |
+| 2 | **P2_Product_Capture_App** | 상품 대량데이터 추출 (웹앱) |
+| 3 | **P3_Python_Item_Collector** | P2의 Python 독립 버전 |
+
+---
 
 ## P1_Category_Url_Extract
 
