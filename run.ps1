@@ -6,7 +6,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.7"
+$ExpectedVersion = "2.2.8"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 

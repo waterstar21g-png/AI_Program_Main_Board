@@ -10,11 +10,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$cb=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds();" ^
   "Invoke-WebRequest -Uri \"https://api.github.com/repos/waterstar21g-png/sangpum-capture-price/contents/run.ps1?ref=main&t=$cb\" -Headers $h -OutFile 'run.ps1' -UseBasicParsing;" ^
   "$t=Get-Content run.ps1 -Raw;" ^
-  "if ($t -notmatch 'ExpectedVersion\s*=\s*\"2\.2\.7\"') { throw 'run.ps1 is not v2.2.7 — sync failed' };" ^
-  "Write-Host '[BOOT] run.ps1 OK v2.2.7'"
+  "if ($t -notmatch 'ExpectedVersion\s*=\s*\"2\.2\.8\"') { throw 'run.ps1 is not v2.2.8 — sync failed' };" ^
+  "Write-Host '[BOOT] run.ps1 OK v2.2.8'"
 
 if errorlevel 1 (
-  echo [FATAL] Could not download run.ps1 v2.2.7
+  echo [FATAL] Could not download run.ps1 v2.2.8
   echo Paste this in PowerShell:
   echo irm https://api.github.com/repos/waterstar21g-png/sangpum-capture-price/contents/run.ps1?ref=main -Headers @{Accept='application/vnd.github.raw';'User-Agent'='x'} -OutFile run.ps1; .\run.bat
   pause
