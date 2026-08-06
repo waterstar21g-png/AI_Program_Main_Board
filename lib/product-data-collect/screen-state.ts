@@ -2,12 +2,12 @@ import type { Page } from 'playwright';
 import { TMG_ADMIN_HOST } from '@/lib/product-data-collect/browser-session';
 
 /**
- * 스크린샷 기준 화면 4종 (+ 대기 상태)
+ * 망고 메인화면 비슷하면 처리 — 스크린샷 4상태
  *
- * A) 망고 대량수집 메인 — URL 입력 + URL상품검색하기
- * B) ABC 수집 팝업창 (별도 창) — 건드리지 않음
- * C) 망고 load product 로딩 — 건드리지 않음
- * D) 상품저장설정 모달 — 검색필터명 입력 + 저장하기
+ * A) 대량수집 메인 (URL입력 + URL상품검색하기)
+ * B) ABC 팝업 → 대기만
+ * C) load product → 대기만
+ * D) 상품저장설정 → 입력·저장
  */
 export type MangoScreen =
   | 'bulk_main'
@@ -18,7 +18,6 @@ export type MangoScreen =
   | 'no_results'
   | 'unknown';
 
-/** URL 입력 가능한 A화면 (이전 검색결과가 남아 있어도 OK) */
 export const URL_INPUT_SCREENS: MangoScreen[] = ['bulk_main', 'results_ready', 'no_results'];
 
 export function isAbcPopupUrl(url: string): boolean {
@@ -39,25 +38,36 @@ export function abcPopupPages(main: Page): Page[] {
     .filter(p => p !== main && !p.isClosed() && isAbcPopupUrl(p.url()));
 }
 
-/** 스크린샷 A — 대량수집 메인 화면 시그니처 */
-export async function matchesBulkMainScreen(page: Page): Promise<boolean> {
-  if (!page.url().includes('getGoodsNew.php')) return false;
-  const hasUrlBtn = await page
-    .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
-    .or(page.getByText(/URL\s*상품\s*검색하기/))
-    .first()
-    .isVisible()
-    .catch(() => false);
-  if (!hasUrlBtn) return false;
-  const hasTitle = await page
-    .getByText(/상품데이터\s*대량수집/)
-    .first()
-    .isVisible()
-    .catch(() => false);
-  return hasTitle || hasUrlBtn;
+/**
+ * 망고 대량수집 메인과 비슷한 화면인가 (느슨한 비교)
+ * — getGoodsNew.php + URL상품검색 버튼이 보이면 OK
+ */
+export async function looksLikeMangoBulkScreen(page: Page): Promise<boolean> {
+  const url = page.url();
+  if (!url.includes('getGoodsNew.php') && !url.includes(TMG_ADMIN_HOST)) {
+    return false;
+  }
+
+  const hasUrlSearch =
+    (await page
+      .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
+      .first()
+      .isVisible()
+      .catch(() => false)) ||
+    (await page
+      .getByText(/URL\s*상품\s*검색/)
+      .first()
+      .isVisible()
+      .catch(() => false));
+
+  return hasUrlSearch;
 }
 
-/** 스크린샷 C — 빨간 load product 로딩 */
+/** @deprecated looksLikeMangoBulkScreen 사용 */
+export async function matchesBulkMainScreen(page: Page): Promise<boolean> {
+  return looksLikeMangoBulkScreen(page);
+}
+
 export async function matchesLoadingScreen(page: Page): Promise<boolean> {
   return page
     .evaluate(() => {
@@ -71,7 +81,6 @@ export async function matchesLoadingScreen(page: Page): Promise<boolean> {
     .catch(() => false);
 }
 
-/** 스크린샷 — 검색 결과 그리드 */
 export async function matchesResultsReady(page: Page): Promise<boolean> {
   if (await page.getByText(/검색된\s*상품\s*[1-9]\d*/).first().isVisible().catch(() => false)) {
     return true;
@@ -79,7 +88,6 @@ export async function matchesResultsReady(page: Page): Promise<boolean> {
   return page.getByText(/KRW\s*[\d,]+/).first().isVisible().catch(() => false);
 }
 
-/** 스크린샷 D — 상품저장설정 모달 */
 export async function matchesSaveModal(page: Page): Promise<boolean> {
   const title = await page.getByText('상품저장설정').first().isVisible().catch(() => false);
   const filter = await page.getByText('검색필터명').first().isVisible().catch(() => false);
@@ -99,9 +107,9 @@ export async function matchesNoResults(page: Page): Promise<boolean> {
   return page.getByText(/검색된\s*상품\s*0\s*개/).first().isVisible().catch(() => false);
 }
 
-/** 현재 망고 메인 화면 상태 (창/포커스 변경 없음) */
+/** 비슷한 망고 화면이면 상태 판별 → 맞는 처리만 함 */
 export async function detectMangoScreen(page: Page): Promise<MangoScreen> {
-  if (!(await matchesBulkMainScreen(page))) return 'unknown';
+  if (!(await looksLikeMangoBulkScreen(page))) return 'unknown';
 
   if (abcPopupPages(page).length > 0) return 'abc_popup';
   if (await matchesSaveModal(page)) return 'save_modal';

@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.2"
+$ExpectedVersion = "2.2.3"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 

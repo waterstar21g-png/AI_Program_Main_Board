@@ -305,12 +305,22 @@ export async function ensureBulkCollectPage(page: Page): Promise<Page> {
 
 async function launchBrowserOnce(headless = false): Promise<BrowserContext> {
   fs.mkdirSync(TMG_PROFILE_DIR, { recursive: true });
-  const ctx = await chromium.launchPersistentContext(TMG_PROFILE_DIR, {
+  const opts = {
     headless,
     slowMo: 0,
-    viewport: null,
+    viewport: null as null,
     args: CHROMIUM_ARGS,
-  });
+  };
+  let ctx: BrowserContext;
+  try {
+    ctx = await chromium.launchPersistentContext(TMG_PROFILE_DIR, { ...opts, channel: 'chrome' });
+  } catch {
+    try {
+      ctx = await chromium.launchPersistentContext(TMG_PROFILE_DIR, { ...opts, channel: 'msedge' });
+    } catch {
+      ctx = await chromium.launchPersistentContext(TMG_PROFILE_DIR, opts);
+    }
+  }
   setStoredContext(ctx);
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   await gotoUrl(page, TMG_LOGIN_URL);
@@ -333,9 +343,8 @@ export async function getCollectBrowserContextForRun(): Promise<BrowserContext> 
   if (contextAlive(getStoredContext())) return getStoredContext()!;
 
   throw new Error(
-    'Chromium에 연결되지 않았습니다.\n' +
-      '먼저 ① 로그인→대량수집 을 누른 뒤 ② 수집을 누르세요.\n' +
-      '(수집 중 새 창/탭을 열지 않습니다)',
+    '브라우저에 망고 대량수집 화면이 없습니다.\n' +
+      'Chrome/Edge에서 getGoodsNew.php(대량수집) 화면을 연 뒤 ▶ 한번에 실행 하세요.',
   );
 }
 
@@ -351,12 +360,22 @@ export function findBulkPage(context: BrowserContext): Page | null {
   return null;
 }
 
-/** ① Chromium 열기 → 로그인 클릭 → 대량수집 메뉴까지 자동 */
+/** 열린 탭 중 망고 대량수집 비슷한 화면 찾기 */
+export async function findMangoWorkPage(context: BrowserContext): Promise<Page | null> {
+  const { looksLikeMangoBulkScreen } = await import('@/lib/product-data-collect/screen-state');
+  for (const p of context.pages()) {
+    if (p.isClosed()) continue;
+    if (await looksLikeMangoBulkScreen(p)) return p;
+  }
+  return findBulkPage(context);
+}
+
+/** 브라우저 열기 → 망고 대량수집 화면까지 */
 export async function openBrowserToLoginUrl(loginUrl = TMG_LOGIN_URL): Promise<Page> {
   const context = await attachBrowser();
   const existing = context.pages().find(p => !p.isClosed());
   if (!existing) {
-    throw new Error('Chromium 탭이 없습니다. 브라우저를 먼저 실행해 주세요.');
+    throw new Error('브라우저 탭이 없습니다.');
   }
   const page = existing;
   if (!isBulkPage(page.url())) {

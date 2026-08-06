@@ -8,13 +8,13 @@
 import type { BrowserContext, Locator, Page } from 'playwright';
 import {
   ensureCollectBrowserReady,
-  findBulkPage,
+  findMangoWorkPage,
   resetBulkCollectViaMenu,
 } from '@/lib/product-data-collect/browser-session';
 import {
   abcPopupPages,
   detectMangoScreen,
-  matchesBulkMainScreen,
+  looksLikeMangoBulkScreen,
   matchesLoadingScreen,
   matchesNoResults,
   matchesResultsReady,
@@ -170,29 +170,33 @@ async function findUrlInput(page: Page): Promise<Locator> {
   throw new Error('URL 입력칸을 찾지 못했습니다.');
 }
 
-function requireBulkPage(context: BrowserContext, ctx: LogCtx): Page {
-  const page = findBulkPage(context);
+async function requireMangoPage(context: BrowserContext, ctx: LogCtx): Promise<Page> {
+  const page = await findMangoWorkPage(context);
   if (!page) {
     throw new Error(
-      '대량수집(getGoodsNew.php) 탭이 없습니다.\n' +
-        '① 로그인→대량수집 을 먼저 누른 뒤 ② 수집을 누르세요.',
+      '망고 대량수집 비슷한 화면을 찾지 못했습니다.\n' +
+        '브라우저에서 getGoodsNew.php 화면을 연 뒤 ▶ 한번에 실행 하세요.',
     );
   }
-  pushLog(ctx, 'open-page', '기존 탭 사용', undefined, page.url().split('?')[0]);
+  const label = SCREEN_LABEL[await detectMangoScreen(page)];
+  pushLog(ctx, 'open-page', '망고 화면 확인', undefined, label);
   return page;
 }
 
 async function step0Init(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'open-page', '[0] 초기화 · 상품데이터수집→대량수집', rowIndex);
-  if (!(await matchesBulkMainScreen(page))) {
-    throw new Error(`#${rowIndex} [0] 대량수집 화면이 아닙니다. ①을 먼저 실행하세요.`);
+  pushLog(ctx, 'open-page', '[0] 초기화', rowIndex);
+  if (!(await looksLikeMangoBulkScreen(page))) {
+    throw new Error(`#${rowIndex} 망고 대량수집 비슷한 화면이 아닙니다.`);
   }
-  assertNoAbcPopup(page, '[0] 초기화');
+  assertNoAbcPopup(page, '[0]');
   if (await matchesSaveModal(page)) {
     pushLog(ctx, 'open-page', '[0] 저장팝업 닫힘 대기', rowIndex);
     await step3WaitSaveDone(page, ctx, rowIndex);
   }
-  await resetBulkCollectViaMenu(page);
+  const before = await detectMangoScreen(page);
+  if (before === 'results_ready') {
+    await resetBulkCollectViaMenu(page);
+  }
   await waitForScreens(page, ctx, rowIndex, URL_INPUT_SCREENS, 60_000);
   pushLog(ctx, 'open-page', '[0] 초기화 완료', rowIndex);
 }
@@ -352,17 +356,16 @@ export async function runTmgCollectWorkflow(
   pushLog(
     ctx,
     'open-page',
-    '[0]→[1]→[2]→[3]→[4] 화면 비교 후 입력·클릭만',
+    '망고 화면 비슷하면 → 입력·클릭 처리',
     undefined,
-    '새 창 없음 · ABC/load product 팝업 미터치',
+    '[0]~[4] 팝업 미터치',
   );
 
   let processedCount = 0;
   try {
-    pushLog(ctx, 'open-page', '한번에 실행 · Chromium 연결', undefined);
+    pushLog(ctx, 'open-page', '브라우저 연결', undefined);
     const browserCtx = await ensureCollectBrowserReady();
-    pushLog(ctx, 'open-page', 'Chromium · 로그인→대량수집 준비 완료', undefined);
-    const page = requireBulkPage(browserCtx, ctx);
+    const page = await requireMangoPage(browserCtx, ctx);
     page.setDefaultTimeout(120_000);
 
     const start = req.startRowIndex ?? 0;
