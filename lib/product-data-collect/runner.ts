@@ -117,15 +117,18 @@ async function clickIt(loc: Locator) {
 
 function urlSearchButton(page: Page) {
   return page
-    .locator('input[type="button"][value*="URL"][value*="검색"]')
-    .or(page.locator('input[type="submit"][value*="URL"][value*="검색"]'))
-    .or(page.getByText(/URL\s*상품\s*검색하기/));
+    .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
+    .filter({ hasNot: page.locator('[value*="초기화"]') })
+    .or(page.locator('button:has-text("URL")'))
+    .or(page.getByText(/URL\s*상품\s*검색/));
 }
 
 function saveAllButton(page: Page) {
   return page
     .locator('input[type="button"][value*="모두저장"]')
     .or(page.locator('input[type="submit"][value*="모두저장"]'))
+    .or(page.locator('input[value*="모두"][value*="저장"]'))
+    .or(page.locator('button:has-text("모두저장")'))
     .or(page.getByText(/검색된\s*상품\s*모두\s*저장/));
 }
 
@@ -134,30 +137,43 @@ async function urlInput(page: Page): Promise<Locator> {
   const btn = urlSearchButton(page).first();
   const area = page.locator('tr, table, div').filter({ has: btn }).last();
 
-  const textarea = area.locator('textarea');
-  if ((await textarea.count()) > 0) return textarea.last();
-
-  const text = area.locator('input[type="text"]:not([name*="login"])');
-  if ((await text.count()) > 0) return text.last();
-
+  for (const cand of [
+    area.locator('textarea'),
+    area.locator('input[type="text"]:not([name*="login"]):not([readonly])'),
+    page.locator('textarea'),
+  ]) {
+    if ((await cand.count().catch(() => 0)) > 0) return cand.last();
+  }
   throw new Error('URL 입력칸을 찾지 못했습니다');
 }
 
 function saveModal(page: Page) {
   return page
     .locator('div, form, table')
-    .filter({ hasText: '상품저장설정' })
-    .filter({ hasText: '저장하기' })
+    .filter({ hasText: /상품\s*저장\s*설정|검색\s*필터\s*명/ })
+    .filter({ hasText: /저장하기/ })
     .last();
 }
 
 async function saveModalVisible(page: Page) {
-  return page.getByText('상품저장설정').first().isVisible().catch(() => false);
+  return page
+    .getByText(/상품\s*저장\s*설정/)
+    .first()
+    .isVisible()
+    .catch(() => false);
 }
 
-function modalField(page: Page, label: string) {
-  return saveModal(page).locator('tr').filter({ hasText: label }).locator('input').first();
+function modalField(page: Page, label: RegExp) {
+  const modal = saveModal(page);
+  return modal
+    .locator('tr, div, p, label')
+    .filter({ hasText: label })
+    .locator('input[type="text"], input:not([type]), input[type="number"]')
+    .first();
 }
+
+const FILTER_NAME_LABEL = /검색\s*필터\s*명/;
+const SAVE_COUNT_LABEL = /저장\s*상품\s*수|검색결과\s*상위/;
 
 function normalizeUrl(raw: string) {
   const u = raw.trim();
@@ -195,18 +211,21 @@ async function step2SaveAll(page: Page, ctx: Ctx, row: TmgCollectRow, saveCount:
   await sleep(400);
 
   log(ctx, 'fill-save-form', '2. 검색필터명 입력', row.rowIndex, row.topFinalLabel);
-  await typeInto(page, modalField(page, '검색필터명'), row.topFinalLabel);
+  await typeInto(page, modalField(page, FILTER_NAME_LABEL), row.topFinalLabel);
 
-  const countField = modalField(page, '저장상품수');
+  const countField = modalField(page, SAVE_COUNT_LABEL);
   if (await countField.count().then(c => c > 0).catch(() => false)) {
     await typeInto(page, countField, String(saveCount));
     // 저장상품수 입력이 필터명을 덮는 화면이 있어 한 번 더 확인
-    await typeInto(page, modalField(page, '검색필터명'), row.topFinalLabel);
+    await typeInto(page, modalField(page, FILTER_NAME_LABEL), row.topFinalLabel);
   }
 
   log(ctx, 'fill-save-form', '2. 저장하기 클릭', row.rowIndex);
   await clickIt(
-    saveModal(page).locator('input[value="저장하기"]').or(saveModal(page).getByText(/^저장하기$/)),
+    saveModal(page)
+      .locator('input[value*="저장하기"]')
+      .or(saveModal(page).locator('button:has-text("저장하기")'))
+      .or(saveModal(page).getByText(/^저장하기$/)),
   );
 }
 

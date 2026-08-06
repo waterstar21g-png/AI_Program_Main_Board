@@ -81,13 +81,13 @@ async function waitBulkReady(page: Page) {
     await gotoUrl(page, TMG_BULK_URL);
   }
   await page
-    .locator('input[type="button"][value*="URL"][value*="검색"]')
-    .or(page.getByText(/URL\s*상품\s*검색하기/))
+    .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
+    .or(page.getByText(/URL\s*상품\s*검색/))
     .first()
     .waitFor({ state: 'visible', timeout: 60_000 });
 }
 
-/** 상품데이터수집 → 대량수집 (실패 시 URL 이동) */
+/** 상품데이터수집 → 대량데이터수집 (실패 시 URL 이동) */
 export async function resetBulkCollectViaMenu(page: Page): Promise<void> {
   // href 직접 클릭이 가장 확실
   const href = page.locator('a[href*="getGoodsNew"]').first();
@@ -102,17 +102,27 @@ export async function resetBulkCollectViaMenu(page: Page): Promise<void> {
     }
   }
 
-  // JS로 메뉴 강제
+  // 메뉴 텍스트로 클릭 (대량데이터수집 / 상품데이터 대량수집 등 표기 차이 허용)
   await page.evaluate(() => {
-    const links = Array.from(document.querySelectorAll('a[href*="getGoodsNew"]')) as HTMLAnchorElement[];
-    if (links[0]) {
-      links[0].click();
+    const clean = (s: string | null) => (s || '').replace(/\s+/g, '');
+    const nodes = Array.from(document.querySelectorAll('a, li, span, td, div, button'));
+
+    const byHref = Array.from(
+      document.querySelectorAll('a[href*="getGoodsNew"]'),
+    ) as HTMLAnchorElement[];
+    if (byHref[0]) {
+      byHref[0].click();
       return;
     }
-    const nodes = Array.from(document.querySelectorAll('a, li, span, td'));
-    const top = nodes.find(el => (el.textContent || '').replace(/\s+/g, ' ').trim() === '상품데이터수집');
+
+    const top = nodes.find(el => clean(el.textContent) === '상품데이터수집');
     if (top) (top as HTMLElement).click();
-    const sub = nodes.find(el => /상품데이터\s*대량수집/.test((el.textContent || '').replace(/\s+/g, ' ')));
+
+    const sub = nodes.find(el => {
+      const t = clean(el.textContent);
+      if (t.length > 30) return false;
+      return /대량데이터수집|대량수집|상품데이터대량/.test(t);
+    });
     if (sub) ((sub.closest('a') as HTMLElement) || (sub as HTMLElement)).click();
   }).catch(() => undefined);
 
@@ -181,8 +191,8 @@ export async function findMangoWorkPage(context: BrowserContext): Promise<Page |
   for (const p of context.pages()) {
     if (p.isClosed()) continue;
     const hasBtn = await p
-      .locator('input[type="button"][value*="URL"][value*="검색"]')
-      .or(p.getByText(/URL\s*상품\s*검색하기/))
+      .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
+      .or(p.getByText(/URL\s*상품\s*검색/))
       .first()
       .isVisible()
       .catch(() => false);

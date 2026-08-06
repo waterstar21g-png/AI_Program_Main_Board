@@ -1,0 +1,367 @@
+"""
+더망고(tmg1898) 상품데이터 대량수집 — 요건 0~4 그대로
+
+0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭
+1. URL상품검색하기 : 필드값 입력 후 클릭 -> 팝업창이 없어질 때까지 대기
+2. 검색된 상품 모두저장 클릭 -> 팝업창에서 검색필터명 입력 -> 저장하기 버튼 클릭
+3. 팝업창이 없어질 때까지 대기
+4. -> 0. 초기화
+
+사용법:
+    python collect.py 엑셀파일.xlsx
+    python collect.py 엑셀파일.xlsx 5     (저장수 5개, 기본 3)
+
+엑셀 헤더(1행): 상위 최종 카테고리명 | 최종 카테고리 URL주소
+
+최초 1회는 브라우저에서 직접 로그인하세요. 이후에는 같은 폴더의
+.chrome-profile 에 로그인이 저장되어 자동으로 로그인 상태가 유지됩니다.
+팝업창은 스크립트가 절대 열거나 닫지 않습니다 — 항상 "스스로 닫힐 때까지" 기다립니다.
+"""
+
+import re
+import sys
+import time
+from pathlib import Path
+
+import openpyxl
+from playwright.sync_api import Page, TimeoutError as PWTimeout, sync_playwright
+
+LOGIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin_login.php"
+BULK_URL = "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsNew.php"
+ADMIN_HOST = "tmg1898.cafe24.com"
+BULK_PATH = "getGoodsNew.php"
+
+PROFILE_DIR = Path(__file__).parent / ".chrome-profile"
+POPUP_WAIT_SEC = 600
+MODAL_WAIT_SEC = 180
+DEFAULT_SAVE_COUNT = 3
+
+FILTER_NAME_LABEL = re.compile(r"검색\s*필터\s*명")
+SAVE_COUNT_LABEL = re.compile(r"저장\s*상품\s*수|검색결과\s*상위")
+
+
+def log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# ── 엑셀 ──────────────────────────────────────────────────────
+
+def read_excel(path: str) -> list[dict]:
+    wb = openpyxl.load_workbook(path, data_only=True)
+    ws = wb.active
+    headers = [str(c.value or "").strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
+    try:
+        label_col = headers.index("상위 최종 카테고리명")
+        url_col = headers.index("최종 카테고리 URL주소")
+    except ValueError:
+        raise SystemExit(
+            "엑셀 1행 헤더에 '상위 최종 카테고리명', '최종 카테고리 URL주소' 열이 있어야 합니다."
+        )
+
+    rows = []
+    for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
+        label = str(row[label_col].value or "").strip()
+        url = str(row[url_col].value or "").strip()
+        if url:
+            rows.append({"row": i, "label": label, "url": url})
+    return rows
+
+
+def normalize_url(u: str) -> str:
+    u = u.strip()
+    return u if re.match(r"^https?://", u, re.I) else f"https://{u}"
+
+
+# ── 팝업 ──────────────────────────────────────────────────────
+
+def popups(page: Page) -> list:
+    result = []
+    for p in page.context.pages:
+        if p is page or p.is_closed():
+            continue
+        try:
+            u = p.url
+        except Exception:
+            continue
+        if u and u != "about:blank" and ADMIN_HOST not in u:
+            result.append(p)
+    return result
+
+
+def wait_popups_gone(
+    page: Page, timeout_sec: int = POPUP_WAIT_SEC, grace_sec: float = 2.0
+) -> None:
+    """팝업이 스스로 닫힐 때까지 대기 — 절대 건드리지 않음
+
+    grace_sec: 클릭 직후 팝업이 뜨기까지 잠깐 기다리는 시간.
+    팝업이 아예 안 뜨는 경우(이미 닫혀 있음)까지 대비해 대기 시간은 짧게 둔다
+    (없는 팝업을 기다리며 매 행마다 시간을 허비하지 않도록).
+
+    주의: Playwright Python 동기 API는 이벤트(새 창 열림/닫힘)를
+    time.sleep() 중에는 처리하지 않는다. 반드시 page.wait_for_timeout()
+    으로 기다려야 context.pages()가 실시간으로 갱신된다.
+    """
+    end = time.time() + timeout_sec
+    grace_end = time.time() + grace_sec
+    while not popups(page) and time.time() < grace_end:
+        page.wait_for_timeout(200)
+
+    last_beat = 0.0
+    while popups(page):
+        if time.time() > end:
+            raise TimeoutError("팝업창이 닫히지 않음")
+        if time.time() - last_beat > 10:
+            last_beat = time.time()
+            log(f"  팝업창 대기중... (열린 팝업 {len(popups(page))}개)")
+        page.wait_for_timeout(500)
+
+
+# ── 입력 · 클릭 (망고 구형 input 대응) ────────────────────────
+
+def type_into(page: Page, locator, value: str) -> None:
+    el = locator.first
+    el.wait_for(state="attached", timeout=60_000)
+    el.scroll_into_view_if_needed()
+    try:
+        el.click(timeout=15_000)
+    except PWTimeout:
+        pass
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Backspace")
+    page.keyboard.insert_text(value)
+
+    got = ""
+    try:
+        got = el.input_value()
+    except Exception:
+        pass
+    if not got.strip():
+        el.evaluate(
+            """(node, v) => {
+                if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
+                    node.focus();
+                    node.value = v;
+                    node.dispatchEvent(new Event('input', { bubbles: true }));
+                    node.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }""",
+            value,
+        )
+
+
+def click_it(locator) -> None:
+    el = locator.first
+    el.wait_for(state="visible", timeout=60_000)
+    el.scroll_into_view_if_needed()
+    try:
+        el.click(timeout=20_000)
+    except PWTimeout:
+        el.evaluate("(node) => node.click()")
+
+
+# ── 화면 요소 ─────────────────────────────────────────────────
+
+def url_search_button(page: Page):
+    return page.locator(
+        'input[type="button"][value*="URL"], input[type="submit"][value*="URL"]'
+    ).or_(page.get_by_text(re.compile(r"URL\s*상품\s*검색")))
+
+
+def save_all_button(page: Page):
+    return (
+        page.locator('input[type="button"][value*="모두저장"]')
+        .or_(page.locator('input[type="submit"][value*="모두저장"]'))
+        .or_(page.get_by_text(re.compile(r"검색된\s*상품\s*모두\s*저장")))
+    )
+
+
+def url_input(page: Page):
+    btn = url_search_button(page).first
+    area = page.locator("tr, table, div").filter(has=btn).last
+    for cand in (
+        area.locator("textarea"),
+        area.locator('input[type="text"]:not([name*="login"]):not([readonly])'),
+        page.locator("textarea"),
+    ):
+        if cand.count() > 0:
+            return cand.last
+    raise RuntimeError("URL 입력칸을 찾지 못했습니다")
+
+
+def save_modal(page: Page):
+    return (
+        page.locator("div, form, table")
+        .filter(has_text=re.compile(r"상품\s*저장\s*설정|검색\s*필터\s*명"))
+        .filter(has_text=re.compile("저장하기"))
+        .last
+    )
+
+
+def save_modal_visible(page: Page) -> bool:
+    try:
+        return page.get_by_text(re.compile(r"상품\s*저장\s*설정")).first.is_visible()
+    except Exception:
+        return False
+
+
+def modal_field(page: Page, label_pattern: re.Pattern):
+    modal = save_modal(page)
+    return (
+        modal.locator("tr, div, p, label")
+        .filter(has_text=label_pattern)
+        .locator('input[type="text"], input:not([type]), input[type="number"]')
+        .first
+    )
+
+
+# ── 0 ~ 4 ────────────────────────────────────────────────────
+
+def wait_bulk_ready(page: Page) -> None:
+    page.wait_for_load_state("domcontentloaded")
+    if BULK_PATH not in page.url:
+        page.goto(BULK_URL, wait_until="domcontentloaded", timeout=120_000)
+    url_search_button(page).first.wait_for(state="visible", timeout=60_000)
+
+
+def reset_to_bulk_menu(page: Page) -> None:
+    """0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭"""
+    href = page.locator('a[href*="getGoodsNew"]').first
+    if href.count() > 0:
+        try:
+            href.click(timeout=5000)
+        except PWTimeout:
+            href.evaluate("(node) => node.click()")
+        page.wait_for_timeout(800)
+        if BULK_PATH in page.url:
+            wait_bulk_ready(page)
+            return
+
+    page.evaluate(
+        """() => {
+            const clean = (s) => (s || '').replace(/\\s+/g, '');
+            const nodes = Array.from(document.querySelectorAll('a, li, span, td, div, button'));
+            const byHref = Array.from(document.querySelectorAll('a[href*="getGoodsNew"]'));
+            if (byHref[0]) { byHref[0].click(); return; }
+            const top = nodes.find(el => clean(el.textContent) === '상품데이터수집');
+            if (top) top.click();
+            const sub = nodes.find(el => {
+                const t = clean(el.textContent);
+                if (t.length > 30) return false;
+                return /대량데이터수집|대량수집|상품데이터대량/.test(t);
+            });
+            if (sub) (sub.closest('a') || sub).click();
+        }"""
+    )
+    page.wait_for_timeout(1000)
+    if BULK_PATH not in page.url:
+        page.goto(BULK_URL, wait_until="domcontentloaded", timeout=120_000)
+    wait_bulk_ready(page)
+
+
+def process_row(page: Page, row: dict, save_count: int) -> None:
+    label = row["label"]
+    url = normalize_url(row["url"])
+    log(f"--- {row['row']}행 : {label} ---")
+
+    log("0. 초기화 : 상품데이터수집 -> 대량데이터수집")
+    reset_to_bulk_menu(page)
+    page.wait_for_timeout(500)
+
+    log("1. 필드값 입력")
+    type_into(page, url_input(page), url)
+    log("1. URL상품검색하기 클릭")
+    click_it(url_search_button(page))
+
+    log("1. 팝업창이 없어질 때까지 대기")
+    wait_popups_gone(page)
+    log("1. 팝업창 닫힘")
+
+    log("2. 검색된 상품 모두저장 클릭")
+    click_it(save_all_button(page))
+    save_modal(page).wait_for(state="visible", timeout=MODAL_WAIT_SEC * 1000)
+    page.wait_for_timeout(400)
+
+    log(f"2. 검색필터명 입력: {label}")
+    type_into(page, modal_field(page, FILTER_NAME_LABEL), label)
+
+    count_field = modal_field(page, SAVE_COUNT_LABEL)
+    if count_field.count() > 0:
+        type_into(page, count_field, str(save_count))
+        type_into(page, modal_field(page, FILTER_NAME_LABEL), label)  # 덮어쓰기 방지 재확인
+
+    log("2. 저장하기 버튼 클릭")
+    click_it(
+        save_modal(page)
+        .locator('input[value*="저장하기"]')
+        .or_(save_modal(page).locator('button:has-text("저장하기")'))
+        .or_(save_modal(page).get_by_text(re.compile("^저장하기$")))
+    )
+
+    log("3. 팝업창이 없어질 때까지 대기")
+    end = time.time() + MODAL_WAIT_SEC
+    closed = False
+    while time.time() < end:
+        if not save_modal_visible(page):
+            wait_popups_gone(page, grace_sec=0.5)  # 남은 팝업이 있으면만 대기
+            closed = True
+            break
+        page.wait_for_timeout(500)
+    if not closed:
+        raise TimeoutError(f"#{row['row']} 저장 팝업창이 닫히지 않음")
+    log("3. 팝업창 닫힘")
+
+    log("4. -> 0. 초기화")
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        print("사용법: python collect.py 엑셀파일.xlsx [저장수(기본 3)]")
+        sys.exit(1)
+
+    excel_path = sys.argv[1]
+    save_count = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_SAVE_COUNT
+
+    rows = read_excel(excel_path)
+    if not rows:
+        print("엑셀에 처리할 행이 없습니다.")
+        sys.exit(1)
+    print(f"엑셀 {len(rows)}행 로드 완료. 저장수={save_count}")
+
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+
+    with sync_playwright() as p:
+        context = p.chromium.launch_persistent_context(
+            str(PROFILE_DIR),
+            headless=False,
+            viewport=None,
+            args=["--start-maximized"],
+        )
+        page = context.pages[0] if context.pages else context.new_page()
+        page.set_default_timeout(120_000)
+
+        page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        if "admin_login" in page.url:
+            input("브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
+
+        if BULK_PATH in page.url:
+            wait_bulk_ready(page)
+        else:
+            reset_to_bulk_menu(page)
+
+        ok = 0
+        for row in rows:
+            try:
+                process_row(page, row, save_count)
+                ok += 1
+            except Exception as e:  # noqa: BLE001
+                log(f"오류: {e}")
+                if input("계속 진행할까요? (y/n) ").strip().lower() != "y":
+                    break
+
+        print(f"완료: {ok}/{len(rows)}행 처리")
+        input("Enter 를 누르면 브라우저를 닫습니다...")
+        context.close()
+
+
+if __name__ == "__main__":
+    main()
