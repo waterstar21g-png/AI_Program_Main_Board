@@ -301,10 +301,25 @@ async function step0Reset(page: Page, ctx: Ctx, rowIndex: number) {
 async function step1Search(page: Page, ctx: Ctx, row: TmgCollectRow) {
   const url = normalizeUrl(row.finalCategoryUrl);
 
+  log(ctx, 'paste-url', '  엑셀 원본 값', row.rowIndex, row.finalCategoryUrl.slice(0, 120));
+  if (url !== row.finalCategoryUrl.trim()) {
+    log(ctx, 'paste-url', '  [정보] 프로토콜 보정됨 (엑셀 값에 http(s):// 없음)', row.rowIndex, url.slice(0, 120));
+  }
+
   log(ctx, 'paste-url', '1. 필드값 입력', row.rowIndex, url.slice(0, 120));
   const target = await urlInput(page);
   const actual = await typeInto(page, target, url);
   log(ctx, 'paste-url', '  입력칸 최종 값', row.rowIndex, actual.slice(0, 120));
+
+  if (actual.trim() !== url.trim()) {
+    log(
+      ctx,
+      'paste-url',
+      '  [경고] 입력값 불일치 — 넣으려던 값과 실제 입력칸 값이 다름',
+      row.rowIndex,
+      `넣으려던 값: ${url} / 실제 값: ${actual}`,
+    );
+  }
 
   log(ctx, 'paste-url', '1. URL상품검색하기 클릭', row.rowIndex);
   const trusted = await clickIt(urlSearchButton(page));

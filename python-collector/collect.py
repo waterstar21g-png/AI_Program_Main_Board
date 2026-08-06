@@ -592,6 +592,10 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
     reset_to_bulk_menu(page)
     page.wait_for_timeout(500)
 
+    log(f"  엑셀 원본 값: {row['url']!r}")
+    if url != row["url"].strip():
+        log(f"  [정보] 프로토콜 보정됨 (엑셀 값에 http(s):// 없음): {url}")
+
     log(f"1. 필드값 입력: {url}")
     target = url_input(page)
     type_into(page, target, url)
@@ -601,6 +605,8 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
     except Exception:
         pass
     log(f"  입력칸 최종 값: {actual!r}")
+    if actual.strip() != url.strip():
+        log(f"  [경고] 입력값 불일치 — 넣으려던 값: {url!r} / 실제 값: {actual!r}")
     log("1. URL상품검색하기 클릭")
     trusted = click_it(url_search_button(page))
 
