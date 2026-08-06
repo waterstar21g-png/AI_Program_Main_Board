@@ -1,13 +1,11 @@
 /**
- * 더망고 대량수집 — 화면 순서 그대로
+ * 더망고 — 필드 넣고 기다리기만
  *
- * 0. 초기화 : 상품데이터수집 → 대량데이터수집 클릭
- * 1. URL상품검색하기 → 필드값 입력후 → 팝업창이 없어질때까지 대기
- * 2. 검색된 상품 모두저장 클릭후 → 팝업창에서 검색필터명 입력후 → 저장하기
- * 3. 팝업창이 없어질때까지 대기
- * 4. → 0. 초기화
- *
- * 팝업을 강제로 열거나 닫거나 포커스하지 않는다.
+ * 0. 상품데이터수집 → 대량데이터수집
+ * 1. URL 입력 → URL상품검색하기 → 팝업 없어질 때까지 대기
+ * 2. 검색된 상품 모두저장 → 검색필터명 입력 → 저장하기
+ * 3. 팝업 없어질 때까지 대기
+ * 4. → 0
  */
 import type { BrowserContext, Locator, Page } from 'playwright';
 import {
@@ -15,354 +13,198 @@ import {
   findMangoWorkPage,
   resetBulkCollectViaMenu,
 } from '@/lib/product-data-collect/browser-session';
-import {
-  abcPopupPages,
-  detectMangoScreen,
-  looksLikeMangoBulkScreen,
-  matchesLoadingScreen,
-  matchesNoResults,
-  matchesResultsReady,
-  matchesSaveModal,
-  URL_INPUT_SCREENS,
-  type MangoScreen,
-} from '@/lib/product-data-collect/screen-state';
+import { TMG_ADMIN_HOST } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRequest, TmgCollectResult, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
-type LogCtx = {
-  logs: WorkflowStepLog[];
-  onLog?: (entry: WorkflowStepLog) => void;
-};
+type LogCtx = { logs: WorkflowStepLog[]; onLog?: (e: WorkflowStepLog) => void };
 
 function sleep(ms: number) {
   return new Promise<void>(r => setTimeout(r, ms));
 }
 
-function pushLog(
-  ctx: LogCtx,
-  step: WorkflowStepLog['step'],
-  label: string,
-  rowIndex?: number,
-  message?: string,
-) {
+function log(ctx: LogCtx, step: WorkflowStepLog['step'], label: string, rowIndex?: number, message?: string) {
   const entry: WorkflowStepLog = { step, label, rowIndex, at: new Date().toISOString(), message };
   ctx.logs.push(entry);
   ctx.onLog?.(entry);
 }
 
-const SCREEN_LABEL: Record<MangoScreen, string> = {
-  bulk_main: '메인(입력가능)',
-  abc_popup: 'ABC팝업(대기)',
-  loading: 'load product(대기)',
-  results_ready: '검색결과있음',
-  save_modal: '상품저장설정',
-  no_results: '검색결과없음',
-  unknown: '화면불명',
-};
+function abcPopups(page: Page): Page[] {
+  return page.context().pages().filter(p => {
+    if (p === page || p.isClosed()) return false;
+    try {
+      const u = p.url();
+      if (!u || u === 'about:blank' || u.includes(TMG_ADMIN_HOST)) return false;
+      return /abcmart|a-rt\.com|pmode=mango|smode=search/i.test(u);
+    } catch {
+      return false;
+    }
+  });
+}
 
-function assertNoAbcPopup(page: Page, action: string) {
-  if (abcPopupPages(page).length > 0) {
-    throw new Error(`${action}: ABC 팝업이 열려 있어 화면을 건드리지 않습니다.`);
+async function waitAbcGone(page: Page, ms = 300_000) {
+  const end = Date.now() + ms;
+  while (abcPopups(page).length > 0) {
+    if (Date.now() > end) throw new Error('ABC 팝업이 아직 안 닫힘 (미터치 대기중)');
+    const open = abcPopups(page);
+    await Promise.race([...open.map(p => p.waitForEvent('close').catch(() => undefined)), sleep(1000)]);
   }
 }
 
-async function waitForScreens(
-  page: Page,
-  ctx: LogCtx,
-  rowIndex: number,
-  allowed: MangoScreen[],
-  timeoutMs: number,
-): Promise<MangoScreen> {
-  const deadline = Date.now() + timeoutMs;
-  let lastBeat = 0;
-  while (Date.now() < deadline) {
-    const s = await detectMangoScreen(page);
-    if (allowed.includes(s)) {
-      pushLog(ctx, 'wait-search-popup', '화면일치', rowIndex, SCREEN_LABEL[s]);
-      return s;
-    }
-    if (Date.now() - lastBeat > 10_000) {
-      lastBeat = Date.now();
-      pushLog(ctx, 'wait-search-popup', '화면대기…', rowIndex, SCREEN_LABEL[s]);
-    }
-    if (s === 'abc_popup') {
-      const pops = abcPopupPages(page);
-      await Promise.race([
-        ...pops.map(p => p.waitForEvent('close').catch(() => undefined)),
-        sleep(1000),
-      ]);
-    } else {
-      await sleep(500);
-    }
-  }
-  throw new Error(`#${rowIndex} 화면 대기 시간 초과 (현재=${SCREEN_LABEL[await detectMangoScreen(page)]})`);
+async function isLoading(page: Page) {
+  return page.evaluate(() => /load\s*product|상품정보를\s*불러오는\s*중|잠시만\s*기다려/i.test(document.body?.innerText || '')).catch(() => false);
 }
 
-async function fillField(page: Page, locator: Locator, text: string) {
-  assertNoAbcPopup(page, '입력');
-  await locator.first().evaluate(
-    (node, value) => {
-      if (node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement) {
-        node.value = value;
-        node.dispatchEvent(new Event('input', { bubbles: true }));
-        node.dispatchEvent(new Event('change', { bubbles: true }));
-      }
-    },
-    text,
-  );
+async function hasResults(page: Page) {
+  return page.getByText(/검색된\s*상품\s*[1-9]\d*|KRW\s*[\d,]+/).first().isVisible().catch(() => false);
 }
 
-async function clickBtn(page: Page, locator: Locator) {
-  assertNoAbcPopup(page, '클릭');
-  const el = locator.first();
+async function noResults(page: Page) {
+  return page.getByText(/검색결과가\s*없습니다|정확한\s*검색어인지|검색된\s*상품\s*0\s*개/).first().isVisible().catch(() => false);
+}
+
+async function saveModalOpen(page: Page) {
+  return page.getByText('상품저장설정').first().isVisible().catch(() => false);
+}
+
+/** 필드에 값만 넣기 */
+async function put(loc: Locator, value: string) {
+  const el = loc.first();
   await el.waitFor({ state: 'visible', timeout: 30_000 });
-  try {
-    await el.click({ timeout: 15_000 });
-  } catch {
-    await el.evaluate(node => (node as HTMLElement).click());
-  }
+  await el.fill(value).catch(async () => {
+    await el.evaluate((n, v) => {
+      if (n instanceof HTMLInputElement || n instanceof HTMLTextAreaElement) {
+        n.value = v;
+        n.dispatchEvent(new Event('input', { bubbles: true }));
+        n.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }, value);
+  });
 }
 
-function normalizeUrl(url: string): string {
-  const t = url.trim();
-  return !t ? t : /^https?:\/\//i.test(t) ? t : `https://${t}`;
+/** 버튼 클릭 */
+async function press(loc: Locator) {
+  const el = loc.first();
+  await el.waitFor({ state: 'visible', timeout: 30_000 });
+  await el.click({ timeout: 15_000 }).catch(async () => {
+    await el.evaluate(n => (n as HTMLElement).click());
+  });
 }
 
-function urlSearchButton(page: Page) {
-  return page
-    .locator('input[type="button"][value*="URL"][value*="상품"][value*="검색"]')
-    .or(page.locator('input[type="submit"][value*="URL"][value*="상품"][value*="검색"]'))
-    .or(page.getByText(/URL\s*상품\s*검색하기/));
+function urlBtn(page: Page) {
+  return page.locator('input[type="button"][value*="URL"][value*="검색"], input[type="submit"][value*="URL"][value*="검색"]').or(page.getByText(/URL\s*상품\s*검색하기/));
 }
 
-function saveAllButton(page: Page) {
-  return page
-    .locator('input[type="button"][value*="검색된"][value*="모두저장"]')
-    .or(page.locator('input[type="submit"][value*="검색된"][value*="모두저장"]'))
-    .or(page.getByText(/검색된\s*상품\s*모두\s*저장/));
+function saveAllBtn(page: Page) {
+  return page.locator('input[type="button"][value*="모두저장"], input[type="submit"][value*="모두저장"]').or(page.getByText(/검색된\s*상품\s*모두\s*저장/));
 }
 
-function saveSettingsModal(page: Page) {
-  return page
-    .locator('div, form, table')
-    .filter({ hasText: '상품저장설정' })
-    .filter({ hasText: '저장하기' })
-    .filter({ hasText: '취소하기' })
-    .last();
-}
-
-async function findUrlInput(page: Page): Promise<Locator> {
-  const btn = urlSearchButton(page).first();
-  const area = page.locator('tr, table, div').filter({ has: btn }).last();
+async function urlInput(page: Page): Promise<Locator> {
+  const area = page.locator('tr, table, div').filter({ has: urlBtn(page) }).last();
   const ta = area.locator('textarea');
   if ((await ta.count()) > 0) return ta.last();
-  const inp = area.locator('input[type="text"]:not([name="login_id"]):not([name="login_passwd"])');
-  if ((await inp.count()) > 0) return inp.last();
-  throw new Error('URL 입력칸을 찾지 못했습니다.');
+  return area.locator('input[type="text"]').last();
 }
 
-async function requireMangoPage(context: BrowserContext, ctx: LogCtx): Promise<Page> {
-  const page = await findMangoWorkPage(context);
-  if (!page) {
-    throw new Error(
-      '망고 대량수집 화면을 찾지 못했습니다.\n' +
-        '브라우저에서 대량수집(getGoodsNew.php)을 연 뒤 ▶ 한번에 실행 하세요.',
-    );
-  }
-  pushLog(ctx, 'open-page', '망고 화면 확인', undefined, SCREEN_LABEL[await detectMangoScreen(page)]);
-  return page;
-}
+async function processOneRow(page: Page, row: TmgCollectRequest['rows'][0], saveCount: number, ctx: LogCtx) {
+  const { rowIndex, finalCategoryUrl, topFinalLabel } = row;
+  const url = finalCategoryUrl.trim().startsWith('http') ? finalCategoryUrl.trim() : `https://${finalCategoryUrl.trim()}`;
+  log(ctx, 'next-row', `━━━ #${rowIndex} ━━━`, rowIndex);
 
-/** [0] 상품데이터수집 → 대량데이터수집 클릭 */
-async function step0Init(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'open-page', '[0] 초기화: 상품데이터수집 → 대량데이터수집', rowIndex);
-  if (!(await looksLikeMangoBulkScreen(page))) {
-    throw new Error(`#${rowIndex} [0] 망고 대량수집 화면이 아닙니다.`);
-  }
-  assertNoAbcPopup(page, '[0]');
-  if (await matchesSaveModal(page)) {
-    await step3WaitSaveDone(page, ctx, rowIndex);
-  }
+  // ── 0. 초기화: 메뉴 클릭 ──
+  log(ctx, 'open-page', '[0] 상품데이터수집 → 대량데이터수집', rowIndex);
+  await waitAbcGone(page);
   await resetBulkCollectViaMenu(page);
-  await waitForScreens(page, ctx, rowIndex, URL_INPUT_SCREENS, 60_000);
-  pushLog(ctx, 'open-page', '[0] 초기화 완료', rowIndex);
-}
+  await urlBtn(page).first().waitFor({ state: 'visible', timeout: 60_000 });
 
-/** [1] URL 입력 → URL상품검색하기 → 팝업 없어질 때까지 */
-async function step1UrlSearchAndWait(
-  page: Page,
-  url: string,
-  ctx: LogCtx,
-  rowIndex: number,
-): Promise<'products' | 'empty'> {
-  await waitForScreens(page, ctx, rowIndex, URL_INPUT_SCREENS, 60_000);
-  const normalized = normalizeUrl(url);
+  // ── 1. URL 넣고 검색 → 팝업 없어질 때까지 대기 ──
+  log(ctx, 'paste-url', '[1] URL 입력', rowIndex, url);
+  await waitAbcGone(page);
+  await put(await urlInput(page), url);
+  log(ctx, 'url-search', '[1] URL상품검색하기 클릭', rowIndex);
+  await press(urlBtn(page));
 
-  pushLog(ctx, 'paste-url', '[1] URL 필드값 입력', rowIndex, normalized);
-  await fillField(page, await findUrlInput(page), normalized);
-
-  pushLog(ctx, 'url-search', '[1] URL상품검색하기 클릭', rowIndex);
-  await clickBtn(page, urlSearchButton(page).first());
-
-  pushLog(ctx, 'wait-search-popup', '[1] 팝업창 없어질 때까지 대기 (미터치)', rowIndex);
-  let emptySince = 0;
-  let lastBeat = 0;
-  const deadline = Date.now() + 300_000;
-
-  while (Date.now() < deadline) {
-    const s = await detectMangoScreen(page);
-    if (Date.now() - lastBeat > 10_000) {
-      lastBeat = Date.now();
-      pushLog(ctx, 'wait-search-popup', '[1] 대기중…', rowIndex, SCREEN_LABEL[s]);
-    }
-
-    if (s === 'abc_popup' || s === 'loading') {
-      emptySince = 0;
-      const pops = abcPopupPages(page);
-      if (pops.length > 0) {
-        await Promise.race([
-          ...pops.map(p => p.waitForEvent('close').catch(() => undefined)),
-          sleep(1000),
-        ]);
-      } else {
-        await sleep(500);
-      }
+  log(ctx, 'wait-search-popup', '[1] 팝업 없어질 때까지 대기…', rowIndex);
+  const end1 = Date.now() + 300_000;
+  let emptyAt = 0;
+  while (Date.now() < end1) {
+    if (abcPopups(page).length > 0 || (await isLoading(page))) {
+      emptyAt = 0;
+      await waitAbcGone(page, Math.min(60_000, end1 - Date.now())).catch(() => undefined);
+      await sleep(500);
       continue;
     }
-
-    if (s === 'results_ready' || (await matchesResultsReady(page))) {
-      pushLog(ctx, 'wait-search-popup', '[1] 팝업 종료 · 검색결과 확인', rowIndex);
-      return 'products';
+    if (await hasResults(page)) {
+      log(ctx, 'wait-search-popup', '[1] 검색결과 OK', rowIndex);
+      break;
     }
-
-    if ((s === 'no_results' || (await matchesNoResults(page))) && !(await matchesLoadingScreen(page))) {
-      if (!emptySince) emptySince = Date.now();
-      if (Date.now() - emptySince >= 5_000) {
-        pushLog(ctx, 'wait-search-popup', '[1] 검색결과 없음', rowIndex);
-        return 'empty';
+    if (await noResults(page)) {
+      if (!emptyAt) emptyAt = Date.now();
+      if (Date.now() - emptyAt >= 3000) {
+        log(ctx, 'next-row', `[4] #${rowIndex} 결과없음 → 다음`, rowIndex);
+        return;
       }
-    } else {
-      emptySince = 0;
-    }
-
-    await sleep(500);
-  }
-  throw new Error(`#${rowIndex} [1] 팝업 대기 시간 초과`);
-}
-
-/** [2] 모두저장 → 검색필터명 → 저장하기 */
-async function step2SaveAllAndConfirm(
-  page: Page,
-  filterName: string,
-  saveCount: number,
-  ctx: LogCtx,
-  rowIndex: number,
-) {
-  await waitForScreens(page, ctx, rowIndex, ['results_ready'], 120_000);
-
-  pushLog(ctx, 'save-all', '[2] 검색된 상품 모두저장 클릭', rowIndex);
-  await clickBtn(page, saveAllButton(page).first());
-  await waitForScreens(page, ctx, rowIndex, ['save_modal'], 90_000);
-
-  const modal = saveSettingsModal(page);
-  const filterInput = modal.locator('tr').filter({ hasText: '검색필터명' }).locator('input').first();
-  const countInput = modal.locator('tr').filter({ hasText: '저장상품수' }).locator('input').first();
-
-  pushLog(ctx, 'fill-save-form', '[2] 검색필터명 입력', rowIndex, filterName);
-  await fillField(page, filterInput, filterName);
-  await fillField(page, countInput, String(saveCount));
-
-  pushLog(ctx, 'fill-save-form', '[2] 저장하기 클릭', rowIndex);
-  await clickBtn(
-    page,
-    modal
-      .locator('input[value="저장하기"], input[type="submit"][value="저장하기"]')
-      .or(modal.getByText(/^저장하기$/))
-      .first(),
-  );
-}
-
-/** [3] 팝업창이 없어질 때까지 대기 */
-async function step3WaitSaveDone(page: Page, ctx: LogCtx, rowIndex: number) {
-  pushLog(ctx, 'wait-save-popup', '[3] 팝업창 없어질 때까지 대기', rowIndex);
-  const deadline = Date.now() + 180_000;
-  while (Date.now() < deadline) {
-    if (!(await matchesSaveModal(page))) {
-      pushLog(ctx, 'wait-save-popup', '[3] 팝업 종료', rowIndex);
-      return;
     }
     await sleep(500);
   }
-  throw new Error(`#${rowIndex} [3] 저장 팝업 대기 시간 초과`);
-}
+  if (!(await hasResults(page))) throw new Error(`#${rowIndex} [1] 대기 시간 초과`);
 
-async function processOneRow(
-  page: Page,
-  row: TmgCollectRequest['rows'][0],
-  saveCount: number,
-  ctx: LogCtx,
-) {
-  const { rowIndex, finalCategoryUrl, topFinalLabel } = row;
-  pushLog(ctx, 'next-row', `━━━ #${rowIndex} ━━━`, rowIndex);
+  // ── 2. 모두저장 → 검색필터명 → 저장하기 ──
+  log(ctx, 'save-all', '[2] 검색된 상품 모두저장', rowIndex);
+  await waitAbcGone(page);
+  await press(saveAllBtn(page));
 
-  if (!finalCategoryUrl?.match(/^https?:\/\//i)) {
-    throw new Error(`#${rowIndex} URL 오류: ${finalCategoryUrl || '(비어있음)'}`);
-  }
-  if (!topFinalLabel.trim()) {
-    throw new Error(`#${rowIndex} 상위 최종 카테고리명 비어 있음`);
-  }
+  const modal = page.locator('div, form, table').filter({ hasText: '상품저장설정' }).filter({ hasText: '저장하기' }).last();
+  await modal.waitFor({ state: 'visible', timeout: 90_000 });
+  log(ctx, 'fill-save-form', '[2] 검색필터명 입력', rowIndex, topFinalLabel);
+  await put(modal.locator('tr').filter({ hasText: '검색필터명' }).locator('input').first(), topFinalLabel);
+  await put(modal.locator('tr').filter({ hasText: '저장상품수' }).locator('input').first(), String(saveCount));
+  log(ctx, 'fill-save-form', '[2] 저장하기 클릭', rowIndex);
+  await press(modal.locator('input[value="저장하기"]').or(modal.getByText(/^저장하기$/)).first());
 
-  // 0
-  await step0Init(page, ctx, rowIndex);
-  // 1
-  const outcome = await step1UrlSearchAndWait(page, finalCategoryUrl, ctx, rowIndex);
-  if (outcome === 'empty') {
-    pushLog(ctx, 'next-row', `[4] #${rowIndex} 결과없음 → 0.초기화`, rowIndex);
-    return;
+  // ── 3. 팝업 없어질 때까지 대기 ──
+  log(ctx, 'wait-save-popup', '[3] 팝업 없어질 때까지 대기…', rowIndex);
+  const end3 = Date.now() + 180_000;
+  while (Date.now() < end3) {
+    if (!(await saveModalOpen(page))) {
+      log(ctx, 'wait-save-popup', '[3] 팝업 종료', rowIndex);
+      break;
+    }
+    await sleep(500);
   }
-  // 2
-  await step2SaveAllAndConfirm(page, topFinalLabel, saveCount, ctx, rowIndex);
-  // 3
-  await step3WaitSaveDone(page, ctx, rowIndex);
-  // 4 → 0 (다음 행)
-  pushLog(ctx, 'next-row', `[4] #${rowIndex} 완료 → 0.초기화`, rowIndex);
+  if (await saveModalOpen(page)) throw new Error(`#${rowIndex} [3] 저장 팝업 대기 초과`);
+
+  // ── 4. → 0 ──
+  log(ctx, 'next-row', `[4] #${rowIndex} 완료 → 0`, rowIndex);
 }
 
 export async function runTmgCollectWorkflow(
   req: TmgCollectRequest,
-  onLog?: (entry: WorkflowStepLog) => void,
+  onLog?: (e: WorkflowStepLog) => void,
 ): Promise<TmgCollectResult> {
   const logs: WorkflowStepLog[] = [];
   const ctx: LogCtx = { logs, onLog };
   const saveCount = req.saveCount ?? 3;
   const rows = req.rows.filter(r => r.finalCategoryUrl.trim());
+  if (!rows.length) return { ok: false, logs, processedCount: 0, message: '엑셀 행 없음' };
 
-  if (!rows.length) {
-    return { ok: false, logs, processedCount: 0, message: '처리할 엑셀 행이 없습니다.' };
-  }
-
-  pushLog(
-    ctx,
-    'open-page',
-    '화면순서: [0]초기화 → [1]URL검색·팝업대기 → [2]모두저장·필터명·저장하기 → [3]팝업대기 → [4]→[0]',
-    undefined,
-    '팝업 미터치',
-  );
+  log(ctx, 'open-page', '[0]필드+클릭 → [1]대기 → [2]필드+클릭 → [3]대기 → [4]→[0]');
 
   let processedCount = 0;
   try {
-    const browserCtx = await ensureCollectBrowserReady();
-    const page = await requireMangoPage(browserCtx, ctx);
+    const browser = await ensureCollectBrowserReady();
+    const page = await findMangoWorkPage(browser);
+    if (!page) throw new Error('망고 대량수집 화면 없음. 브라우저에서 getGoodsNew.php 연 뒤 실행.');
     page.setDefaultTimeout(120_000);
+    log(ctx, 'open-page', '망고 화면 OK', undefined, page.url().split('?')[0]);
 
-    const start = req.startRowIndex ?? 0;
-    for (let i = start; i < rows.length; i++) {
+    for (let i = req.startRowIndex ?? 0; i < rows.length; i++) {
       await processOneRow(page, rows[i], saveCount, ctx);
       processedCount++;
     }
     return { ok: true, logs, processedCount };
   } catch (e) {
-    const message = e instanceof Error ? e.message : '자동 수집 실패';
-    pushLog(ctx, 'next-row', '오류', undefined, message);
+    const message = e instanceof Error ? e.message : '실패';
+    log(ctx, 'next-row', '오류', undefined, message);
     return { ok: false, logs, processedCount, message };
   }
 }
