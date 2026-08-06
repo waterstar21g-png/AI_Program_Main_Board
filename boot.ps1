@@ -3,8 +3,8 @@ $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
 $repo = "waterstar21g-png/sangpum-capture-price"
-# Prefer feature branch until v2.2.10 is on main (API rate-limit / encoding fix)
-$ref = "cursor/fix-runbat-encoding-dcbc"
+# Sync from main
+$ref = "main"
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
 function Save-Bytes([string]$Path, [byte[]]$Bytes) {
@@ -55,10 +55,8 @@ try {
   Download-Raw "run.ps1" (Join-Path $PSScriptRoot "run.ps1")
 } catch {
   Write-Host "[FATAL] boot download failed: $($_.Exception.Message)" -ForegroundColor Red
-  Write-Host "Paste this in PowerShell (uses raw.githubusercontent.com, not API):" -ForegroundColor Yellow
-  Write-Host @"
-`$cb=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); `$b='https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/cursor/fix-runbat-encoding-dcbc'; foreach(`$f in @('boot.ps1','run.bat','run.ps1')){ Invoke-WebRequest -Uri "`$b/`$f`?t=`$cb" -OutFile "`$PWD\`$f" -UseBasicParsing -Headers @{'User-Agent'='x';'Cache-Control'='no-cache'} }; cmd /c run.bat
-"@ -ForegroundColor Gray
+  Write-Host "Paste this ONE line in PowerShell:" -ForegroundColor Yellow
+  Write-Host "irm 'https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main/recover.ps1' -OutFile recover.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1" -ForegroundColor Gray
   exit 1
 }
 

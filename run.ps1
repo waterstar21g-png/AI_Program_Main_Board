@@ -7,12 +7,12 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.13"
+$ExpectedVersion = "2.2.14"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
-# Prefer feature branch until v2.2.12 lands on main
-$SyncBranch = "cursor/fix-runbat-encoding-dcbc"
+# Sync from main (merged v2.2.14)
+$SyncBranch = "main"
 
 function Get-SyncRef {
   # Never require GitHub API — raw CDN works with branch name
@@ -86,9 +86,9 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
 }
 
 function Show-RecoverHint {
-  Write-Host "Paste this in PowerShell (raw CDN, no GitHub API):" -ForegroundColor Yellow
+  Write-Host "Paste this ONE line in PowerShell:" -ForegroundColor Yellow
   Write-Host @"
-`$cb=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); `$b='https://raw.githubusercontent.com/$Repo/$SyncBranch'; foreach(`$f in @('boot.ps1','run.bat','run.ps1')){ Invoke-WebRequest -Uri "`$b/`$f`?t=`$cb" -OutFile "`$PWD\`$f" -UseBasicParsing -Headers @{'User-Agent'='x';'Cache-Control'='no-cache'} }; cmd /c run.bat
+irm 'https://raw.githubusercontent.com/$Repo/main/recover.ps1' -OutFile recover.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1
 "@ -ForegroundColor Gray
 }
 
@@ -128,6 +128,7 @@ $files = @(
   @("next.config.ts", "next.config.ts"),
   @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
   @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
+  @("recover.ps1", "recover.ps1"),
   @("boot.ps1", "boot.ps1"),
   @("run.ps1", "run.ps1"),
   @("run.bat", "run.bat")
