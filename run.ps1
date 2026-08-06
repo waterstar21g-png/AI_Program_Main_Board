@@ -1,7 +1,7 @@
 # AI_Program_Main_Board - run.ps1
 # 평소: .\run.ps1          (동기화 생략, 바로 실행)
 # 업데이트: .\run.ps1 -Sync (GitHub에서 전체 받기)
-param([switch]$Sync)
+param([switch]$Sync, [switch]$Clean)
 
 $ErrorActionPreference = "Stop"
 chcp 65001 > $null
@@ -9,7 +9,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.4.2"
+$ExpectedVersion = "2.4.3"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -162,11 +162,15 @@ if (-not (Test-Path "node_modules")) {
   npm install
 }
 
-if ($prevVer -ne $TargetVersion) {
-  Write-Host "[CLEAN] version changed ($prevVer -> $TargetVersion) — clear .next/.next-dev"
+# 버전이 바뀌었다고 매번 캐시를 지우면 Windows에서 콜드 컴파일이
+# (백신 실시간 검사까지 겹치면) 몇 분씩 걸려 "멈춘 것처럼" 보인다.
+# webpack 자체 캐시가 파일 변경을 알아서 추적하므로 평소엔 그냥 둔다.
+# 화면이 이상하거나 깨진 것 같을 때만 .\run.ps1 -Clean 으로 수동 정리.
+if ($Clean) {
+  Write-Host "[CLEAN] -Clean 지정 — .next/.next-dev 삭제 (다음 실행은 콜드 컴파일)"
   Remove-Item -Recurse -Force ".next", ".next-dev" -ErrorAction SilentlyContinue
 } else {
-  Write-Host "[CACHE] keep .next-dev (same version $TargetVersion)"
+  Write-Host "[CACHE] .next-dev 유지 (문제 있으면 .\run.ps1 -Clean)"
 }
 
 Write-Host ""
@@ -178,6 +182,9 @@ Write-Host ""
 # 기다린 뒤에 브라우저를 연다. (먼저 브라우저부터 열면 서버가 아직
 # 안 떠서 "연결할 수 없음 / ERR_CONNECTION_REFUSED"가 뜬다.)
 Write-Host "[START] npm run dev ..."
+Write-Host "  (첫 컴파일은 Windows 백신 검사까지 겹치면 오래 걸릴 수 있습니다."
+Write-Host "   작업관리자에서 node.exe가 CPU를 쓰고 있으면 진행 중인 것입니다."
+Write-Host "   '✓ Compiled / in Ns' 가 뜨면 끝난 것입니다.)"
 $devProc = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" -NoNewWindow -PassThru
 
 $ready = $false
