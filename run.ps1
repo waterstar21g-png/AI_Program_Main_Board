@@ -9,7 +9,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.21"
+$ExpectedVersion = "2.2.22"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -21,44 +21,48 @@ function Get-LocalAppVersion {
 }
 
 function Get-MainCommitSha {
-  for ($i = 1; $i -le 4; $i++) {
-    try {
-      $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/main?t=$cb$i" -Headers @{
-        "User-Agent"    = "AI_Program_Main_Board-run.ps1"
-        "Cache-Control" = "no-cache"
-        "Pragma"        = "no-cache"
-      }
-      if ($meta.sha -and $meta.sha -match '^[0-9a-f]{7,40}$') { return $meta.sha }
-    } catch {
-      Write-Host "[WARN] commits API retry $i : $($_.Exception.Message)"
-      Start-Sleep -Seconds ([Math]::Pow(2, $i))
+  # API는 403(한도) 자주 남 → 실패하면 브랜치 이름으로 raw 다운로드
+  try {
+    $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/main?t=$cb" -Headers @{
+      "User-Agent"    = "AI_Program_Main_Board-run.ps1"
+      "Cache-Control" = "no-cache"
     }
+    if ($meta.sha -and $meta.sha -match '^[0-9a-f]{7,40}$') { return $meta.sha }
+  } catch {
+    Write-Host "[INFO] commits API unavailable — use branch main (raw)"
   }
-  throw "GitHub commits API failed. Cannot sync. Check network / rate limit."
+  return "main"
 }
 
 function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
   $dir = Split-Path -Parent $LocalPath
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   $tmp = "$LocalPath.download"
-  $headers = @{
-    "User-Agent"    = "AI_Program_Main_Board-run.ps1"
-    "Cache-Control" = "no-cache"
-    "Pragma"        = "no-cache"
-    "Accept"        = "application/vnd.github.raw"
-  }
-  $apiUrl = "https://api.github.com/repos/$Repo/contents/$($RepoPath -replace '\\','/')?ref=$Sha&t=$cb"
-  try {
-    Invoke-WebRequest -Uri $apiUrl -OutFile $tmp -UseBasicParsing -Headers $headers
-  } catch {
-    $rawUrl = "https://raw.githubusercontent.com/$Repo/$Sha/$($RepoPath -replace '\\','/')?t=$cb"
-    Invoke-WebRequest -Uri $rawUrl -OutFile $tmp -UseBasicParsing -Headers @{
-      "User-Agent"    = "AI_Program_Main_Board-run.ps1"
-      "Cache-Control" = "no-cache"
-      "Pragma"        = "no-cache"
+  $rel = $RepoPath -replace '\\', '/'
+  # raw CDN 우선 (API는 403 한도)
+  $urls = @(
+    "https://raw.githubusercontent.com/$Repo/$Sha/$rel`?t=$cb",
+    "https://cdn.jsdelivr.net/gh/${Repo}@$Sha/$rel"
+  )
+  $lastErr = $null
+  foreach ($url in $urls) {
+    try {
+      Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -Headers @{
+        "User-Agent"    = "AI_Program_Main_Board-run.ps1"
+        "Cache-Control" = "no-cache"
+      }
+      $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $tmp))
+      if ($bytes.Length -lt 5) { throw "empty download" }
+      $head = [System.Text.Encoding]::UTF8.GetString($bytes, 0, [Math]::Min(40, $bytes.Length))
+      if ($head -match '^\s*\{\s*"message"') { throw "API error json" }
+      Move-Item -Force $tmp $LocalPath
+      return
+    } catch {
+      $lastErr = $_
+      Remove-Item -Force $tmp -ErrorAction SilentlyContinue
     }
   }
-  Move-Item -Force $tmp $LocalPath
+  throw $lastErr
 }
 
 Write-Host "========================================"
