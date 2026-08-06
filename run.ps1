@@ -1,4 +1,4 @@
-# AI_Program_Main_Board - run.ps1
+﻿# AI_Program_Main_Board - run.ps1
 # 평소: .\run.ps1          (동기화 생략, 바로 실행)
 # 업데이트: .\run.ps1 -Sync (GitHub에서 전체 받기)
 param([switch]$Sync, [switch]$Clean)
@@ -9,7 +9,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.4.5"
+$ExpectedVersion = "2.4.6"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -184,7 +184,9 @@ Write-Host ""
 Write-Host "[START] npm run dev ..."
 Write-Host "  (첫 컴파일은 Windows 백신 검사까지 겹치면 오래 걸릴 수 있습니다."
 Write-Host "   작업관리자에서 node.exe가 CPU를 쓰고 있으면 진행 중인 것입니다."
-Write-Host "   '✓ Compiled / in Ns' 가 뜨면 끝난 것입니다.)"
+Write-Host "   '✓ Compiled / in Ns' 가 뜨면 끝난 것입니다."
+Write-Host "   계속 느리면: Windows 보안 > 바이러스 및 위협 방지 > 제외 추가"
+Write-Host "   에 이 폴더($PSScriptRoot)를 등록하면 훨씬 빨라집니다.)"
 $devProc = Start-Process -FilePath "npm.cmd" -ArgumentList "run", "dev" -NoNewWindow -PassThru
 
 $ready = $false
