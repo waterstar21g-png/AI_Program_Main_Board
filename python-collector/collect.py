@@ -268,7 +268,9 @@ def wait_popups_gone(
             raise TimeoutError("팝업창이 닫히지 않음")
         if time.time() - last_beat > 10:
             last_beat = time.time()
-            log(f"  팝업창 대기중... (열린 팝업 {len(popups(page))}개)")
+            cur = popups(page)
+            urls = ", ".join(p.url for p in cur if not p.is_closed())
+            log(f"  팝업창 대기중... (열린 팝업 {len(cur)}개: {urls})")
         page.wait_for_timeout(500)
     return True
 
@@ -608,6 +610,28 @@ def reset_to_bulk_menu(page: Page) -> None:
     with_nav_retry(page, lambda: _reset_to_bulk_menu_once(page))
 
 
+def wait_page_not_loading(page: Page, timeout_sec: float = 15.0) -> None:
+    """
+    모두저장 클릭 전에 "로딩 중" 표시가 사라졌는지만 확인한다.
+    (검색결과 있음/없음은 절대 판단하지 않음 — 로딩 중에 "결과없음"
+    문구가 잠깐 보였다가 사라지는 경우를 결과없음으로 오판했던 과거
+    버그가 있어서, 오직 로딩 표시 유무만 본다.)
+    """
+    end = time.time() + timeout_sec
+    while time.time() < end:
+        try:
+            loading = page.evaluate(
+                "() => /load\\s*product|상품정보를\\s*불러오는\\s*중|잠시만\\s*기다려/i"
+                ".test(document.body ? document.body.innerText : '')"
+            )
+        except Exception:  # noqa: BLE001
+            return
+        if not loading:
+            page.wait_for_timeout(500)  # 결과 렌더링 여유
+            return
+        page.wait_for_timeout(300)
+
+
 def process_row(page: Page, row: dict, save_count: int) -> None:
     label = row["label"]
     url = normalize_url(row["url"])
@@ -656,6 +680,12 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
             f"(trusted_click={trusted}) — 화면을 직접 확인해 주세요"
         )
     log("1. 팝업창 닫힘")
+
+    # 팝업이 닫힌 시점과 메인화면에 검색결과가 실제로 다 그려지는 시점이
+    # 살짝 어긋날 수 있다("검색결과 없음"으로 잘못 보이는 원인 중 하나).
+    # 결과 유무는 판단하지 않고(과거에 오탐 있었음) 로딩 표시가 사라질
+    # 때까지만 잠깐 더 기다린다.
+    wait_page_not_loading(page)
 
     log("2. 검색된 상품 모두저장 클릭")
     click_it(save_all_button(page))

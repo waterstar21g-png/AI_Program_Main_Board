@@ -97,7 +97,9 @@ async function waitPopupsGone(
     if (Date.now() > end) throw new Error(`#${rowIndex} 팝업창이 닫히지 않음`);
     if (Date.now() - beat > 10_000) {
       beat = Date.now();
-      log(ctx, step, '팝업창 대기중…', rowIndex, `열린 팝업 ${popups(main).length}개`);
+      const cur = popups(main);
+      const urls = cur.map(p => { try { return p.url(); } catch { return '?'; } }).join(', ');
+      log(ctx, step, '팝업창 대기중…', rowIndex, `열린 팝업 ${cur.length}개: ${urls}`);
     }
     await Promise.race([
       ...popups(main).map(p => p.waitForEvent('close').catch(() => undefined)),
@@ -347,6 +349,34 @@ async function step1Search(page: Page, ctx: Ctx, row: TmgCollectRow) {
     );
   }
   log(ctx, 'wait-search-popup', '1. 팝업창 닫힘', row.rowIndex);
+
+  // 팝업이 닫힌 시점과 메인화면에 검색결과가 실제로 다 그려지는 시점이
+  // 살짝 어긋날 수 있다("검색결과 없음"으로 잘못 보이는 원인 중 하나).
+  // 결과 유무는 판단하지 않고(과거에 오탐 있었음) 로딩 표시가 사라질
+  // 때까지만 잠깐 더 기다린다.
+  await waitPageNotLoading(page);
+}
+
+async function waitPageNotLoading(page: Page, timeoutMs = 15_000): Promise<void> {
+  const end = Date.now() + timeoutMs;
+  while (Date.now() < end) {
+    let loading: boolean;
+    try {
+      loading = await page.evaluate(
+        () =>
+          /load\s*product|상품정보를\s*불러오는\s*중|잠시만\s*기다려/i.test(
+            document.body ? document.body.innerText : '',
+          ),
+      );
+    } catch {
+      return;
+    }
+    if (!loading) {
+      await sleep(500); // 결과 렌더링 여유
+      return;
+    }
+    await sleep(300);
+  }
 }
 
 async function step2SaveAll(page: Page, ctx: Ctx, row: TmgCollectRow, saveCount: number) {
