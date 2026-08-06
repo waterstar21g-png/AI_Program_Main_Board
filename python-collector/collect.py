@@ -240,10 +240,20 @@ def type_into(page: Page, locator, value: str) -> None:
                     node.value = v;
                     node.dispatchEvent(new Event('input', { bubbles: true }));
                     node.dispatchEvent(new Event('change', { bubbles: true }));
+                    node.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+                    node.dispatchEvent(new Event('blur', { bubbles: true }));
                 }
             }""",
             value,
         )
+        got = ""
+        try:
+            got = el.input_value()
+        except Exception:
+            pass
+
+    if got.strip() != value.strip():
+        log(f"  [경고] 입력값 불일치 — 넣으려던 값: {value!r} / 실제 값: {got!r}")
 
 
 def click_it(locator) -> None:
@@ -272,16 +282,69 @@ def save_all_button(page: Page):
     )
 
 
+def _describe(loc) -> str:
+    try:
+        return loc.evaluate(
+            "n => `<${n.tagName.toLowerCase()}"
+            " name=${n.name||''} id=${n.id||''} rows=${n.rows||''}"
+            " value.len=${(n.value||'').length}>`"
+        )
+    except Exception:
+        return "<알 수 없음>"
+
+
 def url_input(page: Page):
+    """
+    URL상품검색하기 버튼과 실제 입력칸이 서로 다른 <tr>/<table>에 있는
+    화면이 있어(선택자가 넓으면 엉뚱한 textarea를 골라 "검색결과 없음"이
+    나는 원인이 됨) 좁은 범위 -> 넓은 범위 순으로, 후보가 정확히 하나일
+    때만 채택한다.
+    """
     btn = url_search_button(page).first
-    area = page.locator("tr, table, div").filter(has=btn).last
-    for cand in (
-        area.locator("textarea"),
-        area.locator('input[type="text"]:not([name*="login"]):not([readonly])'),
-        page.locator("textarea"),
-    ):
-        if cand.count() > 0:
-            return cand.last
+
+    # 1) 버튼과 같은 <tr> 안에서 우선 찾기 (가장 정확)
+    row = btn.locator("xpath=ancestor::tr[1]")
+    if row.count() > 0:
+        for sel in ("textarea", 'input[type="text"]:not([name*="login"]):not([readonly])'):
+            cand = row.locator(sel)
+            if cand.count() > 0:
+                found = cand.first
+                log(f"  URL입력칸(같은 행에서 발견): {_describe(found)}")
+                return found
+
+    # 2) 부모를 한 단계씩 올라가며(최대 4단계) 후보가 정확히 하나일 때만 채택
+    ancestor = btn
+    for _ in range(4):
+        ancestor = ancestor.locator("xpath=..")
+        for sel in ("textarea", 'input[type="text"]:not([name*="login"]):not([readonly])'):
+            cand = ancestor.locator(sel)
+            if cand.count() == 1:
+                found = cand.first
+                log(f"  URL입력칸(상위 요소에서 발견): {_describe(found)}")
+                return found
+
+    # 3) 최후 수단: 페이지 전체에서 rows 속성이 가장 큰 textarea
+    #    (URL 여러 줄 입력용 큰 textarea일 가능성이 높음)
+    all_ta = page.locator("textarea")
+    n = all_ta.count()
+    if n == 1:
+        found = all_ta.first
+        log(f"  URL입력칸(페이지에 textarea 1개뿐): {_describe(found)}")
+        return found
+    if n > 1:
+        best_idx, best_rows = 0, -1
+        for i in range(n):
+            rows_attr = all_ta.nth(i).get_attribute("rows")
+            try:
+                rows_val = int(rows_attr) if rows_attr else 1
+            except ValueError:
+                rows_val = 1
+            if rows_val > best_rows:
+                best_rows, best_idx = rows_val, i
+        found = all_ta.nth(best_idx)
+        log(f"  URL입력칸(가장 큰 textarea 선택, {n}개 중): {_describe(found)}")
+        return found
+
     raise RuntimeError("URL 입력칸을 찾지 못했습니다")
 
 
@@ -393,8 +456,15 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
     reset_to_bulk_menu(page)
     page.wait_for_timeout(500)
 
-    log("1. 필드값 입력")
-    type_into(page, url_input(page), url)
+    log(f"1. 필드값 입력: {url}")
+    target = url_input(page)
+    type_into(page, target, url)
+    actual = ""
+    try:
+        actual = target.input_value()
+    except Exception:
+        pass
+    log(f"  입력칸 최종 값: {actual!r}")
     log("1. URL상품검색하기 클릭")
     click_it(url_search_button(page))
 
