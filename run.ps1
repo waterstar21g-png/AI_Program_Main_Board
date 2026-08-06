@@ -7,11 +7,11 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.11"
+$ExpectedVersion = "2.2.12"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
-# Prefer feature branch until v2.2.10 lands on main
+# Prefer feature branch until v2.2.12 lands on main
 $SyncBranch = "cursor/fix-runbat-encoding-dcbc"
 
 function Get-SyncRef {
@@ -219,5 +219,5 @@ Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
 
 Start-Process "http://localhost:3000"
-# 버전 바뀐 직후이거나 캐시 깨짐 시: DEV_FRESH=1 npm run dev
+$env:DEV_FRESH = "1"
 npm run dev
