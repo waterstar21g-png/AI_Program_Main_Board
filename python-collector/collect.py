@@ -313,10 +313,39 @@ def modal_field(page: Page, label_pattern: re.Pattern):
 
 # ── 0 ~ 4 ────────────────────────────────────────────────────
 
+def safe_goto(page: Page, url: str, retries: int = 3) -> None:
+    """
+    로그인 직후 등 사이트 자체가 리다이렉트를 진행 중일 때
+    page.goto()와 겹치면 'interrupted by another navigation' 오류가 난다.
+    사이트 쪽 리다이렉트가 끝날 때까지 기다렸다가 다시 시도한다.
+    """
+    last_err: Exception | None = None
+    for _ in range(retries):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=120_000)
+            return
+        except Exception as e:  # noqa: BLE001
+            msg = str(e)
+            if "interrupted by another navigation" in msg or "NS_BINDING_ABORTED" in msg:
+                last_err = e
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=15_000)
+                except Exception:  # noqa: BLE001
+                    pass
+                page.wait_for_timeout(800)
+                continue
+            raise
+    if last_err:
+        raise last_err
+
+
 def wait_bulk_ready(page: Page) -> None:
-    page.wait_for_load_state("domcontentloaded")
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15_000)
+    except Exception:  # noqa: BLE001
+        pass
     if BULK_PATH not in page.url:
-        page.goto(BULK_URL, wait_until="domcontentloaded", timeout=120_000)
+        safe_goto(page, BULK_URL)
     url_search_button(page).first.wait_for(state="visible", timeout=60_000)
 
 
@@ -351,7 +380,7 @@ def reset_to_bulk_menu(page: Page) -> None:
     )
     page.wait_for_timeout(1000)
     if BULK_PATH not in page.url:
-        page.goto(BULK_URL, wait_until="domcontentloaded", timeout=120_000)
+        safe_goto(page, BULK_URL)
     wait_bulk_ready(page)
 
 
@@ -414,12 +443,19 @@ def ensure_ready_page(page: Page) -> None:
     """이미 망고 화면이면 그대로, 아니면 메인화면 진입 → 필요시 로그인 대기 → 0.초기화"""
     if ADMIN_HOST not in page.url or page.url in ("about:blank", ""):
         log("메인화면으로 이동: " + MAIN_URL)
-        page.goto(MAIN_URL, wait_until="domcontentloaded")
+        safe_goto(page, MAIN_URL)
 
     if "admin_login" in page.url:
         input("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
-        if "admin_login" in page.url:
-            page.goto(MAIN_URL, wait_until="domcontentloaded")
+        # 로그인 직후 사이트 자체가 리다이렉트 중일 수 있으므로(m_login_ok.php 등)
+        # 안정될 때까지 잠깐 기다린 뒤에 필요하면 이동한다.
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:  # noqa: BLE001
+            pass
+        page.wait_for_timeout(1000)
+        if "admin_login" in page.url or ADMIN_HOST not in page.url:
+            safe_goto(page, MAIN_URL)
 
     log("0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭")
     if BULK_PATH in page.url:
