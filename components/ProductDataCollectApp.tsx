@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { APP_VERSION } from '@/lib/app-version';
-import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_LOGIN_URL } from '@/lib/product-data-collect/steps';
+import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_MAIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepId, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
 const SITE_NAME = '더망고';
@@ -111,11 +111,11 @@ export function ProductDataCollectApp() {
             <input className="input" value={SITE_NAME} readOnly />
           </label>
           <label className="field">
-            <span className="field__label">로그인 URL (① 열기)</span>
-            <input className="input" value={TMG_LOGIN_URL} readOnly />
+            <span className="field__label">메인화면 URL (로그인 세션 있으면 자동 진입)</span>
+            <input className="input" value={TMG_MAIN_URL} readOnly />
           </label>
           <label className="field">
-            <span className="field__label">대량수집 URL (② 시작 화면)</span>
+            <span className="field__label">대량수집 URL (0.초기화 목적지)</span>
             <input className="input" value={TMG_BULK_URL} readOnly />
           </label>
         </div>

@@ -1,7 +1,12 @@
 import fs from 'fs';
 import path from 'path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
-import { TMG_BULK_URL, TMG_LOGIN_URL, TMG_ADMIN_HOST, TMG_BULK_PATH } from '@/lib/product-data-collect/steps';
+import {
+  TMG_BULK_URL,
+  TMG_MAIN_URL,
+  TMG_ADMIN_HOST,
+  TMG_BULK_PATH,
+} from '@/lib/product-data-collect/steps';
 
 export const TMG_PROFILE_DIR = path.join(process.cwd(), '.local', 'tmg-chromium-profile');
 export const CDP_URL = 'http://127.0.0.1:9222';
@@ -44,6 +49,56 @@ function isBulkPage(url: string) {
   return url.includes(TMG_BULK_PATH);
 }
 
+/* ── 페이지 전환 중 오류 방어 ──────────────────────────────
+ * 로그인 직후 사이트 자체가 리다이렉트 중일 때 page.goto()나
+ * DOM 조회를 하면 "interrupted by another navigation" /
+ * "Execution context was destroyed" / "Target closed" 오류가 난다.
+ * 페이지가 안정될 때까지 기다렸다가 재시도한다.
+ */
+const NAV_ERROR_MARKERS = [
+  'interrupted by another navigation',
+  'Execution context was destroyed',
+  'context was destroyed',
+  'Target closed',
+  'Target page, context or browser has been closed',
+];
+
+function isNavError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return NAV_ERROR_MARKERS.some(m => msg.includes(m));
+}
+
+export async function withNavRetry<T>(page: Page, fn: () => Promise<T>, retries = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      if (!isNavError(e)) throw e;
+      lastErr = e;
+      await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => undefined);
+      await sleep(800);
+    }
+  }
+  throw lastErr;
+}
+
+export async function safeGoto(page: Page, url: string, retries = 3): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+      return;
+    } catch (e) {
+      if (!isNavError(e)) throw e;
+      lastErr = e;
+      await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined);
+      await sleep(800);
+    }
+  }
+  throw lastErr;
+}
+
 export async function tryConnectCdp(): Promise<BrowserContext | null> {
   try {
     const browser = await chromium.connectOverCDP(CDP_URL, { timeout: 5000 });
@@ -59,7 +114,7 @@ async function gotoUrl(page: Page, url: string) {
   const current = page.url();
   if (current.includes(TMG_BULK_PATH) && url.includes(TMG_BULK_PATH)) return;
   if (current === url) return;
-  await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 120_000 });
+  await safeGoto(page, url);
 }
 
 async function clickLoginIfNeeded(page: Page) {
@@ -75,10 +130,10 @@ async function clickLoginIfNeeded(page: Page) {
   await page.waitForLoadState('domcontentloaded').catch(() => undefined);
 }
 
-async function waitBulkReady(page: Page) {
-  await page.waitForLoadState('domcontentloaded').catch(() => undefined);
+async function waitBulkReadyOnce(page: Page) {
+  await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => undefined);
   if (!isBulkPage(page.url())) {
-    await gotoUrl(page, TMG_BULK_URL);
+    await safeGoto(page, TMG_BULK_URL);
   }
   await page
     .locator('input[type="button"][value*="URL"], input[type="submit"][value*="URL"]')
@@ -87,8 +142,11 @@ async function waitBulkReady(page: Page) {
     .waitFor({ state: 'visible', timeout: 60_000 });
 }
 
-/** 상품데이터수집 → 대량데이터수집 (실패 시 URL 이동) */
-export async function resetBulkCollectViaMenu(page: Page): Promise<void> {
+async function waitBulkReady(page: Page) {
+  await withNavRetry(page, () => waitBulkReadyOnce(page));
+}
+
+async function resetBulkCollectViaMenuOnce(page: Page): Promise<void> {
   // href 직접 클릭이 가장 확실
   const href = page.locator('a[href*="getGoodsNew"]').first();
   if (await href.count().then(c => c > 0).catch(() => false)) {
@@ -128,9 +186,14 @@ export async function resetBulkCollectViaMenu(page: Page): Promise<void> {
 
   await sleep(1000);
   if (!isBulkPage(page.url())) {
-    await gotoUrl(page, TMG_BULK_URL);
+    await safeGoto(page, TMG_BULK_URL);
   }
   await waitBulkReady(page);
+}
+
+/** 상품데이터수집 → 대량데이터수집 (실패 시 URL 이동) */
+export async function resetBulkCollectViaMenu(page: Page): Promise<void> {
+  await withNavRetry(page, () => resetBulkCollectViaMenuOnce(page));
 }
 
 export async function ensureBulkCollectPage(page: Page): Promise<Page> {
@@ -140,7 +203,7 @@ export async function ensureBulkCollectPage(page: Page): Promise<Page> {
   }
 
   if (isLoginPage(page.url()) || !page.url().includes(TMG_ADMIN_HOST)) {
-    await gotoUrl(page, TMG_LOGIN_URL);
+    await gotoUrl(page, TMG_MAIN_URL);
     await clickLoginIfNeeded(page);
   }
   if (isLoginPage(page.url())) {
@@ -202,8 +265,27 @@ export async function findMangoWorkPage(context: BrowserContext): Promise<Page |
 }
 
 /**
+ * 탭이 닫혔으면(로그인 중계 페이지가 자기 자신을 닫는 경우 등)
+ * 같은 컨텍스트에서 살아있는 페이지를 다시 찾아온다.
+ */
+export function refreshIfClosed(context: BrowserContext, page: Page): Page {
+  if (!page.isClosed()) return page;
+  const openPages = context.pages().filter(p => !p.isClosed());
+  for (const p of openPages) {
+    try {
+      if (p.url().includes(TMG_ADMIN_HOST)) return p;
+    } catch {
+      continue;
+    }
+  }
+  return openPages[0] ?? page;
+}
+
+/**
  * 수집용 브라우저 준비 — 반드시 대량수집 화면까지 연 뒤 context 반환
- * (이전 버그: open 후 CDP 재연결하다 페이지를 잃음)
+ * 세션이 살아있으면 로그인 화면을 거치지 않고 바로 메인화면(admin.php)에서
+ * 시작한다. 만료된 경우에만 로그인 화면으로 리다이렉트되어 수동 로그인이
+ * 필요할 수 있다(그 경우 ensureBulkCollectPage가 로그인 완료를 기다린다).
  */
 export async function ensureCollectBrowserReady(): Promise<{ context: BrowserContext; page: Page }> {
   // 1) 이미 열린 CDP/저장 컨텍스트에 대량수집 있으면 그대로
@@ -218,18 +300,19 @@ export async function ensureCollectBrowserReady(): Promise<{ context: BrowserCon
     // 탭은 있는데 대량수집 아님 → 그 탭에서 진입
     page = tryCtx.pages().find(p => !p.isClosed()) ?? (await tryCtx.newPage());
     await ensureBulkCollectPage(page);
+    page = refreshIfClosed(tryCtx, page);
     return { context: tryCtx, page };
   }
 
-  // 2) 새로 실행
+  // 2) 새로 실행 — 로그인 화면이 아닌 메인화면으로 바로 이동
   const ctx = await launchBrowserOnce();
   const page = ctx.pages()[0] ?? (await ctx.newPage());
-  await gotoUrl(page, TMG_LOGIN_URL);
+  await gotoUrl(page, TMG_MAIN_URL);
   await ensureBulkCollectPage(page);
-  return { context: ctx, page };
+  return { context: ctx, page: refreshIfClosed(ctx, page) };
 }
 
-export async function openBrowserToLoginUrl(loginUrl = TMG_LOGIN_URL): Promise<Page> {
+export async function openBrowserToLoginUrl(loginUrl = TMG_MAIN_URL): Promise<Page> {
   const { page } = await ensureCollectBrowserReady();
   if (!isBulkPage(page.url()) && loginUrl) {
     await gotoUrl(page, loginUrl);

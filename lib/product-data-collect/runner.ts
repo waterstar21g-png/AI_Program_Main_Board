@@ -10,7 +10,9 @@
 import type { Locator, Page } from 'playwright';
 import {
   ensureCollectBrowserReady,
+  refreshIfClosed,
   resetBulkCollectViaMenu,
+  withNavRetry,
   TMG_ADMIN_HOST,
 } from '@/lib/product-data-collect/browser-session';
 import type {
@@ -54,16 +56,43 @@ function popups(main: Page): Page[] {
     });
 }
 
-/** 팝업이 스스로 닫힐 때까지 대기 — 절대 건드리지 않음 */
-async function waitPopupsGone(main: Page, ctx: Ctx, step: WorkflowStepId, rowIndex: number) {
+/**
+ * 팝업이 스스로 닫힐 때까지 대기 — 절대 건드리지 않음
+ *
+ * graceMs: 클릭 직후 팝업이 뜨기까지 잠깐 기다리는 시간.
+ * warnIfNeverOpened=true 이면 그 시간 동안 팝업이 단 한 번도 뜨지
+ * 않았을 때 경고 로그를 남긴다(예: URL 검색 클릭이 안 먹혔을 때).
+ *
+ * 반환값: 팝업이 한 번이라도 열렸으면 true.
+ */
+async function waitPopupsGone(
+  main: Page,
+  ctx: Ctx,
+  step: WorkflowStepId,
+  rowIndex: number,
+  graceMs = 2000,
+  warnIfNeverOpened = false,
+): Promise<boolean> {
   const end = Date.now() + POPUP_WAIT_MS;
-  let beat = 0;
+  const graceEnd = Date.now() + graceMs;
+  let everSeen = false;
 
-  // 팝업이 뜨기까지 잠깐 여유
-  for (let i = 0; i < 20 && popups(main).length === 0; i++) {
-    await sleep(500);
+  while (Date.now() < graceEnd) {
+    if (popups(main).length > 0) {
+      everSeen = true;
+      break;
+    }
+    await sleep(200);
   }
 
+  if (!everSeen) {
+    if (warnIfNeverOpened) {
+      log(ctx, step, '  [경고] 팝업이 뜨지 않음', rowIndex, '클릭이 제대로 안 됐거나 사이트가 응답하지 않았을 수 있음');
+    }
+    return false;
+  }
+
+  let beat = 0;
   while (popups(main).length > 0) {
     if (Date.now() > end) throw new Error(`#${rowIndex} 팝업창이 닫히지 않음`);
     if (Date.now() - beat > 10_000) {
@@ -75,6 +104,7 @@ async function waitPopupsGone(main: Page, ctx: Ctx, step: WorkflowStepId, rowInd
       sleep(1000),
     ]);
   }
+  return true;
 }
 
 /* ── 입력 · 클릭 ────────────────────────────────────────── */
@@ -89,7 +119,7 @@ async function typeInto(page: Page, loc: Locator, value: string) {
   await page.keyboard.press('Backspace');
   await page.keyboard.insertText(value);
 
-  const got = await el.inputValue().catch(() => '');
+  let got = await el.inputValue().catch(() => '');
   if (!got.trim()) {
     await el.evaluate((n, v) => {
       if (n instanceof HTMLInputElement || n instanceof HTMLTextAreaElement) {
@@ -97,20 +127,44 @@ async function typeInto(page: Page, loc: Locator, value: string) {
         n.value = v;
         n.dispatchEvent(new Event('input', { bubbles: true }));
         n.dispatchEvent(new Event('change', { bubbles: true }));
+        n.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        n.dispatchEvent(new Event('blur', { bubbles: true }));
       }
     }, value);
+    got = await el.inputValue().catch(() => '');
   }
+  return got;
 }
 
-async function clickIt(loc: Locator) {
+/**
+ * 신뢰할 수 있는(trusted) 클릭을 우선 시도한다. el.evaluate(...node.click()...)
+ * 같은 JS 강제클릭은 브라우저가 "진짜 사용자 클릭"으로 인정하지 않아,
+ * 그 안에서 호출되는 window.open()(팝업)이 조용히 차단될 수 있다.
+ * 반환값: 신뢰되는 클릭으로 처리됐으면 true.
+ */
+async function clickIt(loc: Locator): Promise<boolean> {
   const el = loc.first();
   await el.waitFor({ state: 'visible', timeout: 60_000 });
   await el.scrollIntoViewIfNeeded().catch(() => undefined);
   try {
     await el.click({ timeout: 20_000 });
+    return true;
   } catch {
-    await el.evaluate(n => (n as HTMLElement).click());
+    /* fallthrough */
   }
+
+  try {
+    const box = await el.boundingBox();
+    if (box) {
+      await el.page().mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      return true;
+    }
+  } catch {
+    /* fallthrough */
+  }
+
+  await el.evaluate(n => (n as HTMLElement).click());
+  return false;
 }
 
 /* ── 화면 요소 ──────────────────────────────────────────── */
@@ -132,19 +186,74 @@ function saveAllButton(page: Page) {
     .or(page.getByText(/검색된\s*상품\s*모두\s*저장/));
 }
 
-/** URL상품검색하기 버튼과 같은 영역의 입력칸 */
-async function urlInput(page: Page): Promise<Locator> {
-  const btn = urlSearchButton(page).first();
-  const area = page.locator('tr, table, div').filter({ has: btn }).last();
-
-  for (const cand of [
-    area.locator('textarea'),
-    area.locator('input[type="text"]:not([name*="login"]):not([readonly])'),
-    page.locator('textarea'),
-  ]) {
-    if ((await cand.count().catch(() => 0)) > 0) return cand.last();
+async function describeLocator(loc: Locator): Promise<string> {
+  try {
+    return await loc.evaluate(
+      n =>
+        `<${n.tagName.toLowerCase()} name=${(n as HTMLInputElement).name || ''} id=${n.id || ''} rows=${
+          (n as HTMLTextAreaElement).rows || ''
+        } value.len=${((n as HTMLInputElement).value || '').length}>`,
+    );
+  } catch {
+    return '<알 수 없음>';
   }
+}
+
+/**
+ * URL상품검색하기 버튼과 실제 입력칸이 서로 다른 <tr>/<table>에 있는
+ * 화면이 있어(선택자가 넓으면 엉뚱한 textarea를 골라 "검색결과 없음"이
+ * 나는 원인이 됨) 좁은 범위 -> 넓은 범위 순으로, 후보가 정확히 하나일
+ * 때만 채택한다.
+ */
+async function urlInputOnce(page: Page): Promise<Locator> {
+  const btn = urlSearchButton(page).first();
+
+  // 1) 버튼과 같은 <tr> 안에서 우선 찾기 (가장 정확)
+  const row = btn.locator('xpath=ancestor::tr[1]');
+  if ((await row.count().catch(() => 0)) > 0) {
+    for (const sel of ['textarea', 'input[type="text"]:not([name*="login"]):not([readonly])']) {
+      const cand = row.locator(sel);
+      if ((await cand.count().catch(() => 0)) > 0) {
+        return cand.first();
+      }
+    }
+  }
+
+  // 2) 부모를 한 단계씩 올라가며(최대 4단계) 후보가 정확히 하나일 때만 채택
+  let ancestor = btn;
+  for (let i = 0; i < 4; i++) {
+    ancestor = ancestor.locator('xpath=..');
+    for (const sel of ['textarea', 'input[type="text"]:not([name*="login"]):not([readonly])']) {
+      const cand = ancestor.locator(sel);
+      if ((await cand.count().catch(() => 0)) === 1) {
+        return cand.first();
+      }
+    }
+  }
+
+  // 3) 최후 수단: 페이지 전체에서 rows 속성이 가장 큰 textarea
+  const allTa = page.locator('textarea');
+  const n = await allTa.count().catch(() => 0);
+  if (n === 1) return allTa.first();
+  if (n > 1) {
+    let bestIdx = 0;
+    let bestRows = -1;
+    for (let i = 0; i < n; i++) {
+      const rowsAttr = await allTa.nth(i).getAttribute('rows').catch(() => null);
+      const rowsVal = rowsAttr ? parseInt(rowsAttr, 10) || 1 : 1;
+      if (rowsVal > bestRows) {
+        bestRows = rowsVal;
+        bestIdx = i;
+      }
+    }
+    return allTa.nth(bestIdx);
+  }
+
   throw new Error('URL 입력칸을 찾지 못했습니다');
+}
+
+async function urlInput(page: Page): Promise<Locator> {
+  return withNavRetry(page, () => urlInputOnce(page));
 }
 
 function saveModal(page: Page) {
@@ -193,13 +302,35 @@ async function step1Search(page: Page, ctx: Ctx, row: TmgCollectRow) {
   const url = normalizeUrl(row.finalCategoryUrl);
 
   log(ctx, 'paste-url', '1. 필드값 입력', row.rowIndex, url.slice(0, 120));
-  await typeInto(page, await urlInput(page), url);
+  const target = await urlInput(page);
+  const actual = await typeInto(page, target, url);
+  log(ctx, 'paste-url', '  입력칸 최종 값', row.rowIndex, actual.slice(0, 120));
 
   log(ctx, 'paste-url', '1. URL상품검색하기 클릭', row.rowIndex);
-  await clickIt(urlSearchButton(page));
+  const trusted = await clickIt(urlSearchButton(page));
 
   log(ctx, 'wait-search-popup', '1. 팝업창 없어질 때까지 대기', row.rowIndex);
-  await waitPopupsGone(page, ctx, 'wait-search-popup', row.rowIndex);
+  let opened = await waitPopupsGone(page, ctx, 'wait-search-popup', row.rowIndex, 15_000, true);
+
+  if (!opened) {
+    // 클릭이 신뢰되는 클릭이 아니었거나(JS 강제클릭), 사이트가 늦게
+    // 반응하는 경우 — 키보드로 실제 클릭을 한 번 더 시도한다.
+    log(ctx, 'wait-search-popup', '  키보드로 재시도 (Enter)', row.rowIndex);
+    try {
+      const btn = urlSearchButton(page).first();
+      await btn.focus();
+      await page.keyboard.press('Enter');
+    } catch {
+      /* ignore */
+    }
+    opened = await waitPopupsGone(page, ctx, 'wait-search-popup', row.rowIndex, 10_000, true);
+  }
+
+  if (!opened) {
+    throw new Error(
+      `#${row.rowIndex} URL상품검색하기 클릭 후 팝업이 뜨지 않음 (trusted_click=${trusted}) — 화면을 직접 확인해 주세요`,
+    );
+  }
   log(ctx, 'wait-search-popup', '1. 팝업창 닫힘', row.rowIndex);
 }
 
@@ -235,7 +366,7 @@ async function step3WaitSaveClosed(page: Page, ctx: Ctx, row: TmgCollectRow) {
 
   while (Date.now() < end) {
     if (!(await saveModalVisible(page))) {
-      await waitPopupsGone(page, ctx, 'wait-save-popup', row.rowIndex);
+      await waitPopupsGone(page, ctx, 'wait-save-popup', row.rowIndex, 500);
       log(ctx, 'wait-save-popup', '3. 팝업창 닫힘', row.rowIndex);
       return;
     }
@@ -271,10 +402,12 @@ export async function runTmgCollectWorkflow(
   let processedCount = 0;
   try {
     log(ctx, 'open-page', '브라우저 · 대량수집 화면 준비');
-    const { page } = await ensureCollectBrowserReady();
+    const { context, page: initialPage } = await ensureCollectBrowserReady();
+    let page = initialPage;
     page.setDefaultTimeout(120_000);
 
     for (let i = req.startRowIndex ?? 0; i < rows.length; i++) {
+      page = refreshIfClosed(context, page);
       await processRow(page, rows[i], saveCount, ctx);
       processedCount++;
     }
