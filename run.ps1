@@ -1,47 +1,36 @@
 # AI_Program_Main_Board - run.ps1
 # One command: run.bat
+# Sync prefers raw.githubusercontent.com (avoids GitHub API rate limit)
 $ErrorActionPreference = "Stop"
 chcp 65001 > $null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.9"
+$ExpectedVersion = "2.2.10"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
-function Get-MainCommitSha {
-  for ($i = 1; $i -le 4; $i++) {
-    try {
-      $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/main?t=$cb$i" -Headers @{
-        "User-Agent"    = "AI_Program_Main_Board-run.ps1"
-        "Cache-Control" = "no-cache"
-        "Pragma"        = "no-cache"
-      }
-      if ($meta.sha -and $meta.sha -match '^[0-9a-f]{7,40}$') { return $meta.sha }
-    } catch {
-      Write-Host "[WARN] commits API retry $i : $($_.Exception.Message)"
-      Start-Sleep -Seconds ([Math]::Pow(2, $i))
-    }
-  }
-  throw "GitHub commits API failed. Cannot sync. Check network / rate limit."
+# Prefer feature branch until v2.2.10 lands on main
+$SyncBranch = "cursor/fix-runbat-encoding-dcbc"
+
+function Get-SyncRef {
+  # Never require GitHub API — raw CDN works with branch name
+  if ($env:BOARD_SYNC_REF) { return $env:BOARD_SYNC_REF }
+  return $SyncBranch
 }
 
 function Write-Utf8NoBomFile([string]$Path, [byte[]]$Bytes) {
-  # Convert UTF-16 (BOM) -> UTF-8 no BOM (fixes broken .bat on cmd.exe)
   if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFF -and $Bytes[1] -eq 0xFE) {
     $text = [System.Text.Encoding]::Unicode.GetString($Bytes, 2, $Bytes.Length - 2)
-    $enc = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($Path, $text, $enc)
+    [System.IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding $false))
     return
   }
   if ($Bytes.Length -ge 2 -and $Bytes[0] -eq 0xFE -and $Bytes[1] -eq 0xFF) {
     $text = [System.Text.Encoding]::BigEndianUnicode.GetString($Bytes, 2, $Bytes.Length - 2)
-    $enc = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($Path, $text, $enc)
+    [System.IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding $false))
     return
   }
-  # Strip UTF-8 BOM
   if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) {
     $rest = New-Object byte[] ($Bytes.Length - 3)
     [Array]::Copy($Bytes, 3, $rest, 0, $rest.Length)
@@ -49,10 +38,8 @@ function Write-Utf8NoBomFile([string]$Path, [byte[]]$Bytes) {
   }
   $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
   if ($ext -eq ".bat" -or $ext -eq ".cmd") {
-    # cmd.exe needs CRLF; LF-only breaks caret continuations and can garble lines
     $text = [System.Text.Encoding]::UTF8.GetString($Bytes) -replace "`r`n", "`n" -replace "`n", "`r`n"
-    $enc = New-Object System.Text.UTF8Encoding $false
-    [System.IO.File]::WriteAllText($Path, $text, $enc)
+    [System.IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding $false))
     return
   }
   [System.IO.File]::WriteAllBytes($Path, $Bytes)
@@ -62,40 +49,54 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
   $dir = Split-Path -Parent $LocalPath
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   $tmp = "$LocalPath.download"
-  $headers = @{
-    "User-Agent"    = "AI_Program_Main_Board-run.ps1"
-    "Cache-Control" = "no-cache"
-    "Pragma"        = "no-cache"
-    "Accept"        = "application/vnd.github.raw"
+  $rel = $RepoPath -replace '\\', '/'
+  $urls = @(
+    "https://raw.githubusercontent.com/$Repo/$Sha/$rel`?t=$cb",
+    "https://cdn.jsdelivr.net/gh/${Repo}@$Sha/$rel"
+  )
+  # API last — rate limit hits hard on unauthenticated Contents API
+  if ($Sha -match '^[0-9a-f]{40}$') {
+    $urls += "https://api.github.com/repos/$Repo/contents/${rel}?ref=$Sha&t=$cb"
   }
-  $apiUrl = "https://api.github.com/repos/$Repo/contents/$($RepoPath -replace '\\','/')?ref=$Sha&t=$cb"
-  try {
-    Invoke-WebRequest -Uri $apiUrl -OutFile $tmp -UseBasicParsing -Headers $headers
-  } catch {
-    $rawUrl = "https://raw.githubusercontent.com/$Repo/$Sha/$($RepoPath -replace '\\','/')?t=$cb"
-    Invoke-WebRequest -Uri $rawUrl -OutFile $tmp -UseBasicParsing -Headers @{
-      "User-Agent"    = "AI_Program_Main_Board-run.ps1"
-      "Cache-Control" = "no-cache"
-      "Pragma"        = "no-cache"
+
+  $lastErr = $null
+  foreach ($url in $urls) {
+    try {
+      $headers = @{
+        "User-Agent"    = "AI_Program_Main_Board-run.ps1"
+        "Cache-Control" = "no-cache"
+        "Pragma"        = "no-cache"
+      }
+      if ($url -match 'api\.github\.com') {
+        $headers["Accept"] = "application/vnd.github.raw"
+      }
+      Invoke-WebRequest -Uri $url -OutFile $tmp -UseBasicParsing -Headers $headers
+      $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $tmp))
+      Remove-Item -Force $tmp -ErrorAction SilentlyContinue
+      if ($bytes.Length -lt 10) { throw "empty download" }
+      $head = [System.Text.Encoding]::UTF8.GetString($bytes, 0, [Math]::Min(60, $bytes.Length))
+      if ($head -match '^\s*\{\s*"message"') { throw "API error JSON: $head" }
+      Write-Utf8NoBomFile $LocalPath $bytes
+      return
+    } catch {
+      $lastErr = $_
     }
   }
-  $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $tmp))
-  Remove-Item -Force $tmp -ErrorAction SilentlyContinue
-  Write-Utf8NoBomFile $LocalPath $bytes
+  throw $lastErr
 }
 
 function Show-RecoverHint {
-  Write-Host "Paste this in PowerShell (fixes broken run.bat encoding):" -ForegroundColor Yellow
+  Write-Host "Paste this in PowerShell (raw CDN, no GitHub API):" -ForegroundColor Yellow
   Write-Host @"
-`$h=@{Accept='application/vnd.github.raw';'User-Agent'='x'}; `$e=New-Object Text.UTF8Encoding `$false; `$t=irm 'https://api.github.com/repos/$Repo/contents/boot.ps1?ref=main' -Headers `$h; [IO.File]::WriteAllText("$PWD\boot.ps1",`$t,`$e); `$t=irm 'https://api.github.com/repos/$Repo/contents/run.bat?ref=main' -Headers `$h; [IO.File]::WriteAllText("$PWD\run.bat",`$t,`$e); `$t=irm 'https://api.github.com/repos/$Repo/contents/run.ps1?ref=main' -Headers `$h; [IO.File]::WriteAllText("$PWD\run.ps1",`$t,`$e); .\run.bat
+`$cb=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); `$b='https://raw.githubusercontent.com/$Repo/$SyncBranch'; foreach(`$f in @('boot.ps1','run.bat','run.ps1')){ Invoke-WebRequest -Uri "`$b/`$f`?t=`$cb" -OutFile "`$PWD\`$f" -UseBasicParsing -Headers @{'User-Agent'='x';'Cache-Control'='no-cache'} }; cmd /c run.bat
 "@ -ForegroundColor Gray
 }
 
-$Sha = Get-MainCommitSha
+$Sha = Get-SyncRef
 
 Write-Host "========================================"
 Write-Host "  AI_Program_Main_Board  v$ExpectedVersion"
-Write-Host "  sync sha: $Sha"
+Write-Host "  sync ref: $Sha"
 Write-Host "========================================"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -104,7 +105,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
   exit 1
 }
 
-Write-Host "[SYNC] GitHub API download..."
+Write-Host "[SYNC] raw.githubusercontent.com download..."
 
 $files = @(
   @("lib\product-data-collect\browser-session.ts", "lib/product-data-collect/browser-session.ts"),
@@ -154,16 +155,16 @@ $rawVer = Get-Content "lib\app-version.ts" -Raw
 if ($rawVer -match "APP_VERSION\s*=\s*'([^']+)'") {
   $TargetVersion = $Matches[1]
 }
-Write-Host "[CHECK] APP_VERSION = $TargetVersion  (sha=$Sha)"
+Write-Host "[CHECK] APP_VERSION = $TargetVersion  (ref=$Sha)"
 
 if ($TargetVersion -ne $ExpectedVersion) {
   Write-Host "[FATAL] version mismatch: file=$TargetVersion / expected=$ExpectedVersion"
+  Write-Host "Branch main may not have v$ExpectedVersion yet. Retry after merge, or use:"
   Show-RecoverHint
   Read-Host "Press Enter"
   exit 1
 }
 
-# 버전이 바뀐 때만 캐시 삭제 — 매번 지우면 Compiling이 매번 처음부터라 느림
 $prevVer = ""
 if (Test-Path "VERSION.txt") {
   $prevRaw = Get-Content "VERSION.txt" -Raw
