@@ -1,15 +1,12 @@
 import type { Metadata, Viewport } from 'next';
-import { Noto_Sans_KR } from 'next/font/google';
 import { MobileEnv } from '@/components/MobileEnv';
 import { APP_NAME } from '@/lib/app-name';
 import './globals.css';
 
-const noto = Noto_Sans_KR({
-  weight: ['400', '500', '700'],
-  subsets: ['latin'],
-  display: 'swap',
-  variable: '--font-sans',
-});
+/**
+ * next/font/google 사용 금지
+ * Windows에서 Compiling / 중 Google Fonts 다운로드로 프로세스가 죽는 경우가 많음
+ */
 
 export const metadata: Metadata = {
   title: {
@@ -36,7 +33,6 @@ export const metadata: Metadata = {
   },
 };
 
-/** 모바일 브라우저·PWA 전용 뷰포트 (노치·홈 인디케이터 대응) */
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
@@ -52,7 +48,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="ko" className={noto.variable}>
+    <html lang="ko">
       <body>
         <MobileEnv>{children}</MobileEnv>
       </body>

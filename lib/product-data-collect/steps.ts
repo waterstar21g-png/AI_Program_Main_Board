@@ -17,11 +17,11 @@ export const TMG_BULK_PATH = 'getGoodsNew.php';
  * 4) 검색필터명·저장상품수 → 저장하기 → 모달 종료 대기
  */
 export const WORKFLOW_STEPS: { id: WorkflowStepId; label: string }[] = [
-  { id: 'open-page', label: '[0] 초기화 · 상품데이터수집→대량수집' },
-  { id: 'paste-url', label: '[1] URL 입력 → URL상품검색하기' },
-  { id: 'wait-search-popup', label: '[1] ABC/load product 팝업 대기 (미터치)' },
-  { id: 'save-all', label: '[2] 검색된 상품 모두저장' },
-  { id: 'fill-save-form', label: '[2] 상품저장설정 · 검색필터명 → 저장하기' },
-  { id: 'wait-save-popup', label: '[3] 저장 팝업 닫힘 대기' },
-  { id: 'next-row', label: '[4] → [0] 다음 행' },
+  { id: 'open-page', label: '[0] 초기화: 상품데이터수집 → 대량데이터수집' },
+  { id: 'paste-url', label: '[1] URL상품검색하기 · 필드값 입력' },
+  { id: 'wait-search-popup', label: '[1] 팝업창 없어질 때까지 대기' },
+  { id: 'save-all', label: '[2] 검색된 상품 모두저장 클릭' },
+  { id: 'fill-save-form', label: '[2] 검색필터명 입력 → 저장하기' },
+  { id: 'wait-save-popup', label: '[3] 팝업창 없어질 때까지 대기' },
+  { id: 'next-row', label: '[4] → [0] 초기화' },
 ];

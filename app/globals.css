@@ -9,7 +9,7 @@
   --primary: #0f172a;
   --accent: #ea580c;
   --blue: #2563eb;
-  --font: var(--font-sans), 'Noto Sans KR', system-ui, sans-serif;
+  --font: 'Malgun Gothic', 'Apple SD Gothic Neo', system-ui, sans-serif;
 }
 
 *, *::before, *::after { box-sizing: border-box; }

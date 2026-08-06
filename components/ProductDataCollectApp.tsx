@@ -101,7 +101,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>v{APP_VERSION}</strong> · 망고 대량수집 화면 비슷하면 자동 처리 (Chrome/Edge/Chromium)
+            <strong>v{APP_VERSION}</strong> · [0]초기화 → [1]URL검색·팝업대기 → [2]모두저장·필터명·저장 → [3]팝업대기 → [4]→[0]
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -195,7 +195,7 @@ export function ProductDataCollectApp() {
             disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '수집 중…' : '▶ 한번에 실행 (망고 화면 비슷하면 처리)'}
+            {running ? '수집 중…' : '▶ 한번에 실행 (0→1→2→3→4)'}
           </button>
         </div>
       </section>
