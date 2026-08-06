@@ -1,0 +1,17 @@
+{
+  "name": "sangpum-capture-price",
+  "install": "npm ci",
+  "terminals": [
+    {
+      "name": "dev",
+      "command": "npm run dev",
+      "description": "Next.js 15 dev server on http://localhost:3000 (상품캡처 및 가격조회)"
+    }
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 3000
+    }
+  ]
+}
