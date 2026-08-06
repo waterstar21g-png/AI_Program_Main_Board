@@ -17,10 +17,8 @@ if ($PSScriptRoot -match 'OneDrive') {
   Write-Host ""
 }
 
-# 정식 저장소명. rename 전이면 구 이름(sangpum-capture-price)으로 폴백.
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$RepoFallback = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "3.1.0"
+$ExpectedVersion = "3.1.1"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -31,25 +29,17 @@ function Get-LocalAppVersion {
   return ""
 }
 
-function Get-RepoCandidates {
-  @($Repo, $RepoFallback) | Select-Object -Unique
-}
-
 function Get-MainCommitSha {
   # API는 403(한도) 자주 남 → 실패하면 브랜치 이름으로 raw 다운로드
-  foreach ($r in Get-RepoCandidates) {
-    try {
-      $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$r/commits/main?t=$cb" -Headers @{
-        "User-Agent"    = "AI_Program_Main_Board-run.ps1"
-        "Cache-Control" = "no-cache"
-      }
-      if ($meta.sha -and $meta.sha -match '^[0-9a-f]{7,40}$') {
-        $script:Repo = $r
-        return $meta.sha
-      }
-    } catch { }
+  try {
+    $meta = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/main?t=$cb" -Headers @{
+      "User-Agent"    = "AI_Program_Main_Board-run.ps1"
+      "Cache-Control" = "no-cache"
+    }
+    if ($meta.sha -and $meta.sha -match '^[0-9a-f]{7,40}$') { return $meta.sha }
+  } catch {
+    Write-Host "[INFO] commits API unavailable — use branch main (raw)"
   }
-  Write-Host "[INFO] commits API unavailable — use branch main (raw)"
   return "main"
 }
 
@@ -58,12 +48,11 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   $tmp = "$LocalPath.download"
   $rel = $RepoPath -replace '\\', '/'
-  # raw CDN 우선 (API는 403 한도). 정식명 → 구 이름 폴백.
-  $urls = @()
-  foreach ($r in Get-RepoCandidates) {
-    $urls += "https://raw.githubusercontent.com/$r/$Sha/$rel`?t=$cb"
-    $urls += "https://cdn.jsdelivr.net/gh/${r}@$Sha/$rel"
-  }
+  # raw CDN 우선 (API는 403 한도)
+  $urls = @(
+    "https://raw.githubusercontent.com/$Repo/$Sha/$rel`?t=$cb",
+    "https://cdn.jsdelivr.net/gh/${Repo}@$Sha/$rel"
+  )
   $lastErr = $null
   foreach ($url in $urls) {
     try {

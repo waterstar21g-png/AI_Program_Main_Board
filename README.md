@@ -45,5 +45,3 @@ npm run dev
 Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/run.ps1' -OutFile run.ps1 -UseBasicParsing
 .\run.ps1 -Sync
 ```
-
-> 저장소 rename 직전이면 구 URL(`sangpum-capture-price`)도 스크립트가 자동 폴백합니다.
