@@ -14,7 +14,19 @@ Next.js/npm 없이 파이썬 스크립트 하나로 끝냅니다.
 
 팝업창은 스크립트가 **절대 열거나 닫지 않습니다.** 항상 스스로 닫힐 때까지만 기다립니다.
 
-## 설치 (최초 1회)
+## 실행 (한 번에 — run.bat)
+
+1. Python이 없으면 먼저 설치: https://www.python.org/downloads/
+   (설치 화면에서 **"Add python.exe to PATH"** 체크)
+2. 엑셀 파일을 **`run.bat`에 드래그 앤 드롭**
+   - 또는 `run.bat` 더블클릭 후 엑셀 경로를 직접 입력
+
+`run.bat`이 자동으로 하는 일:
+- 패키지 설치 (`pip install`)
+- Chromium 설치 (최초 1회만, `.browser.ok` 파일로 스킵 여부 판단)
+- `collect.py` 실행
+
+## 수동 설치 · 실행 (선택)
 
 Windows PowerShell에서:
 
@@ -22,11 +34,6 @@ Windows PowerShell에서:
 cd python-collector
 pip install -r requirements.txt
 python -m playwright install chromium
-```
-
-## 실행
-
-```powershell
 python collect.py 엑셀파일.xlsx
 python collect.py 엑셀파일.xlsx 5    # 저장수 5개 (기본 3)
 ```
