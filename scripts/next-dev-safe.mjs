@@ -1,6 +1,6 @@
 /**
- * dev 시작 — 포트 정리 후 next dev (webpack)
- * Next 15.5+ 는 turbopack이 기본일 수 있어 --webpack 을 명시한다.
+ * Windows-safe Next.js dev starter.
+ * NEVER enables Turbopack. Uses local next binary + webpack only.
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -9,11 +9,9 @@ import { killPort, prepareNextRun, projectRoot } from './clean-next.mjs';
 
 const port = Number(process.env.PORT) || 3000;
 const fresh = process.argv.includes('--fresh') || process.env.DEV_FRESH === '1';
-const useTurbo = process.env.TURBO === '1' || process.argv.includes('--turbo');
 
 function removeStrayAppRoutes() {
-  const stray = ['elastic-beanstalk', 'elastic_beanstalk', 'aws-deploy'];
-  for (const name of stray) {
+  for (const name of ['elastic-beanstalk', 'elastic_beanstalk', 'aws-deploy']) {
     const dir = path.join(projectRoot, 'app', name);
     if (fs.existsSync(dir)) {
       console.log(`[dev-safe] remove stray route: app/${name}`);
@@ -22,63 +20,59 @@ function removeStrayAppRoutes() {
   }
 }
 
+function nextBinPath() {
+  const bin = path.join(projectRoot, 'node_modules', 'next', 'dist', 'bin', 'next');
+  if (!fs.existsSync(bin)) {
+    throw new Error('node_modules/next missing — run npm install');
+  }
+  return bin;
+}
+
+function nextVersion() {
+  try {
+    const pkg = JSON.parse(
+      fs.readFileSync(path.join(projectRoot, 'node_modules', 'next', 'package.json'), 'utf8'),
+    );
+    return pkg.version || '?';
+  } catch {
+    return '?';
+  }
+}
+
 async function main() {
   removeStrayAppRoutes();
 
+  // Always clean cache when DEV_FRESH or --fresh (run.ps1 sets DEV_FRESH=1)
   if (fresh) {
-    console.log('[dev-safe] fresh start — port + .next-dev cleanup...');
+    console.log('[dev-safe] fresh — kill port + delete .next-dev');
     await prepareNextRun({ killDevPort: true, port, mode: 'dev', cleanCache: true });
   } else {
-    console.log('[dev-safe] starting (port cleanup only, cache kept)...');
+    console.log('[dev-safe] kill port only, keep cache');
     killPort(port);
-    if (process.platform === 'win32') {
-      await new Promise(r => setTimeout(r, 800));
-    }
+    if (process.platform === 'win32') await new Promise(r => setTimeout(r, 800));
   }
 
-  // Next 15.5+: turbopack default → --webpack 으로 강제
-  const args = ['next', 'dev', '-p', String(port), '-H', '0.0.0.0'];
-  if (useTurbo) {
-    args.splice(2, 0, '--turbo');
-  } else {
-    args.splice(2, 0, '--webpack');
+  const bin = nextBinPath();
+  const ver = nextVersion();
+  const args = [bin, 'dev', '-p', String(port), '-H', '0.0.0.0'];
+
+  // Strip any turbo-related env that could force Turbopack
+  const env = { ...process.env, FORCE_COLOR: '1' };
+  for (const k of ['TURBO', 'TURBOPACK', 'IS_TURBOPACK_TEST', 'NEXT_TURBOPACK', 'DEV_FRESH']) {
+    delete env[k];
   }
 
-  console.log(`[dev-safe] npx ${args.join(' ')}`);
+  console.log(`[dev-safe] Next.js ${ver} — WEBPACK only (Turbopack OFF)`);
+  console.log(`[dev-safe] ${process.execPath} ${args.join(' ')}`);
 
-  const child = spawn('npx', args, {
+  const child = spawn(process.execPath, args, {
     cwd: projectRoot,
     stdio: 'inherit',
-    shell: true,
-    env: {
-      ...process.env,
-      FORCE_COLOR: '1',
-      TURBOPACK: useTurbo ? '1' : '0',
-    },
+    shell: false,
+    env,
   });
 
   child.on('exit', (code, signal) => {
-    // --webpack 미지원(구버전 next)이면 turbo 없이 재시도
-    if (!useTurbo && code && code !== 0) {
-      console.log('[dev-safe] --webpack failed, retry plain next dev...');
-      const fallback = spawn(
-        'npx',
-        ['next', 'dev', '-p', String(port), '-H', '0.0.0.0'],
-        {
-          cwd: projectRoot,
-          stdio: 'inherit',
-          shell: true,
-          env: { ...process.env, FORCE_COLOR: '1', TURBOPACK: '0' },
-        },
-      );
-      fallback.on('exit', (c, s) => {
-        if (s) process.kill(process.pid, s);
-        process.exit(c ?? 0);
-      });
-      process.on('SIGINT', () => fallback.kill('SIGINT'));
-      process.on('SIGTERM', () => fallback.kill('SIGTERM'));
-      return;
-    }
     if (signal) process.kill(process.pid, signal);
     process.exit(code ?? 0);
   });

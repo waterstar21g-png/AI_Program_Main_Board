@@ -5,10 +5,10 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
-  /** dev(build)와 production build 캐시 분리 — 청크 충돌 방지 */
+  /** dev / production 캐시 분리 */
   distDir: process.env.NODE_ENV === 'development' ? '.next-dev' : '.next',
   outputFileTracingRoot: __dirname,
-  /** playwright만 서버 외부화 — xlsx는 optimize/transpile과 충돌하므로 제외 */
+  /** playwright만 서버 외부화 (xlsx는 transpile 충돌 나므로 넣지 않음) */
   serverExternalPackages: ['playwright', 'playwright-core'],
 };
 

@@ -7,7 +7,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.12"
+$ExpectedVersion = "2.2.13"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -184,7 +184,18 @@ Get-Process -Name node -ErrorAction SilentlyContinue |
   }
 Start-Sleep -Seconds 2
 
-if (-not (Test-Path "node_modules")) {
+$needNpm = -not (Test-Path "node_modules")
+if (-not $needNpm -and (Test-Path "node_modules\next\package.json")) {
+  $haveNext = (Get-Content "node_modules\next\package.json" -Raw | ConvertFrom-Json).version
+  $wantNext = (Get-Content "package.json" -Raw | ConvertFrom-Json).dependencies.next
+  $wantNext = ($wantNext -replace '[\^~]', '')
+  if ($haveNext -ne $wantNext) {
+    Write-Host "[INSTALL] next $haveNext -> $wantNext"
+    $needNpm = $true
+  }
+}
+if ($prevVer -ne $TargetVersion) { $needNpm = $true }
+if ($needNpm) {
   Write-Host "[INSTALL] npm install..."
   npm install
 }
@@ -219,5 +230,22 @@ Write-Host "  Press Ctrl+C to stop"
 Write-Host ""
 
 Start-Process "http://localhost:3000"
+
+# Turbopack 절대 사용 금지
+$devSafe = Get-Content "scripts\next-dev-safe.mjs" -Raw
+if ($devSafe -match "['\`"]--turbo['\`"]" -or $devSafe -match 'dev --turbo') {
+  Write-Host "[FATAL] next-dev-safe.mjs still launches Turbopack — sync broken" -ForegroundColor Red
+  Show-RecoverHint
+  Read-Host "Press Enter"
+  exit 1
+}
+if (Test-Path "node_modules\next\package.json") {
+  $nv = (Get-Content "node_modules\next\package.json" -Raw | ConvertFrom-Json).version
+  Write-Host "[CHECK] next = $nv (webpack dev, no turbopack)"
+}
+
 $env:DEV_FRESH = "1"
+Remove-Item Env:TURBO -ErrorAction SilentlyContinue
+Remove-Item Env:TURBOPACK -ErrorAction SilentlyContinue
+Remove-Item Env:IS_TURBOPACK_TEST -ErrorAction SilentlyContinue
 npm run dev
