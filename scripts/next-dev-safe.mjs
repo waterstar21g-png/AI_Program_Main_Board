@@ -19,8 +19,8 @@ async function main() {
     }
   }
 
-  // --turbo: 작은 보드앱 첫 컴파일·HMR 빠르게
-  const child = spawn('npx', ['next', 'dev', '--turbo', '-p', String(port), '-H', '0.0.0.0'], {
+  // Windows: --turbo 멈춤/xlsx 충돌 → webpack dev
+  const child = spawn('npx', ['next', 'dev', '-p', String(port), '-H', '0.0.0.0'], {
     cwd: projectRoot,
     stdio: 'inherit',
     shell: true,
