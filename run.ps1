@@ -7,7 +7,7 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.14"
+$ExpectedVersion = "2.2.15"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -86,10 +86,8 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
 }
 
 function Show-RecoverHint {
-  Write-Host "Paste this ONE line in PowerShell:" -ForegroundColor Yellow
-  Write-Host @"
-Invoke-WebRequest -Uri 'https://cdn.jsdelivr.net/gh/$Repo@main/recover.ps1' -OutFile recover.ps1 -UseBasicParsing; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1
-"@ -ForegroundColor Gray
+  Write-Host "run.bat 더블클릭 (또는 아래 한 줄):" -ForegroundColor Yellow
+  Write-Host "cd C:\Users\water\AI_Program_Main_Board; .\run.bat" -ForegroundColor Gray
 }
 
 $Sha = Get-SyncRef
