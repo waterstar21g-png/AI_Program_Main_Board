@@ -1,6 +1,6 @@
 {
   "name": "ai-program-main-board",
-  "version": "2.4.8",
+  "version": "3.0.0",
   "private": true,
   "description": "AI_Program_Main_Board — 단위 프로그램 실행 보드",
   "scripts": {
@@ -18,7 +18,6 @@
     "vercel:deploy": "vercel --prod --yes --scope nutrifarmer-front --name AI_Program_Main_Board"
   },
   "dependencies": {
-    "@vercel/blob": "^2.5.0",
     "cheerio": "^1.2.0",
     "next": "^15.3.3",
     "playwright": "^1.52.0",

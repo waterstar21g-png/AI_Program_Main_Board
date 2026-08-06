@@ -13,9 +13,9 @@ export const metadata: Metadata = {
     default: APP_NAME,
     template: `%s · ${APP_NAME}`,
   },
-  description: 'AI_Program_Main_Board — 카테고리 URL 추출, 상품캡처·가격조회 등',
+  description: 'AI_Program_Main_Board — 카테고리 URL 추출, 상품데이터 대량수집',
   applicationName: APP_NAME,
-  keywords: ['상품캡처', '가격조회', '아이템스카우트', '네이버쇼핑', '쿠팡'],
+  keywords: ['카테고리URL추출', '상품데이터수집', '더망고'],
   authors: [{ name: '함께온라인' }],
   creator: '함께온라인',
   formatDetection: {

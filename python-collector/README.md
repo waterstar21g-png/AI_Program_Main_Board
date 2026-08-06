@@ -1,4 +1,7 @@
-# 더망고 상품데이터 대량수집 (Python)
+# P3_Python_Item_Collector — 더망고 상품데이터 대량수집 (Python)
+
+`AI_Program_Main_Board`의 **P2_Product_Capture_App**(웹앱, Next.js/Playwright)과
+**같은 작업**을 하는 파이썬 독립 버전입니다. 웹앱 없이 이 폴더만으로 완결됩니다.
 
 Next.js/npm 없이 파이썬 스크립트 하나로 끝냅니다.
 **Playwright 전용 Chromium을 따로 내려받지 않습니다** — PC에 이미 설치된
