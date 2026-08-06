@@ -7,8 +7,8 @@
  */
 import type { BrowserContext, Locator, Page } from 'playwright';
 import {
+  ensureCollectBrowserReady,
   findBulkPage,
-  getCollectBrowserContextForRun,
   resetBulkCollectViaMenu,
 } from '@/lib/product-data-collect/browser-session';
 import {
@@ -359,7 +359,9 @@ export async function runTmgCollectWorkflow(
 
   let processedCount = 0;
   try {
-    const browserCtx = await getCollectBrowserContextForRun();
+    pushLog(ctx, 'open-page', '한번에 실행 · Chromium 연결', undefined);
+    const browserCtx = await ensureCollectBrowserReady();
+    pushLog(ctx, 'open-page', 'Chromium · 로그인→대량수집 준비 완료', undefined);
     const page = requireBulkPage(browserCtx, ctx);
     page.setDefaultTimeout(120_000);
 

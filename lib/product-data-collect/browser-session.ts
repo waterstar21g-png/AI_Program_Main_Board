@@ -365,6 +365,15 @@ export async function openBrowserToLoginUrl(loginUrl = TMG_LOGIN_URL): Promise<P
   return ensureBulkCollectPage(page);
 }
 
+export async function ensureCollectBrowserReady(): Promise<BrowserContext> {
+  try {
+    return await getCollectBrowserContextForRun();
+  } catch {
+    await openBrowserToLoginUrl();
+    return getCollectBrowserContextForRun();
+  }
+}
+
 export async function openTmgBrowserPage(): Promise<Page> {
   return openBrowserToLoginUrl();
 }

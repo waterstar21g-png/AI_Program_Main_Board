@@ -1,10 +1,11 @@
 # AI_Program_Main_Board - run.ps1
+# ★ 한 줄 실행: run.bat  (또는 .\run.ps1)
 # GitHub Contents API로 동기화 (raw.githubusercontent.com CDN 캐시 우회)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 $Repo = "waterstar21g-png/sangpum-capture-price"
-$ExpectedVersion = "2.2.1"
+$ExpectedVersion = "2.2.2"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 

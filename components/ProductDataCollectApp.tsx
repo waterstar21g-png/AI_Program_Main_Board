@@ -12,9 +12,7 @@ export function ProductDataCollectApp() {
   const [saveCount, setSaveCount] = useState(3);
   const [rows, setRows] = useState<TmgCollectRow[]>([]);
   const [fileName, setFileName] = useState('');
-  const [browserOpen, setBrowserOpen] = useState(false);
   const [running, setRunning] = useState(false);
-  const [opening, setOpening] = useState(false);
   const [logs, setLogs] = useState<WorkflowStepLog[]>([]);
   const [activeStep, setActiveStep] = useState<WorkflowStepId | null>(null);
   const [error, setError] = useState('');
@@ -34,24 +32,6 @@ export function ProductDataCollectApp() {
       setFileName('');
     }
   }, []);
-
-  const openBrowser = async () => {
-    setOpening(true);
-    setError('');
-    try {
-      const res = await fetch('/api/product-collect/open', { method: 'POST' });
-      const data = await res.json() as { ok?: boolean; message?: string };
-      if (!res.ok || !data.ok) {
-        setError(data.message ?? 'Chromium 열기 실패');
-        return;
-      }
-      setBrowserOpen(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Chromium 열기 실패');
-    } finally {
-      setOpening(false);
-    }
-  };
 
   const runCollect = async () => {
     setRunning(true);
@@ -121,7 +101,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>v{APP_VERSION}</strong> · ① 로그인→대량수집 → ② 수집 (새 창 없음 · 팝업 미터치)
+            <strong>v{APP_VERSION}</strong> · PC에서 <strong>run.bat</strong> 한 번 → 엑셀 업로드 → <strong>▶ 한번에 실행</strong>
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -196,7 +176,7 @@ export function ProductDataCollectApp() {
       </section>
 
       <section className="panel panel--compact">
-        <h2 className="panel__title">2. 실행 (모달 종료 후 다음 단계)</h2>
+        <h2 className="panel__title">2. 실행</h2>
         <ol className="workflow-steps">
           {WORKFLOW_STEPS.map((s, i) => (
             <li
@@ -208,23 +188,14 @@ export function ProductDataCollectApp() {
             </li>
           ))}
         </ol>
-        <div className="panel__footer panel__footer--compact" style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+        <div className="panel__footer panel__footer--compact">
           <button
             type="button"
-            className="btn btn--sm"
-            disabled={opening || running}
-            onClick={() => void openBrowser()}
-          >
-            {opening ? '이동 중…' : browserOpen ? '① 다시 열기 (로그인→대량수집)' : '① 로그인→대량수집 자동'}
-          </button>
-          <button
-            type="button"
-            className="btn btn--primary btn--sm"
-            disabled={running || !rows.length || !browserOpen}
-            title={!browserOpen ? '먼저 ① 로그인→대량수집 을 누르세요' : undefined}
+            className="btn btn--primary"
+            disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '수집 중…' : '② 수집 시작'}
+            {running ? '수집 중…' : '▶ 한번에 실행 (로그인→대량수집→수집)'}
           </button>
         </div>
       </section>
