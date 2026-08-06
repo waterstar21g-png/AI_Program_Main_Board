@@ -102,7 +102,7 @@ export function ProductDataCollectApp() {
         <div className="panel__head">
           <h2 className="panel__title">1. 엑셀 업로드</h2>
           <p className="panel__hint">
-            <strong>v{APP_VERSION}</strong> · [0]초기화 → [1]URL검색·팝업대기 → [2]모두저장·필터명·저장 → [3]팝업대기 → [4]→[0]
+            <strong>v{APP_VERSION}</strong> · 0.초기화 → 1.URL검색·팝업대기 → 2.모두저장·검색필터명·저장하기 → 3.팝업대기 → 4.→0
           </p>
         </div>
         <div className="form-grid form-grid--compact">
@@ -179,13 +179,13 @@ export function ProductDataCollectApp() {
       <section className="panel panel--compact">
         <h2 className="panel__title">2. 실행</h2>
         <ol className="workflow-steps">
-          {WORKFLOW_STEPS.map((s, i) => (
+          {WORKFLOW_STEPS.map(s => (
             <li
               key={s.id}
               className={activeStep === s.id ? 'workflow-steps__item is-active' : 'workflow-steps__item'}
             >
-              {i + 1}. {s.label}
-              {activeStep === s.id && <span className="workflow-steps__now"> ← Chromium에서 진행 중</span>}
+              {s.label}
+              {activeStep === s.id && <span className="workflow-steps__now"> ← 진행 중</span>}
             </li>
           ))}
         </ol>
@@ -196,7 +196,7 @@ export function ProductDataCollectApp() {
             disabled={running || !rows.length}
             onClick={() => void runCollect()}
           >
-            {running ? '수집 중…' : '▶ 한번에 실행 (0→1→2→3→4)'}
+            {running ? '수집 중…' : '▶ 실행 (0 → 1 → 2 → 3 → 4)'}
           </button>
         </div>
       </section>
