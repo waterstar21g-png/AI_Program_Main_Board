@@ -56,7 +56,7 @@ try {
 } catch {
   Write-Host "[FATAL] boot download failed: $($_.Exception.Message)" -ForegroundColor Red
   Write-Host "Paste this ONE line in PowerShell:" -ForegroundColor Yellow
-  Write-Host "irm 'https://raw.githubusercontent.com/waterstar21g-png/sangpum-capture-price/main/recover.ps1' -OutFile recover.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1" -ForegroundColor Gray
+  Write-Host "Invoke-WebRequest -Uri 'https://cdn.jsdelivr.net/gh/waterstar21g-png/sangpum-capture-price@main/recover.ps1' -OutFile recover.ps1 -UseBasicParsing; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1" -ForegroundColor Gray
   exit 1
 }
 

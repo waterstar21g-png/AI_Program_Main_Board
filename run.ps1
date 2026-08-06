@@ -88,7 +88,7 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
 function Show-RecoverHint {
   Write-Host "Paste this ONE line in PowerShell:" -ForegroundColor Yellow
   Write-Host @"
-irm 'https://raw.githubusercontent.com/$Repo/main/recover.ps1' -OutFile recover.ps1; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1
+Invoke-WebRequest -Uri 'https://cdn.jsdelivr.net/gh/$Repo@main/recover.ps1' -OutFile recover.ps1 -UseBasicParsing; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1
 "@ -ForegroundColor Gray
 }
 
