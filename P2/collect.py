@@ -1260,17 +1260,48 @@ def save_modal(page: Page):
 
 
 def save_modal_visible(page: Page) -> bool:
-    """상품저장설정 모달 열림 — 제목 또는 (저장하기+취소하기) 푸터."""
+    """상품저장설정 모달 열림 판정 — 오탐(False negative)로 9항 클릭 자체를
+    시도조차 못 하게 막는 사고를 피하기 위해 여러 신호 중 하나면 True.
+
+    가장 신뢰도 높은 신호는 '실제 클릭 가능한 저장하기 요소가 있는가'다
+    (그게 있으면 모달이 열려 있는 것은 확정이고, 클릭 함수와 같은
+    기준을 쓰므로 둘이 서로 어긋나서 false negative가 나는 일이 없다).
+    """
+    # 0) 최우선·최고신뢰: 클릭용 함수와 동일 기준의 저장하기 후보 존재 여부
     try:
-        if page.get_by_text(re.compile(r"상품\s*저장\s*설정")).first.is_visible():
+        if _find_footer_save_by_cancel_pair(page) is not None:
             return True
     except Exception:  # noqa: BLE001
         pass
+    # 1) 모달 제목류 문구 (표현 변형 허용)
     try:
-        # 스크린샷: 하단 파란 '저장하기' + '취소하기' 쌍
-        has_save = page.get_by_text(re.compile(r"^저장하기$")).first.is_visible()
-        has_cancel = page.get_by_text(re.compile(r"^취소하기$")).first.is_visible()
-        if has_save and has_cancel:
+        title = page.get_by_text(re.compile(r"상품\s*저장\s*설정|상품\s*저장\s*옵션"))
+        if title.count() > 0 and title.first.is_visible():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    # 2) '저장하기' 부분일치(아이콘·공백으로 정확매치 실패 대비) + '취소하기'
+    try:
+        save_cands = page.get_by_text(re.compile(r"저장하기"))
+        found_save = False
+        for i in range(min(save_cands.count(), 8)):
+            el = save_cands.nth(i)
+            try:
+                if not el.is_visible():
+                    continue
+                txt = re.sub(r"\s+", " ", el.inner_text(timeout=300) or "").strip()
+            except Exception:  # noqa: BLE001
+                continue
+            if re.search(r"모두\s*저장|선택상품\s*저장", txt):
+                continue
+            found_save = True
+            break
+        has_cancel = False
+        try:
+            has_cancel = page.get_by_text(re.compile(r"취소하기")).first.is_visible()
+        except Exception:  # noqa: BLE001
+            pass
+        if found_save and has_cancel:
             return True
     except Exception:  # noqa: BLE001
         pass
@@ -2396,12 +2427,16 @@ def run_save_submit_and_verify(
     try:
         ctx.check_budget("저장하기(서버 최종 갱신) 전")
         if not save_modal_visible(page):
-            ctx.shot(page, "02_save_missing", rn)
-            raise RuntimeError(
-                f"#{rn} 저장하기 서버 최종 갱신 실패 — "
-                "상품저장설정 모달이 열려 있지 않음 "
-                "(필터정보·수집갯수·수집상품이 서버에 반영되지 않음)"
+            # ★단정하고 즉시 포기하지 않는다 — save_modal_visible()의 오탐(false
+            # negative) 때문에 클릭 시도 자체를 못 하는 사고가 실제 원인이었다.
+            # 여기서는 진단만 남기고, 실제 클릭 가능 여부는 resolve_save_submit_control
+            # (아래)가 최종 판단하게 한다. 거기서도 못 찾으면 그때 명확히 실패 처리.
+            ctx.info(
+                "  [경고] save_modal_visible() 오탐 의심 — "
+                "저장하기 버튼 탐색은 계속 시도함 (즉시 실패 처리하지 않음)"
             )
+            dump_save_button_candidates(page, ctx)
+            ctx.shot(page, "02_save_missing", rn)
 
         ctx.info(
             "9. DB저장 시작 : 하단 파란 '저장하기' 클릭 "
