@@ -32,7 +32,7 @@ from library import (  # noqa: E402
 )
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.17"
+VERSION = "2.0.18"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -520,6 +520,8 @@ class BoardApp(tk.Tk):
         low = text.lower()
         if "[샷]" in text or "샷폴더" in text or "갤러리" in text:
             return "샷"
+        if "망고 자체" in text or "검색결과가 없습니다" in text or "무결과" in text:
+            return "무결과"
         if "입력목록" in text or "상위 최종 카테고리명" in text or "최종 카테고리 URL" in text:
             return "입력"
         if "로그인" in text:
