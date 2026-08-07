@@ -12,3 +12,6 @@ next-env.d.ts
 카테고리별_상품목록_URL_LIST추출/
 .local/
 My_Project/
+P1_Category_Url_Extract/node_modules/
+P2_Product_Capture_App/node_modules/
+P3_Python_Item_Collector/.chrome-profile/

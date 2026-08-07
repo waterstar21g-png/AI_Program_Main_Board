@@ -8,54 +8,30 @@ D:\My_Project\AI_Program_Main_Board
 
 자세한 복사·이동 안내: [LOCAL_WORKSPACE.md](./LOCAL_WORKSPACE.md)
 
-## 실행·바로가기
+## 실행
 
-| 방법 | 설명 |
-|------|------|
-| **바탕화면 바로가기** | `바로가기만들기.bat` 더블클릭 → `AI_Program_Main_Board.lnk` 생성 |
-| **폴더에서 실행** | `run.bat` 더블클릭 |
-
-```
-D:\My_Project\AI_Program_Main_Board\run.bat
-```
-
-명령 프롬프트:
+| 프로그램 | 실행 |
+|----------|------|
+| P1 카테고리 URL 추출 | `P1_Category_Url_Extract\run.bat` |
+| P2 더망고 수집 (Node) | `P2_Product_Capture_App\run.bat` + 엑셀 |
+| P3 더망고 수집 (Python) | `P3_Python_Item_Collector\run.bat` + 엑셀 드래그 |
 
 ```cmd
-cd /d D:\My_Project\AI_Program_Main_Board
+cd /d D:\My_Project\AI_Program_Main_Board\P1_Category_Url_Extract
 run.bat
 ```
-
-## 복사할 때 3만 개+가 나오는 이유
-
-거의 전부 **`node_modules`**(의존성 패키지)입니다. 소스는 수백 개뿐입니다.  
-`node_modules`, `.next`, `.next-dev` 는 **복사하지 말고**, 대상 폴더에서 `npm install` 하세요.
-
-## run.bat 이 하는 일
-
-| 순서 | 작업 |
-|------|------|
-| 1 | 구버전이면 GitHub에서 필요 파일 자동 다운로드 |
-| 2 | `npm install` |
-| 3 | Playwright Chromium 설치(필요 시) |
-| 4 | 브라우저 열고 http://localhost:3000 |
 
 ## 사전 준비
 
-- Node.js LTS: https://nodejs.org
+| 프로젝트 | 필요 |
+|----------|------|
+| P1, P2 | [Node.js](https://nodejs.org/) LTS |
+| P3 | [Python 3](https://www.python.org/downloads/) (PATH 체크) |
+| P2, P3 | Chrome 또는 Edge (더망고 로그인용) |
 
-## run.bat 이 없을 때
+## P2 로그인 순서
 
-```cmd
-cd /d D:\My_Project\AI_Program_Main_Board
-curl -o run.bat https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/run.bat
-run.bat
-```
+1. `P2_Product_Capture_App\run.bat --open-only` — 브라우저에서 로그인
+2. `run.bat 엑셀파일.xlsx` — 수집 시작
 
-`curl` 실패 시 → GitHub **Download ZIP** → `node_modules` 없이 풀고 `npm install`
-
-## 보드 프로그램
-
-1. **P1_Category_Url_Extract**
-2. **P2_Product_Capture_App**
-3. **P3_Python_Item_Collector** (`python-collector\run.bat`)
+P3는 `run.bat` 실행 후 브라우저에서 로그인하면 됩니다 (README 참고).
