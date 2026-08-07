@@ -46,16 +46,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\fetch-local.ps1
 ## Windows — 웹앱 (P1, P2)
 
 **경로:** `D:\My_Project\AI_Program_Main_Board`  
-**바탕화면 시작 아이콘 (PowerShell):**
+**바탕화면 시작 아이콘 — PowerShell에 이 한 줄만:**
 
 ```powershell
-$u = "https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/install-desktop-icon.ps1"
-$f = "$env:TEMP\install-desktop-icon.ps1"
-[System.IO.File]::WriteAllText($f, (New-Object Net.WebClient).DownloadString($u), (New-Object Text.UTF8Encoding $false))
-powershell -NoProfile -ExecutionPolicy Bypass -File $f
+$p='D:\My_Project\AI_Program_Main_Board'; $t=Join-Path $p 'run.bat'; if(-not(Test-Path $t)){Write-Host '[ERROR] run.bat missing:' $t; return}; $l=Join-Path ([Environment]::GetFolderPath('Desktop')) 'AI_Program_Main_Board.lnk'; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($l); $s.TargetPath=$t; $s.WorkingDirectory=$p; $s.WindowStyle=1; $s.Description='AI_Program_Main_Board start'; $s.IconLocation="$env:SystemRoot\System32\shell32.dll,21"; $s.Save(); Write-Host '[OK]' $l
 ```
 
-또는 폴더에서 `make-shortcut.bat`  
+또는 `make-desktop-icon.cmd` 더블클릭.  
 **실행:** 바탕화면 **AI_Program_Main_Board** 아이콘, 또는 **`run.bat`**
 
 ```powershell

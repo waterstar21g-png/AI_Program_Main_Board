@@ -63,20 +63,10 @@ Set-Location D:\My_Project\AI_Program_Main_Board\python-collector
 
 ## 바탕화면 시작 아이콘
 
-PowerShell (어디서든) — **이 3줄만**:
+**에러 메시지를 붙여넣지 마세요.** 아래 **한 줄만** 복사해서 PowerShell에 실행:
 
 ```powershell
-$u = "https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/install-desktop-icon.ps1"
-$f = "$env:TEMP\install-desktop-icon.ps1"
-[System.IO.File]::WriteAllText($f, (New-Object Net.WebClient).DownloadString($u), (New-Object Text.UTF8Encoding $false))
-powershell -NoProfile -ExecutionPolicy Bypass -File $f
+$p='D:\My_Project\AI_Program_Main_Board'; $t=Join-Path $p 'run.bat'; if(-not(Test-Path $t)){Write-Host '[ERROR] run.bat missing:' $t; return}; $l=Join-Path ([Environment]::GetFolderPath('Desktop')) 'AI_Program_Main_Board.lnk'; $s=(New-Object -ComObject WScript.Shell).CreateShortcut($l); $s.TargetPath=$t; $s.WorkingDirectory=$p; $s.WindowStyle=1; $s.Description='AI_Program_Main_Board start'; $s.IconLocation="$env:SystemRoot\System32\shell32.dll,21"; $s.Save(); Write-Host '[OK]' $l
 ```
 
-또는 프로젝트 폴더에서:
-
-```powershell
-Set-Location D:\My_Project\AI_Program_Main_Board
-.\make-shortcut.bat
-```
-
-바탕화면에 **AI_Program_Main_Board** 아이콘 → 더블클릭 = `run.bat` 시작.
+또는 폴더에서 `make-desktop-icon.cmd` / `make-shortcut.bat` 더블클릭.
