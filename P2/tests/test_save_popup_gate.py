@@ -247,10 +247,13 @@ def test_full_gate_blocks_server_save_ok_without_popup(browser):
     page.fill("#count", "3")
     ctx = FakeCtx()
     before = {C._popup_id(p) for p in C.popups(page)}
+    base = C.collect_alert_baseline(page)
     page.click("#saveBtn")
     page.wait_for_timeout(200)
     old = C.MODAL_WAIT_SEC
+    old_g = C.SAVE_POPUP_GRACE_SEC
     C.MODAL_WAIT_SEC = 3
+    C.SAVE_POPUP_GRACE_SEC = 1.0
     try:
         with pytest.raises((TimeoutError, RuntimeError)):
             C.wait_save_overlays_settle(
@@ -259,11 +262,95 @@ def test_full_gate_blocks_server_save_ok_without_popup(browser):
                 1,
                 dialog_msgs=[],
                 before_popup_ids=before,
+                baseline=base,
             )
     finally:
         C.MODAL_WAIT_SEC = old
+        C.SAVE_POPUP_GRACE_SEC = old_g
     assert ctx.save_popup_seen is False
     assert ctx.server_save_ok is False
+    page.close()
+
+
+def test_stale_00_collect_text_is_not_save_popup(browser):
+    """검색단계 잔여 '00건이 수집되었다' 로는 저장 팝업 통과·초기화 금지."""
+    page = _open(browser, "nopopup")
+    # 검색 단계에서 이미 화면에 있던 잔여 문구 시뮬레이션
+    page.evaluate(
+        """() => {
+          const d = document.createElement('div');
+          d.id = 'stale';
+          d.textContent = '00건이 수집되었다';
+          document.body.appendChild(d);
+        }"""
+    )
+    page.click("#allSave")
+    page.fill("#filter", "필터")
+    page.fill("#count", "3")
+    base = C.collect_alert_baseline(page)
+    assert any("00건" in x or ":0:" in x for x in base), base
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    page.wait_for_timeout(300)
+
+    # 잔여 00건만으로는 signal 없어야 함
+    has, detail, _ = C.save_result_signal_present(
+        page, [], before_popup_ids=before, baseline=base
+    )
+    assert has is False, f"잔여 00건을 팝업으로 봄: {detail}"
+
+    ctx = FakeCtx()
+    old = C.MODAL_WAIT_SEC
+    old_g = C.SAVE_POPUP_GRACE_SEC
+    C.MODAL_WAIT_SEC = 3
+    C.SAVE_POPUP_GRACE_SEC = 1.0
+    try:
+        with pytest.raises((TimeoutError, RuntimeError)) as ei:
+            C.wait_save_execution_popup(
+                page,
+                ctx,  # type: ignore[arg-type]
+                1,
+                dialog_msgs=[],
+                before_popup_ids=before,
+                baseline=base,
+                timeout_sec=3.0,
+                grace_sec=1.0,
+            )
+        assert "팝업" in str(ei.value)
+    finally:
+        C.MODAL_WAIT_SEC = old
+        C.SAVE_POPUP_GRACE_SEC = old_g
+    assert ctx.save_popup_seen is False
+    page.close()
+
+
+def test_new_alert_after_click_accepted_despite_stale_00(browser):
+    """잔여 00건이 있어도, 클릭 후 새 '3건이 수집' 레이어면 통과."""
+    page = _open(browser, "popup")
+    page.evaluate(
+        """() => {
+          const d = document.createElement('div');
+          d.id = 'stale';
+          d.textContent = '00건이 수집되었다';
+          document.body.appendChild(d);
+        }"""
+    )
+    page.click("#allSave")
+    base = C.collect_alert_baseline(page)
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    ctx = FakeCtx()
+    C.wait_save_execution_popup(
+        page,
+        ctx,  # type: ignore[arg-type]
+        1,
+        dialog_msgs=[],
+        before_popup_ids=before,
+        baseline=base,
+        timeout_sec=10.0,
+        grace_sec=1.0,
+    )
+    assert ctx.save_popup_seen is True
     page.close()
 
 
@@ -279,6 +366,8 @@ if __name__ == "__main__":
             ("popup_ok", test_wait_popup_ok_when_layer_appears),
             ("signal_ignore_close", test_save_result_signal_ignores_settings_modal_close),
             ("full_gate", test_full_gate_blocks_server_save_ok_without_popup),
+            ("stale_00", test_stale_00_collect_text_is_not_save_popup),
+            ("stale_00_then_new", test_new_alert_after_click_accepted_despite_stale_00),
         ]:
             try:
                 fn(b)
