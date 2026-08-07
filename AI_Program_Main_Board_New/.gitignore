@@ -1,0 +1,9 @@
+.data/
+.chrome-profile/
+run-logs/
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.xlsx
+!~$*.xlsx
