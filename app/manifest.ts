@@ -6,7 +6,7 @@ export default function manifest(): MetadataRoute.Manifest {
   return {
     name: APP_NAME,
     short_name: APP_NAME,
-    description: 'AI_Program_Main_Board — P1_Category_Url_Extract / P2_Product_Capture_App / P3_Python_Item_Collector',
+    description: 'AI_Program_Main_Board — 카테고리 URL 추출 · 상품 대량수집 · 파이썬 독립 수집',
     start_url: '/',
     scope: '/',
     id: '/',

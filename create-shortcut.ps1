@@ -7,7 +7,7 @@ Set-Location -LiteralPath $PSScriptRoot
 
 $target = Join-Path $PSScriptRoot "run.bat"
 if (-not (Test-Path -LiteralPath $target)) {
-  Write-Host "[ERROR] run.bat 없음: $target" -ForegroundColor Red
+  Write-Host "[오류] run.bat 없음: $target" -ForegroundColor Red
   Write-Host "  이 스크립트를 AI_Program_Main_Board 폴더 안에서 실행하세요."
   exit 1
 }
@@ -24,7 +24,7 @@ if (-not (Test-Path -LiteralPath $koBat)) {
   ) | Set-Content -LiteralPath $koBat -Encoding UTF8
 }
 if (-not (Test-Path -LiteralPath $enBat)) {
-  Write-Host "[WARN] make-shortcut.bat 없음 — 바탕화면 lnk만 생성합니다."
+  Write-Host "[경고] make-shortcut.bat 없음 — 바탕화면 lnk만 생성합니다."
 }
 
 $desktop = [Environment]::GetFolderPath("Desktop")
@@ -39,9 +39,9 @@ $sc.Description = "AI_Program_Main_Board — 보드 실행 (P1/P2/P3)"
 $sc.Save()
 
 Write-Host ""
-Write-Host "  [OK] 로컬 폴더: $PSScriptRoot" -ForegroundColor Green
+Write-Host "  [정상] 로컬 폴더: $PSScriptRoot" -ForegroundColor Green
 if (Test-Path -LiteralPath $koBat) { Write-Host "       바로가기만들기.bat" }
 if (Test-Path -LiteralPath $enBat) { Write-Host "       make-shortcut.bat" }
-Write-Host "  [OK] 바탕화면: $lnkPath" -ForegroundColor Green
+Write-Host "  [정상] 바탕화면: $lnkPath" -ForegroundColor Green
 Write-Host "       → $target"
 Write-Host ""

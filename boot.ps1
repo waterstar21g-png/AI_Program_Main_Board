@@ -50,12 +50,12 @@ function Download-Raw([string]$RepoPath, [string]$LocalPath) {
   throw $last
 }
 
-Write-Host "[BOOT] downloading run.ps1 (raw, no API) ..." -ForegroundColor Cyan
+Write-Host "[부트] run.ps1 다운로드 중 (raw, API 없음) ..." -ForegroundColor Cyan
 try {
   Download-Raw "run.ps1" (Join-Path $PSScriptRoot "run.ps1")
 } catch {
-  Write-Host "[FATAL] boot download failed: $($_.Exception.Message)" -ForegroundColor Red
-  Write-Host "Paste this ONE line in PowerShell:" -ForegroundColor Yellow
+  Write-Host "[치명] 부트 다운로드 실패: $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host "PowerShell에 아래 한 줄을 붙여넣으세요:" -ForegroundColor Yellow
   Write-Host "Invoke-WebRequest -Uri 'https://cdn.jsdelivr.net/gh/waterstar21g-png/AI_Program_Main_Board@main/recover.ps1' -OutFile recover.ps1 -UseBasicParsing; powershell -NoProfile -ExecutionPolicy Bypass -File .\recover.ps1" -ForegroundColor Gray
   exit 1
 }

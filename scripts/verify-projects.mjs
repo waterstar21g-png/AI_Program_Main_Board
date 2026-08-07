@@ -39,13 +39,15 @@ async function viaApi() {
   for (const line of data.logs || []) console.log(line);
   if (data.smoke?.results) {
     for (const r of data.smoke.results) {
-      console.log(`\n== ${r.name} (${r.ok ? 'OK' : 'CHECK'}) ==`);
+      console.log(`\n== ${r.name} (${r.ok ? '정상' : '확인'}) ==`);
       for (const c of r.checks || []) {
-        console.log(`  ${c.status.toUpperCase()}  ${c.name} — ${c.detail}`);
+        const label =
+          c.status === 'pass' ? '통과' : c.status === 'fail' ? '실패' : '경고';
+        console.log(`  ${label}  ${c.name} — ${c.detail}`);
       }
     }
   }
-  console.log(data.ok ? '\nRESULT PASS' : '\nRESULT FAIL/CHECK');
+  console.log(data.ok ? '\n결과 통과' : '\n결과 실패/확인');
   process.exit(data.ok ? 0 : 1);
 }
 

@@ -36,7 +36,7 @@ if ($PSScriptRoot -match 'OneDrive') {
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.4.1"
+$ExpectedVersion = "3.4.2"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $Sha = "main"
@@ -57,7 +57,7 @@ function Get-MainCommitSha {
     }
     if ($meta.sha -and $meta.sha -match '^[0-9a-f]{7,40}$') { return $meta.sha }
   } catch {
-    Write-Host "[INFO] commits API unavailable — use branch main (raw)"
+    Write-Host "[안내] commits API 사용 불가 — 브랜치 main(raw)으로 진행"
   }
   return "main"
 }
@@ -80,9 +80,9 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
         "Cache-Control" = "no-cache"
       }
       $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path $tmp))
-      if ($bytes.Length -lt 5) { throw "empty download" }
+      if ($bytes.Length -lt 5) { throw "다운로드 내용이 비어 있음" }
       $head = [System.Text.Encoding]::UTF8.GetString($bytes, 0, [Math]::Min(40, $bytes.Length))
-      if ($head -match '^\s*\{\s*"message"') { throw "API error json" }
+      if ($head -match '^\s*\{\s*"message"') { throw "API 오류 JSON 응답" }
       Move-Item -Force $tmp $LocalPath
       return
     } catch {
@@ -103,9 +103,9 @@ function Ensure-ShortcutOnLocal {
     if (-not (Test-Path -LiteralPath $pair[0])) {
       try {
         Download-RepoFile $pair[0] $pair[1]
-        Write-Host "[OK] $($pair[0]) 로컬에 받음"
+        Write-Host "[정상] $($pair[0]) 로컬에 받음"
       } catch {
-        Write-Host "[WARN] $($pair[0]) 다운로드 실패 — $($_.Exception.Message)"
+        Write-Host "[경고] $($pair[0]) 다운로드 실패 — $($_.Exception.Message)"
       }
     }
   }
@@ -123,9 +123,9 @@ function Ensure-ShortcutOnLocal {
     $sc.WindowStyle = 1
     $sc.Description = "AI_Program_Main_Board — 보드 실행 (P1/P2/P3)"
     $sc.Save()
-    Write-Host "[OK] 바탕화면 바로가기: $lnkPath"
+    Write-Host "[정상] 바탕화면 바로가기: $lnkPath"
   } catch {
-    Write-Host "[WARN] 바탕화면 바로가기 실패 — $($_.Exception.Message)"
+    Write-Host "[경고] 바탕화면 바로가기 실패 — $($_.Exception.Message)"
   }
 }
 
@@ -134,8 +134,8 @@ Write-Host "  AI_Program_Main_Board  v$ExpectedVersion"
 Write-Host "========================================"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Host "[ERROR] Node.js not found. https://nodejs.org"
-  Read-Host "Press Enter"
+  Write-Host "[오류] Node.js를 찾을 수 없습니다. https://nodejs.org"
+  Read-Host "Enter 키를 누르세요"
   exit 1
 }
 
@@ -144,11 +144,11 @@ $skipSync = (-not $Sync) -and ($localVer -eq $ExpectedVersion) -and (Test-Path "
 
 if ($skipSync) {
   $TargetVersion = $localVer
-  Write-Host "[SKIP] sync — local v$localVer OK (update: .\run.ps1 -Sync)"
+  Write-Host "[생략] 동기화 — 로컬 v$localVer 정상 (업데이트: .\run.ps1 -Sync)"
 } else {
   $Sha = Get-MainCommitSha
-  Write-Host "  sync sha: $Sha"
-  Write-Host "[SYNC] GitHub download..."
+  Write-Host "  동기화 sha: $Sha"
+  Write-Host "[동기화] GitHub에서 다운로드..."
 
   $files = @(
     @("lib\product-data-collect\browser-session.ts", "lib/product-data-collect/browser-session.ts"),
@@ -161,6 +161,7 @@ if ($skipSync) {
     @("lib\top-final-label.ts", "lib/top-final-label.ts"),
     @("lib\project-smoke\run.ts", "lib/project-smoke/run.ts"),
     @("lib\board-actions\run.ts", "lib/board-actions/run.ts"),
+    @("lib\status-label.ts", "lib/status-label.ts"),
     @("components\ProgramBoardApp.tsx", "components/ProgramBoardApp.tsx"),
     @("components\BoardCommandPanel.tsx", "components/BoardCommandPanel.tsx"),
     @("components\CategoryExtractorApp.tsx", "components/CategoryExtractorApp.tsx"),
@@ -192,6 +193,7 @@ if ($skipSync) {
     @("p1.bat", "p1.bat"),
     @("p2.bat", "p2.bat"),
     @("p3.bat", "p3.bat"),
+    @("python-collector\run.bat", "python-collector/run.bat"),
     @("make-shortcut.bat", "make-shortcut.bat"),
     @("create-shortcut.ps1", "create-shortcut.ps1"),
     @("바로가기만들기.bat", "바로가기만들기.bat"),
@@ -206,25 +208,25 @@ if ($skipSync) {
   foreach ($f in $files) {
     try {
       Download-RepoFile $f[0] $f[1]
-      Write-Host "  OK $($f[0])"
+      Write-Host "  정상 $($f[0])"
     } catch {
-      Write-Host "  FAIL $($f[0]) - $($_.Exception.Message)"
+      Write-Host "  실패 $($f[0]) - $($_.Exception.Message)"
       $failed += $f[0]
     }
   }
 
   if ($failed.Count -gt 0) {
-    Write-Host "[FATAL] sync failed: $($failed -join ', ')"
-    Read-Host "Press Enter"
+    Write-Host "[치명] 동기화 실패: $($failed -join ', ')"
+    Read-Host "Enter 키를 누르세요"
     exit 1
   }
 
   $TargetVersion = Get-LocalAppVersion
-  Write-Host "[CHECK] APP_VERSION = $TargetVersion"
+  Write-Host "[확인] APP_VERSION = $TargetVersion"
 
   if ($TargetVersion -ne $ExpectedVersion) {
     # Sync로 run.ps1이 갱신된 경우 — 새 스크립트로 다시 실행
-    Write-Host "[INFO] version updated ($ExpectedVersion → $TargetVersion). re-launch run.ps1 ..."
+    Write-Host "[안내] 버전 갱신 ($ExpectedVersion → $TargetVersion). run.ps1 다시 실행..."
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "run.ps1") @PSBoundParameters
     exit $LASTEXITCODE
   }
@@ -240,7 +242,7 @@ if (Test-Path "VERSION.txt") {
 }
 "version $TargetVersion" | Out-File -FilePath "VERSION.txt" -Encoding utf8
 
-Write-Host "[STOP] kill port 3000..."
+Write-Host "[중지] 3000 포트 종료..."
 Get-NetTCPConnection -LocalPort 3000 -ErrorAction SilentlyContinue |
   ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
 Get-Process -Name node -ErrorAction SilentlyContinue |
@@ -253,7 +255,7 @@ Get-Process -Name node -ErrorAction SilentlyContinue |
 Start-Sleep -Seconds 2
 
 if (-not (Test-Path "node_modules")) {
-  Write-Host "[INSTALL] npm install..."
+  Write-Host "[설치] npm install..."
   npm install
 }
 
@@ -269,14 +271,14 @@ if ($Clean) {
 }
 
 Write-Host ""
-Write-Host "  VERSION: $TargetVersion"
+Write-Host "  버전: $TargetVersion"
 Write-Host "  http://localhost:3000"
 Write-Host ""
 
 # npm run dev를 백그라운드로 띄우고, 포트 3000이 실제로 열릴 때까지
 # 기다린 뒤에 브라우저를 연다. (먼저 브라우저부터 열면 서버가 아직
 # 안 떠서 "연결할 수 없음 / ERR_CONNECTION_REFUSED"가 뜬다.)
-Write-Host "[START] npm run dev ..."
+Write-Host "[시작] npm run dev ..."
 Write-Host "  (첫 컴파일은 Windows 백신 검사까지 겹치면 오래 걸릴 수 있습니다."
 Write-Host "   작업관리자에서 node.exe가 CPU를 쓰고 있으면 진행 중인 것입니다."
 Write-Host "   '✓ Compiled / in Ns' 가 뜨면 끝난 것입니다."
@@ -288,7 +290,7 @@ $ready = $false
 for ($i = 0; $i -lt 120; $i++) {
   Start-Sleep -Milliseconds 500
   if ($devProc.HasExited) {
-    Write-Host "[FATAL] npm run dev 가 예기치 않게 종료됨 (exit code $($devProc.ExitCode))"
+    Write-Host "[치명] npm run dev 가 예기치 않게 종료됨 (종료코드 $($devProc.ExitCode))"
     break
   }
   try {
@@ -303,10 +305,10 @@ for ($i = 0; $i -lt 120; $i++) {
 }
 
 if ($ready) {
-  Write-Host "[READY] http://localhost:3000"
+  Write-Host "[준비완료] http://localhost:3000"
   Start-Process "http://localhost:3000"
 } elseif (-not $devProc.HasExited) {
-  Write-Host "[WARN] 60초 안에 3000 포트가 응답하지 않았습니다."
+  Write-Host "[경고] 60초 안에 3000 포트가 응답하지 않았습니다."
   Write-Host "       브라우저를 자동으로 열지 않았으니, 잠시 후 직접 http://localhost:3000 을 열어보세요."
 }
 

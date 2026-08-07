@@ -23,8 +23,8 @@ Write-Host "  대상: $Project  (P1/P2/P3 서로 독립)"
 Write-Host "========================================"
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Host "[ERROR] Node.js 없음 — https://nodejs.org"
-  Read-Host "Press Enter"
+  Write-Host "[오류] Node.js 없음 — https://nodejs.org"
+  Read-Host "Enter 키를 누르세요"
   exit 1
 }
 

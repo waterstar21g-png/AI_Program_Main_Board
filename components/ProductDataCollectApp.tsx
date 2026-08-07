@@ -240,7 +240,7 @@ export function ProductDataCollectApp() {
       {(running || logs.length > 0) && (
         <section className="panel panel--compact">
           <h2 className="panel__title">
-            실행 로그 {running && <span className="badge badge--live">LIVE</span>}
+            실행 로그 {running && <span className="badge badge--live">진행중</span>}
           </h2>
           <div className="log-box">
             {logs.map((l, i) => (

@@ -13,13 +13,13 @@ const localOnly = process.argv.includes('--local');
 const base = process.env.SMOKE_BASE || 'http://127.0.0.1:3000';
 
 function ok(label, detail) {
-  console.log(`  PASS  ${label}${detail ? ` — ${detail}` : ''}`);
+  console.log(`  통과  ${label}${detail ? ` — ${detail}` : ''}`);
 }
 function fail(label, detail) {
-  console.log(`  FAIL  ${label}${detail ? ` — ${detail}` : ''}`);
+  console.log(`  실패  ${label}${detail ? ` — ${detail}` : ''}`);
 }
 function warn(label, detail) {
-  console.log(`  WARN  ${label}${detail ? ` — ${detail}` : ''}`);
+  console.log(`  경고  ${label}${detail ? ` — ${detail}` : ''}`);
 }
 
 function localSmoke() {
@@ -30,7 +30,7 @@ function localSmoke() {
     'lib/site-crawler/index.ts',
     'app/api/crawl/route.ts',
   ]) {
-    existsSync(join(root, f)) ? ok(f) : (fail(f, 'missing'), failed++);
+    existsSync(join(root, f)) ? ok(f) : (fail(f, '없음'), failed++);
   }
 
   console.log('\n== P2 파일 ==');
@@ -39,7 +39,7 @@ function localSmoke() {
     'lib/product-data-collect/runner.ts',
     'app/api/product-collect/run/route.ts',
   ]) {
-    existsSync(join(root, f)) ? ok(f) : (fail(f, 'missing'), failed++);
+    existsSync(join(root, f)) ? ok(f) : (fail(f, '없음'), failed++);
   }
 
   console.log('\n== P3 파일/파이썬 ==');
@@ -48,18 +48,18 @@ function localSmoke() {
     'python-collector/run.bat',
     'python-collector/requirements.txt',
   ]) {
-    existsSync(join(root, f)) ? ok(f) : (fail(f, 'missing'), failed++);
+    existsSync(join(root, f)) ? ok(f) : (fail(f, '없음'), failed++);
   }
   const py = spawnSync('python3', ['-c', 'import sys; print(sys.version.split()[0])'], {
     encoding: 'utf8',
   });
   if (py.status === 0) ok('python3', py.stdout.trim());
   else {
-    fail('python3', 'not found');
+    fail('python3', '없음');
     failed++;
   }
 
-  console.log(failed ? `\nRESULT FAIL (${failed})` : '\nRESULT PASS');
+  console.log(failed ? `\n결과 실패 (${failed})` : '\n결과 통과');
   process.exit(failed ? 1 : 0);
 }
 
@@ -72,14 +72,14 @@ async function apiSmoke() {
   });
   const data = await res.json();
   for (const r of data.results ?? []) {
-    console.log(`== ${r.name} (${r.ok ? 'OK' : 'CHECK'}) ==`);
+    console.log(`== ${r.name} (${r.ok ? '정상' : '확인'}) ==`);
     for (const c of r.checks ?? []) {
       const fn = c.status === 'pass' ? ok : c.status === 'fail' ? fail : warn;
       fn(c.name, c.detail);
     }
     console.log('');
   }
-  console.log(data.ok ? 'RESULT PASS' : 'RESULT FAIL/WARN');
+  console.log(data.ok ? '결과 통과' : '결과 실패/경고');
   process.exit(data.ok ? 0 : 1);
 }
 

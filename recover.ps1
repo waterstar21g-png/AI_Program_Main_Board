@@ -22,7 +22,7 @@ $files = @(
 
 Write-Host ""
 Write-Host "  AI_Program_Main_Board" -ForegroundColor Cyan
-Write-Host "  syncing from GitHub main ..." -ForegroundColor Cyan
+Write-Host "  GitHub main에서 동기화 중 ..." -ForegroundColor Cyan
 Write-Host ""
 
 foreach ($rel in $files) {
@@ -30,11 +30,11 @@ foreach ($rel in $files) {
   $dir = Split-Path -Parent $local
   if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
   $url = "$base/$rel`?t=$cb"
-  Write-Host "  OK $rel"
+  Write-Host "  정상 $rel"
   Invoke-WebRequest -Uri $url -OutFile "$local.download" -UseBasicParsing -Headers @{ "User-Agent" = "recover" }
   $bytes = [IO.File]::ReadAllBytes("$local.download")
   Remove-Item "$local.download" -Force -ErrorAction SilentlyContinue
-  if ($bytes.Length -lt 5) { throw "download failed: $rel" }
+  if ($bytes.Length -lt 5) { throw "다운로드 실패: $rel" }
   if ($rel -match '\.(bat|cmd)$') {
     $text = [Text.Encoding]::UTF8.GetString($bytes) -replace "`r`n", "`n" -replace "`n", "`r`n"
     [IO.File]::WriteAllText($local, $text, (New-Object Text.UTF8Encoding $false))
@@ -45,7 +45,7 @@ foreach ($rel in $files) {
 
 $ver = (Select-String -Path "lib\app-version.ts" -Pattern "APP_VERSION\s*=\s*'([^']+)'").Matches[0].Groups[1].Value
 Write-Host ""
-Write-Host "  VERSION $ver" -ForegroundColor Green
+Write-Host "  버전 $ver" -ForegroundColor Green
 Write-Host ""
 
 foreach ($junk in @(".next", ".next-dev", "app\elastic-beanstalk")) {
