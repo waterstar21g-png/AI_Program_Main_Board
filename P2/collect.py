@@ -226,6 +226,7 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "03_modal_stuck": "3. 저장 모달 미종료(오류)",
     "03_modal_closed": "3. 저장 모달 닫힘",
     "03_result_popup": "3. 저장 후 결과 팝업",
+    "03_result_missing": "3. 저장 후 결과 팝업 없음(오류)",
     "03_collect_alert": "3. 망고 수집건수 알림 확인",
     "03_collect_alert_fail": "3. 망고 수집건수 알림 확인 실패",
     "04_row_done": "4. 행 완료",
@@ -1943,9 +1944,11 @@ def run_save_submit_and_verify(
         page.wait_for_timeout(400)
         ctx.shot(page, "02_save_clicked", rn)
 
-        # 저장 직후: 모달 닫힘 + (있으면) 결과 팝업 열림→닫힘
-        ctx.info("3. 저장 후 팝업/모달 종료 대기")
-        wait_save_overlays_settle(page, ctx, rn)
+        # 저장 직후: 결과 팝업/알림 모달 출현(필수) → 닫힘 → 건수 확인
+        ctx.info("3. 저장 후 결과 팝업/알림 모달 대기 (필수 — 스킵 금지)")
+        wait_save_overlays_settle(
+            page, ctx, rn, dialog_msgs=dialog_msgs
+        )
 
         # 최종: 망고 자체 메세지 — 저장된 상품 건수 알림
         verify_mango_collect_alert(
@@ -1964,57 +1967,6 @@ def run_save_submit_and_verify(
             page.remove_listener("dialog", _on_save_dialog)
         except Exception:  # noqa: BLE001
             pass
-
-
-def wait_save_overlays_settle(page: Page, ctx: RunCtx, rn: int) -> None:
-    """저장하기 클릭 후 저장모달·결과팝업이 모두 정리될 때까지 대기."""
-    end = time.time() + MODAL_WAIT_SEC
-    saw_result_popup = False
-    modal_closed = False
-
-    while time.time() < end:
-        ctx.check_budget("저장 후 팝업/모달 대기")
-        modal_open = save_modal_visible(page)
-        cur_pops = popups(page)
-
-        if cur_pops and not saw_result_popup:
-            saw_result_popup = True
-            ctx.info(f"3. 저장 후 결과 팝업 열림 ({len(cur_pops)}개)")
-            try:
-                cur_pops[0].bring_to_front()
-            except Exception:  # noqa: BLE001
-                pass
-            ctx.shot(cur_pops[0], "03_result_popup", rn)
-
-        if not modal_open and not modal_closed:
-            modal_closed = True
-            ctx.info("3. 저장 모달 닫힘")
-            try:
-                page.bring_to_front()
-            except Exception:  # noqa: BLE001
-                pass
-            ctx.shot(page, "03_modal_closed", rn)
-
-        # 모달·검색팝업 모두 없으면 안정화 후 종료
-        if not modal_open and not cur_pops:
-            page.wait_for_timeout(500)
-            if not save_modal_visible(page) and not popups(page):
-                ctx.info("3. 저장 후 팝업/모달 모두 종료 확인")
-                return
-
-        page.wait_for_timeout(400)
-
-    # 시간 초과 — 강제 정리 후 상태 재확인
-    ctx.info("  [경고] 저장 후 오버레이 대기 초과 — 강제 정리")
-    close_search_popups(page)
-    if save_modal_visible(page):
-        try_dismiss_save_modal(page)
-    page.wait_for_timeout(500)
-    if save_modal_visible(page) or popups(page):
-        ctx.shot(page, "03_modal_stuck", rn)
-        raise TimeoutError(f"#{rn} 저장 후 팝업/모달이 닫히지 않음")
-    ctx.info("3. 강제 정리 후 팝업/모달 종료")
-    ctx.shot(page, "03_modal_closed", rn)
 
 
 def _page_visible_text(page: Page) -> str:
@@ -2045,6 +1997,149 @@ def parse_mango_collect_count(text: str) -> tuple[int | None, str]:
     return None, ""
 
 
+def find_mango_collect_alert(
+    page: Page,
+    dialog_msgs: list[str] | None = None,
+) -> tuple[int | None, str, str, Page | None]:
+    """메인·팝업·JS dialog에서 수집건수 알림을 찾는다.
+
+    반환: (건수|None, 매칭문구, source, 해당 Page|None)
+    source: dialog | page | popup | ""
+    """
+    for msg in list(dialog_msgs or []):
+        n, hit = parse_mango_collect_count(msg)
+        if n is not None:
+            return n, hit or msg, "dialog", page
+
+    text = _page_visible_text(page)
+    n, hit = parse_mango_collect_count(text)
+    if n is not None:
+        return n, hit, "page", page
+
+    for p in popups(page):
+        ptext = _page_visible_text(p)
+        n, hit = parse_mango_collect_count(ptext)
+        if n is not None:
+            return n, hit, "popup", p
+
+    return None, "", "", None
+
+
+def save_result_signal_present(
+    page: Page,
+    dialog_msgs: list[str] | None = None,
+) -> tuple[bool, str, Page | None]:
+    """저장하기 후 '결과 팝업/알림 모달' 출현 여부.
+
+    - 별도 브라우저 팝업 창
+    - 페이지 내 'N건이 수집되었다' 알림/레이어
+    - JS alert/confirm 메시지
+    """
+    n, msg, src, hit_page = find_mango_collect_alert(page, dialog_msgs)
+    if n is not None:
+        return True, f"{src}:{msg}", hit_page or page
+
+    cur = popups(page)
+    if cur:
+        return True, f"window_popup:{len(cur)}", cur[0]
+
+    return False, "", None
+
+
+def wait_save_overlays_settle(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    *,
+    dialog_msgs: list[str] | None = None,
+) -> None:
+    """저장하기 클릭 후: 결과 팝업/알림 출현(필수) → 샷 → 정리 대기.
+
+    예전 버그는 상품저장설정 모달만 닫히면 곧바로 종료해,
+    저장 후 팝업 모달 없이 다음 행 검색으로 넘어갔다.
+    결과 UI가 나타나기 전에는 절대 다음 단계로 가지 않는다.
+    """
+    end = time.time() + MODAL_WAIT_SEC
+    saw_result = False
+    modal_closed = False
+    result_detail = ""
+    # 모달이 먼저 닫혀도 결과 팝업이 늦게 뜰 수 있음 — 최소 대기
+    min_wait_until = time.time() + 2.5
+
+    while time.time() < end:
+        ctx.check_budget("저장 후 팝업/모달 대기")
+        modal_open = save_modal_visible(page)
+        cur_pops = popups(page)
+        has_signal, detail, signal_page = save_result_signal_present(
+            page, dialog_msgs
+        )
+
+        if not modal_open and not modal_closed:
+            modal_closed = True
+            ctx.info("3. 저장 모달 닫힘 (결과 팝업/알림은 계속 대기)")
+            try:
+                page.bring_to_front()
+            except Exception:  # noqa: BLE001
+                pass
+            ctx.shot(page, "03_modal_closed", rn)
+
+        if has_signal and not saw_result:
+            saw_result = True
+            result_detail = detail
+            ctx.info(f"3. ★ 저장 후 결과 팝업/알림 출현 — {detail}")
+            target = signal_page or (cur_pops[0] if cur_pops else page)
+            try:
+                target.bring_to_front()
+            except Exception:  # noqa: BLE001
+                pass
+            ctx.shot(target, "03_result_popup", rn)
+
+        # 결과 UI를 본 뒤에만 종료 가능
+        if saw_result:
+            # 알림 문구가 화면에 남아 있으면 verify 단계에서 건수 확인·닫기
+            alert_n, _, _, _ = find_mango_collect_alert(page, dialog_msgs)
+            if alert_n is not None and not modal_open:
+                ctx.info(
+                    "3. 결과 알림 확인됨 — 팝업 모달 단계 완료 "
+                    f"({result_detail})"
+                )
+                return
+            # 별도 창 팝업이었다가 닫힌 경우
+            if not modal_open and not cur_pops and time.time() >= min_wait_until:
+                page.wait_for_timeout(500)
+                still, _, _ = save_result_signal_present(page, dialog_msgs)
+                if not save_modal_visible(page) and not popups(page):
+                    # dialog로만 신호가 왔던 경우도 여기로 올 수 있음
+                    if still or dialog_msgs:
+                        ctx.info(
+                            "3. 저장 후 팝업/모달 종료 확인 "
+                            f"(결과신호={result_detail})"
+                        )
+                        return
+
+        page.wait_for_timeout(400)
+
+    if not saw_result:
+        ctx.shot(page, "03_result_missing", rn)
+        raise TimeoutError(
+            f"#{rn} 저장하기 후 결과 팝업·알림 모달이 열리지 않음. "
+            "상품저장설정만 닫힌 채 다음 행 검색으로 넘어갈 수 없습니다. "
+            "저장하기 클릭 → 결과 팝업 열림/닫힘 → 수집건수 알림 순서를 지키세요."
+        )
+
+    # 결과는 봤는데 창/모달이 안 닫힘 — 강제 정리
+    ctx.info("  [경고] 저장 후 오버레이 대기 초과 — 강제 정리")
+    close_search_popups(page)
+    if save_modal_visible(page):
+        try_dismiss_save_modal(page)
+    page.wait_for_timeout(500)
+    if save_modal_visible(page) or popups(page):
+        ctx.shot(page, "03_modal_stuck", rn)
+        raise TimeoutError(f"#{rn} 저장 후 팝업/모달이 닫히지 않음")
+    ctx.info("3. 강제 정리 후 팝업/모달 종료")
+    ctx.shot(page, "03_modal_closed", rn)
+
+
 def dismiss_mango_alert_ui(page: Page) -> None:
     """화면 알림/레이어의 확인 버튼이 있으면 닫기."""
     try:
@@ -2058,6 +2153,19 @@ def dismiss_mango_alert_ui(page: Page) -> None:
             page.wait_for_timeout(300)
     except Exception:  # noqa: BLE001
         pass
+    # 팝업 창에도 확인 버튼이 있을 수 있음
+    for p in list(popups(page)):
+        try:
+            btn = (
+                p.locator("button, a, input[type='button'], input[type='submit']")
+                .filter(has_text=re.compile(r"^(확인|닫기|OK|Yes)$", re.I))
+                .first
+            )
+            if btn.count() > 0 and btn.is_visible():
+                click_it(btn)
+                p.wait_for_timeout(300)
+        except Exception:  # noqa: BLE001
+            pass
     try:
         page.keyboard.press("Escape")
         page.wait_for_timeout(200)
@@ -2072,10 +2180,11 @@ def verify_mango_collect_alert(
     expect_count: int,
     *,
     dialog_msgs: list[str] | None = None,
-    timeout_sec: float = 20.0,
+    timeout_sec: float = 25.0,
 ) -> int:
-    """모달 닫힘 후 망고 자체 알림('N건이 수집되었다')을 파악·검증.
+    """결과 팝업/알림에서 망고 자체 'N건이 수집되었다'를 파악·검증.
 
+    - 메인 페이지·별도 팝업 창·JS dialog 모두 검사
     - 기대 건수(저장수)와 일치해야 통과
     - 0건이면 실패(다음 행으로 진행 가능하도록 확정 실패 문구 포함)
     """
@@ -2087,26 +2196,24 @@ def verify_mango_collect_alert(
     found_n: int | None = None
     found_msg = ""
     source = ""
+    shot_page: Page | None = page
 
     while time.time() < end:
         ctx.check_budget("망고 수집알림 대기")
-        # 1) JS alert/confirm 캡처
-        for msg in list(dialog_msgs or []):
-            n, hit = parse_mango_collect_count(msg)
-            if n is not None:
-                found_n, found_msg, source = n, hit or msg, "dialog"
-                break
+        found_n, found_msg, source, hit_page = find_mango_collect_alert(
+            page, dialog_msgs
+        )
         if found_n is not None:
+            shot_page = hit_page or page
             break
-        # 2) 화면 본문/레이어 문구
-        text = _page_visible_text(page)
-        n, hit = parse_mango_collect_count(text)
-        if n is not None:
-            found_n, found_msg, source = n, hit, "page"
-            break
-        # 실패 문구가 먼저 보이면 즉시 중단
+
+        # 실패 문구가 먼저 보이면 즉시 중단 (메인+팝업)
+        texts = [_page_visible_text(page)]
+        for p in popups(page):
+            texts.append(_page_visible_text(p))
+        blob = "\n".join(texts)
         for pat in SAVE_FAIL_PATTERNS:
-            if pat.search(text or ""):
+            if pat.search(blob or ""):
                 ctx.shot(page, "03_collect_alert_fail", row_no)
                 raise RuntimeError(
                     f"#{row_no} 망고 수집 알림 대신 오류 문구 감지: {pat.pattern}"
@@ -2114,24 +2221,29 @@ def verify_mango_collect_alert(
         page.wait_for_timeout(400)
 
     if found_n is None:
-        # 마지막 한 번 더 합쳐 검사
-        blob = "\n".join(dialog_msgs or []) + "\n" + _page_visible_text(page)
-        found_n, found_msg = parse_mango_collect_count(blob)
-        source = "final" if found_n is not None else ""
+        found_n, found_msg, source, hit_page = find_mango_collect_alert(
+            page, dialog_msgs
+        )
+        shot_page = hit_page or page
+        if found_n is not None and not source:
+            source = "final"
 
     if found_n is None:
         ctx.shot(page, "03_collect_alert_fail", row_no)
         raise RuntimeError(
             f"#{row_no} 망고 수집 알림을 찾지 못함 "
             f"(기대 문구 예: '{expect}건이 수집되었다'). "
-            "모달 종료 후 알림 메세지를 확인하세요."
+            "저장하기 후 결과 팝업/알림 메세지를 확인하세요."
         )
 
     ctx.info(
         f"  [망고알림] source={source} | 문구={found_msg!r} | "
         f"수집건수={found_n} | 기대={expect}"
     )
-    ctx.shot(page, "03_collect_alert", row_no)
+    try:
+        ctx.shot(shot_page or page, "03_collect_alert", row_no)
+    except Exception:  # noqa: BLE001
+        ctx.shot(page, "03_collect_alert", row_no)
     dismiss_mango_alert_ui(page)
 
     if found_n == 0:
