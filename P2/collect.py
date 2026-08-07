@@ -575,6 +575,15 @@ def _clear_stale_singleton_locks() -> None:
             pass
 
 
+# 저장하기(9항) 클릭 후 window.open() 팝업이 실제 사이트에서 안 뜨는
+# 흔한 원인 — Chrome 자체 팝업차단(실제 Chrome 프로필 기본 ON).
+# 클릭이 trusted 여도, AJAX 저장 완료 콜백처럼 클릭과 비동기로 분리돼
+# window.open이 호출되면 Chrome이 "사용자 제스처 없음"으로 보고
+# 조용히 막아버린다 — 그러면 팝업 창 자체가 아예 생기지 않는다.
+POPUP_BLOCK_FIX_VERSION = "1"
+_POPUP_FIX_MARKER = "popup_block_fix_v{}.marker"
+
+
 def launch_debug_browser() -> None:
     """평소 쓰는 Chrome/Edge를 디버그 포트로 실행 — Playwright Chromium 미사용"""
     exe = find_browser_exe()
@@ -600,6 +609,9 @@ def launch_debug_browser() -> None:
         "--no-sandbox",
         "--disable-dev-shm-usage",
         "--disable-gpu",
+        # ★9항 저장하기 후 '팝업창 모달'이 아예 안 뜨는 문제 대응 —
+        # Chrome 자체 팝업차단을 완전히 끈다.
+        "--disable-popup-blocking",
     ]
     # 더망고 솔루션 확장 로드 (전용 프로필에 설정값이 비어 있는 문제 방지)
     if MANGO_EXT_DIR.is_dir() and (MANGO_EXT_DIR / "manifest.json").is_file():
@@ -619,6 +631,7 @@ def launch_debug_browser() -> None:
     for i in range(60):
         if cdp_port_open():
             log("브라우저 연결 확인됨")
+            _write_popup_fix_marker()
             return
         if i > 0 and i % 6 == 0:
             log(f"  아직 대기 중... ({i * 0.5:.0f}초 경과 — 화면에 Chrome 창이 떴는지 확인해 주세요)")
@@ -627,6 +640,34 @@ def launch_debug_browser() -> None:
         "브라우저가 디버그 모드로 열리지 않았습니다.\n"
         "열려있는 Chrome/Edge 창을 모두 닫고 다시 실행해 보세요.\n"
         f"(참고 로그: {log_path})"
+    )
+
+
+def _popup_fix_marker_path() -> Path:
+    return PROFILE_DIR / _POPUP_FIX_MARKER.format(POPUP_BLOCK_FIX_VERSION)
+
+
+def _write_popup_fix_marker() -> None:
+    """--disable-popup-blocking 로 새로 켠 Chrome 표시(다음 실행 시 재사용 판별용)."""
+    try:
+        _popup_fix_marker_path().write_text("ok\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
+def warn_if_reusing_pre_fix_browser() -> None:
+    """이미 떠 있던(우리가 방금 새로 켠 게 아닌) Chrome을 재사용하는 중이면 경고.
+
+    --disable-popup-blocking 은 Chrome '실행 시' 적용되는 플래그라,
+    이 프로그램을 업데이트하기 전부터 열려 있던 Chrome을 계속 붙잡고
+    쓰는 중이면 여전히 팝업이 차단될 수 있다.
+    """
+    if _popup_fix_marker_path().exists():
+        return
+    log(
+        "  [중요] 저장하기 팝업이 계속 안 뜨면 Chrome을 완전히 종료 후 "
+        "다시 실행해 보세요 — 이번 업데이트(팝업차단 해제)는 Chrome을 "
+        "새로 켤 때만 적용됩니다. (기존에 열려 있던 창을 재사용 중일 수 있음)"
     )
 
 
@@ -663,6 +704,10 @@ def connect_browser(p) -> tuple[Browser, Page]:
     """
     if not cdp_port_open():
         launch_debug_browser()
+    else:
+        # 방금 새로 켠 게 아니라 이미 떠 있던 Chrome을 재사용 — 팝업차단
+        # 해제 플래그(--disable-popup-blocking)가 적용 안 됐을 수 있음
+        warn_if_reusing_pre_fix_browser()
 
     browser = p.chromium.connect_over_cdp(CDP_URL)
     context = browser.contexts[0] if browser.contexts else browser.new_context()
@@ -1711,6 +1756,17 @@ def trusted_click_save_submit(
             if prev_box and cur_box and abs(cur_box["y"] - prev_box["y"]) < 1:
                 break
             prev_box = cur_box
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 실제 사람처럼 호버 후 클릭 — mouseenter/hover에 의존하는 버튼 대비
+    try:
+        box = el.bounding_box()
+        if box:
+            page.mouse.move(
+                box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+            )
+            page.wait_for_timeout(120)
     except Exception:  # noqa: BLE001
         pass
 
@@ -2966,11 +3022,24 @@ def wait_save_execution_popup(
 
     if not saw:
         ctx.shot(page, "03_result_missing", rn)
+        n_open = 0
+        try:
+            n_open = len(save_popups(page))
+        except Exception:  # noqa: BLE001
+            pass
+        hint = ""
+        if n_open == 0:
+            hint = (
+                " [의심원인] 클릭 후 새 창이 전혀 안 열림 — Chrome 자체 "
+                "팝업차단일 수 있음. Chrome을 완전히 종료(작업관리자 포함)한 뒤 "
+                "다시 실행해 보세요(--disable-popup-blocking 은 새로 켤 때만 적용)."
+            )
         raise TimeoutError(
             f"#{rn} 저장하기 후 팝업창 모달이 나타나지 않음. "
             "검색단계 '00건 수집' 잔여문구·설정모달 닫힘만으로 "
             "초기화/다음 행 진행 불가. "
             "저장하기 → (저장시간) → 팝업창 모달 열림 → 닫힘 → 건수확인 필수."
+            f"{hint}"
         )
 
     ctx.info(f"3. ★ 저장 실행 팝업창 모달 확인 — {detail}")

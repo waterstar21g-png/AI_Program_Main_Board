@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import inspect
 import sys
 import time
 from pathlib import Path
@@ -17,6 +18,7 @@ from playwright.sync_api import sync_playwright
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+import batch_steps as B  # noqa: E402
 import collect as C  # noqa: E402
 
 MODAL_HTML = """
@@ -183,6 +185,66 @@ def test_save_modal_visible_survives_icon_wrapped_button(browser):
     tag = el.evaluate("(n) => n.tagName.toLowerCase()")
     assert tag == "a"
     ctx.close()
+
+
+def test_chrome_launch_disables_popup_blocking():
+    """실제 Chrome 실행 인자에 --disable-popup-blocking 이 포함돼야 함.
+
+    저장하기 클릭은 trusted 여도, 사이트가 AJAX 저장 완료 콜백에서
+    비동기로 window.open() 하면 Chrome이 '사용자 제스처 없음'으로 보고
+    조용히 팝업을 막아버린다 — 그러면 팝업창 자체가 안 생긴다
+    (오판이 아니라 실제로 안 열리는 것).
+    """
+    src = inspect.getsource(C.launch_debug_browser)
+    assert "--disable-popup-blocking" in src
+
+
+def test_no_popup_no_layer_raises_with_popup_block_hint(browser):
+    """클릭해도 새 창·레이어가 전혀 안 생기면(진짜 안 열림) 원인 힌트 포함해 실패.
+
+    회귀: 팝업이 '오판'이 아니라 '진짜로 안 열리는' 경우를 재현.
+    """
+    page = _open(browser, "nopopup")  # saveBtn 클릭해도 결과 레이어 안 뜸
+    page.click("#allSave")
+    before = {C._popup_id(p) for p in C.save_popups(page)}
+    page.click("#saveBtn")
+    ctx = FakeCtx()
+    old = C.MODAL_WAIT_SEC
+    old_g = C.SAVE_POPUP_GRACE_SEC
+    C.MODAL_WAIT_SEC = 2
+    C.SAVE_POPUP_GRACE_SEC = 1.0
+    try:
+        with pytest.raises(TimeoutError) as ei:
+            C.wait_save_execution_popup(
+                page,
+                ctx,  # type: ignore[arg-type]
+                1,
+                dialog_msgs=[],
+                before_popup_ids=before,
+                timeout_sec=2.0,
+                grace_sec=1.0,
+            )
+    finally:
+        C.MODAL_WAIT_SEC = old
+        C.SAVE_POPUP_GRACE_SEC = old_g
+    msg = str(ei.value)
+    assert "팝업" in msg
+    assert "새 창이 전혀 안 열림" in msg or "팝업차단" in msg
+    page.close()
+
+
+def test_batch_step_blocks_init_when_save_awaiting_popup():
+    """13항(초기화) 진입 전 save_awaiting_popup=True 면 반드시 거부돼야 함.
+
+    '저장하기 클릭 없이 초기화 실행하면 안 된다'는 요건을 batch_steps
+    진입점(run_row_batch) 레벨에서 직접 검증.
+    """
+    ctx = FakeCtx()
+    ctx.save_awaiting_popup = True
+    row = {"row": 1, "label": "x", "url": "https://example.com/a"}
+    with pytest.raises(RuntimeError) as ei:
+        B.run_row_batch(None, row, ctx)  # type: ignore[arg-type]
+    assert "초기화" in str(ei.value) or "팝업" in str(ei.value)
 
 
 def test_save_popup_on_admin_host_is_detected(browser):
@@ -705,6 +767,9 @@ if __name__ == "__main__":
         b = p.chromium.launch(headless=True)
         for name, fn in [
             ("distinct", test_buttons_are_distinct),
+            ("popup_blocking_flag", lambda _b: test_chrome_launch_disables_popup_blocking()),
+            ("no_popup_block_hint", test_no_popup_no_layer_raises_with_popup_block_hint),
+            ("batch_blocks_init", lambda _b: test_batch_step_blocks_init_when_save_awaiting_popup()),
             ("modal_visible_icon_wrapped", test_save_modal_visible_survives_icon_wrapped_button),
             ("admin_host_popup_detected", test_save_popup_on_admin_host_is_detected),
             ("diag_overlay", test_diagnose_detects_overlay_interception),
