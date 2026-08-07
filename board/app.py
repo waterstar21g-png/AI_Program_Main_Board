@@ -6,9 +6,11 @@ AI_Program_Main_Board — Python B안 보드 (P1 / P2=구P3)
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -29,7 +31,7 @@ from library import (  # noqa: E402
     set_selected,
 )
 
-VERSION = "2.0.10"
+VERSION = "2.0.12"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -37,11 +39,12 @@ class BoardApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_TITLE}  v{VERSION}")
-        self.geometry("920x620")
-        self.minsize(780, 520)
+        self.geometry("960x720")
+        self.minsize(820, 600)
         self.configure(bg="#1a4d5c")
 
         self._p1_result = None
+        self._p2_proc: subprocess.Popen | None = None
         self._build()
         self._show("p1")
         self._refresh_p2_list()
@@ -250,10 +253,10 @@ class BoardApp(tk.Tk):
             bg="#f1f5f9",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",
-        ).pack(fill="x", pady=(0, 8))
+        ).pack(fill="x", pady=(0, 6))
 
-        # 검색
-        search = tk.LabelFrame(parent, text="1. 로컬에서 엑셀 찾아 추가", bg="#ffffff", padx=8, pady=8)
+        # 1. 검색
+        search = tk.LabelFrame(parent, text="1. 로컬에서 엑셀 찾아 추가", bg="#ffffff", padx=8, pady=6)
         search.pack(fill="x")
 
         self.var_dir = tk.StringVar(value=(default_roots() or [str(Path.home())])[0])
@@ -272,44 +275,37 @@ class BoardApp(tk.Tk):
         tk.Button(r2, text="검색", command=self._search_xlsx, bg="#e2e8f0").pack(side="left", padx=6)
         tk.Button(r2, text="선택 → 목록 추가", command=self._add_found).pack(side="left")
 
-        self.found_list = tk.Listbox(search, height=5, selectmode="extended", font=("Consolas", 9))
-        self.found_list.pack(fill="x", pady=6)
+        # 1번 검색결과 그리드 · 2번 보관목록 동일 높이
+        self._p2_list_height = 4
+
+        found_wrap = tk.Frame(search, bg="#ffffff")
+        found_wrap.pack(fill="x", pady=4)
+        self.found_list = tk.Listbox(
+            found_wrap,
+            height=self._p2_list_height,
+            selectmode="extended",
+            font=("Consolas", 9),
+        )
+        found_sb = tk.Scrollbar(found_wrap, orient="vertical", command=self.found_list.yview)
+        self.found_list.configure(yscrollcommand=found_sb.set)
+        self.found_list.pack(side="left", fill="x", expand=True)
+        found_sb.pack(side="right", fill="y")
         self._found_paths: list[str] = []
 
-        # 리스트박스
-        lib = tk.LabelFrame(parent, text="2. 보관 목록 (재실행 시 여기서만 선택)", bg="#ffffff", padx=8, pady=8)
-        lib.pack(fill="both", expand=True, pady=(10, 0))
+        # 실행 버튼 — 2.보관목록 위에 가로 배치
+        actions = tk.LabelFrame(parent, text="실행", bg="#ffffff", padx=8, pady=6)
+        actions.pack(fill="x", pady=(8, 0))
 
-        self.lib_list = tk.Listbox(lib, height=10, font=("Malgun Gothic", 10), exportselection=False)
-        self.lib_list.pack(fill="both", expand=True)
-        self.lib_list.bind("<<ListboxSelect>>", self._on_lib_select)
-        self._lib_paths: list[str] = []
-
-        self.p2_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
-        self.p2_sel.pack(fill="x", pady=4)
-
-        actions = tk.Frame(lib, bg="#ffffff")
-        actions.pack(fill="x")
         self.var_verify = tk.BooleanVar(value=True)
+        btn_row = tk.Frame(actions, bg="#ffffff")
+        btn_row.pack(fill="x")
         tk.Checkbutton(
-            actions,
-            text="1행 검증 모드 (추천: 스크린샷·재시도·3건확인)",
+            btn_row,
+            text="1행 검증",
             variable=self.var_verify,
             bg="#ffffff",
             font=("Malgun Gothic", 9),
-        ).pack(anchor="w", pady=(0, 6))
-
-        tk.Label(
-            actions,
-            text="수집 시작 시 더망고 로그인창이 열립니다 → 브라우저에서 직접 로그인",
-            bg="#ffffff",
-            fg="#0f766e",
-            anchor="w",
-            font=("Malgun Gothic", 9),
-        ).pack(fill="x", pady=(0, 8))
-
-        btn_row = tk.Frame(actions, bg="#ffffff")
-        btn_row.pack(fill="x")
+        ).pack(side="left", padx=(0, 8))
         tk.Button(
             btn_row,
             text="선택 파일로 수집 시작",
@@ -317,14 +313,76 @@ class BoardApp(tk.Tk):
             bg="#2563eb",
             fg="white",
             font=("Malgun Gothic", 9, "bold"),
-            padx=12,
-            pady=6,
+            padx=10,
+            pady=4,
         ).pack(side="left")
-        tk.Button(btn_row, text="목록에서 제거", command=self._remove_lib).pack(side="left", padx=8)
+        tk.Button(btn_row, text="목록에서 제거", command=self._remove_lib).pack(
+            side="left", padx=6
+        )
         tk.Button(btn_row, text="새로고침", command=self._refresh_p2_list).pack(side="left")
+        tk.Button(btn_row, text="로그 지우기", command=self._clear_p2_log).pack(
+            side="left", padx=6
+        )
+        tk.Label(
+            actions,
+            text="수집 시작 → 더망고 로그인창에서 직접 로그인 · 진행은 하단 실행로그에 표시",
+            bg="#ffffff",
+            fg="#0f766e",
+            anchor="w",
+            font=("Malgun Gothic", 8),
+        ).pack(fill="x", pady=(4, 0))
+
+        # 2. 보관 목록 — 1번 데이터 그리드와 동일 높이 + 스크롤
+        lib = tk.LabelFrame(
+            parent, text="2. 보관 목록 (재실행 시 여기서만 선택)", bg="#ffffff", padx=8, pady=4
+        )
+        lib.pack(fill="x", pady=(8, 0))
+
+        lib_wrap = tk.Frame(lib, bg="#ffffff")
+        lib_wrap.pack(fill="x")
+        self.lib_list = tk.Listbox(
+            lib_wrap,
+            height=self._p2_list_height,
+            font=("Malgun Gothic", 10),
+            exportselection=False,
+        )
+        lib_sb = tk.Scrollbar(lib_wrap, orient="vertical", command=self.lib_list.yview)
+        self.lib_list.configure(yscrollcommand=lib_sb.set)
+        self.lib_list.pack(side="left", fill="x", expand=True)
+        lib_sb.pack(side="right", fill="y")
+        self.lib_list.bind("<<ListboxSelect>>", self._on_lib_select)
+        self.lib_list.bind("<MouseWheel>", self._on_lib_mousewheel)
+        self.lib_list.bind("<Button-4>", self._on_lib_mousewheel)
+        self.lib_list.bind("<Button-5>", self._on_lib_mousewheel)
+        self._lib_paths: list[str] = []
+
+        self.p2_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
+        self.p2_sel.pack(fill="x", pady=(2, 0))
+
+        # 3. 실행 로그 그리드 (하단 · 진행 상황)
+        log_frame = tk.LabelFrame(parent, text="3. 실행 로그", bg="#ffffff", padx=6, pady=4)
+        log_frame.pack(fill="both", expand=True, pady=(8, 0))
+
+        cols = ("time", "stage", "message")
+        self.p2_log = ttk.Treeview(
+            log_frame,
+            columns=cols,
+            show="headings",
+            height=12,
+        )
+        self.p2_log.heading("time", text="시각")
+        self.p2_log.heading("stage", text="단계")
+        self.p2_log.heading("message", text="내용")
+        self.p2_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
+        self.p2_log.column("stage", width=90, minwidth=70, stretch=False, anchor="center")
+        self.p2_log.column("message", width=560, minwidth=200, stretch=True, anchor="w")
+        log_sb = tk.Scrollbar(log_frame, orient="vertical", command=self.p2_log.yview)
+        self.p2_log.configure(yscrollcommand=log_sb.set)
+        self.p2_log.pack(side="left", fill="both", expand=True)
+        log_sb.pack(side="right", fill="y")
 
         self.p2_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
-        self.p2_status.pack(fill="x", pady=6)
+        self.p2_status.pack(fill="x", pady=4)
 
     def _pick_search_dir(self) -> None:
         d = filedialog.askdirectory(initialdir=self.var_dir.get() or str(Path.home()))
@@ -393,6 +451,62 @@ class BoardApp(tk.Tk):
         remove_path(self._lib_paths[sel[0]])
         self._refresh_p2_list()
 
+    def _on_lib_mousewheel(self, event) -> str:
+        """보관 목록 스크롤 (Windows/macOS/Linux)."""
+        if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
+            self.lib_list.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0:
+            self.lib_list.yview_scroll(1, "units")
+        return "break"
+
+    def _clear_p2_log(self) -> None:
+        if hasattr(self, "p2_log"):
+            for item in self.p2_log.get_children():
+                self.p2_log.delete(item)
+
+    def _p2_log_line(self, message: str, stage: str = "") -> None:
+        """메인 스레드에서 실행로그 그리드에 한 줄 추가."""
+        if not hasattr(self, "p2_log"):
+            return
+        text = (message or "").rstrip()
+        if not text:
+            return
+        t = time.strftime("%H:%M:%S")
+        m = re.match(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$", text)
+        if m:
+            t = m.group(1)
+            text = m.group(2)
+        if not stage:
+            stage = self._guess_log_stage(text)
+        self.p2_log.insert("", "end", values=(t, stage, text))
+        children = self.p2_log.get_children()
+        if children:
+            self.p2_log.see(children[-1])
+
+    @staticmethod
+    def _guess_log_stage(text: str) -> str:
+        low = text.lower()
+        if "로그인" in text:
+            return "로그인"
+        if "초기화" in text or "대량" in text:
+            return "초기화"
+        if "검색" in text or "url" in low:
+            return "검색"
+        if "저장" in text:
+            return "저장"
+        if "실패" in text or "error" in low or "오류" in text:
+            return "오류"
+        if "성공" in text or "완료" in text or "done" in low:
+            return "완료"
+        if "대기" in text:
+            return "대기"
+        if "행" in text or "row" in low:
+            return "행처리"
+        return "진행"
+
+    def _p2_log_ui(self, message: str, stage: str = "") -> None:
+        self.after(0, lambda: self._p2_log_line(message, stage))
+
     def _run_p2(self) -> None:
         sel = self.lib_list.curselection()
         if not sel:
@@ -405,40 +519,83 @@ class BoardApp(tk.Tk):
         if not os.path.isfile(path):
             messagebox.showerror("오류", f"파일 없음:\n{path}")
             return
+        if self._p2_proc and self._p2_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 수집이 진행 중입니다.")
+            return
 
-        run_bat = ROOT / "P2" / "run.bat"
         collect_py = ROOT / "P2" / "collect.py"
         verify = bool(self.var_verify.get())
+        args = [
+            sys.executable,
+            str(collect_py),
+            path,
+            "3",
+            "--retries",
+            "3",
+            "--yes",
+        ]
+        if verify:
+            args.append("--verify")
+
+        set_selected(path)
+        mode = "1행 검증" if verify else "전체(--yes)"
+        self._p2_log_line(f"수집 시작 ({mode}): {path}", "시작")
+        self.p2_status.configure(
+            text=f"수집 실행 중 ({mode}) — 브라우저에서 직접 로그인하세요",
+            fg="#15803d",
+        )
+
         try:
-            # Avoid nested quotes like: call "path" inside cmd /k "..."
-            # which becomes '"path"' and Windows reports "not recognized".
-            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010) if os.name == "nt" else 0
-            if os.name == "nt" and run_bat.is_file():
-                args = ["cmd.exe", "/k", str(run_bat), path]
-                if verify:
-                    args.append("--verify")
-                subprocess.Popen(args, cwd=str(ROOT / "P2"), creationflags=flags)
-            else:
-                args = [
-                    sys.executable,
-                    str(collect_py),
-                    path,
-                    "3",
-                    "--retries",
-                    "3",
-                    "--yes",
-                ]
-                if verify:
-                    args.append("--verify")
-                subprocess.Popen(args, cwd=str(ROOT / "P2"), creationflags=flags)
-            set_selected(path)
-            mode = "1행 검증" if verify else "전체(--yes)"
-            self.p2_status.configure(
-                text=f"수집 시작 ({mode}) · 브라우저에서 직접 로그인: {path}",
-                fg="#15803d",
+            # 보드 하단 로그로 stdout 수신 (별도 콘솔 창 없음)
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            self._p2_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P2"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                creationflags=creationflags,
             )
         except Exception as e:
             messagebox.showerror("실행 실패", str(e))
+            self._p2_log_line(str(e), "오류")
+            return
+
+        threading.Thread(
+            target=self._watch_p2_proc,
+            args=(self._p2_proc, path),
+            daemon=True,
+        ).start()
+
+    def _watch_p2_proc(self, proc: subprocess.Popen, path: str) -> None:
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                self._p2_log_ui(line.rstrip("\n"))
+        except Exception as e:  # noqa: BLE001
+            self._p2_log_ui(f"로그 수신 오류: {e}", "오류")
+        code = proc.wait()
+        if code == 0:
+            self._p2_log_ui(f"수집 종료 OK (exit={code}): {path}", "완료")
+            self.after(
+                0,
+                lambda: self.p2_status.configure(
+                    text=f"수집 완료: {path}", fg="#15803d"
+                ),
+            )
+        else:
+            self._p2_log_ui(f"수집 종료 FAIL (exit={code}): {path}", "오류")
+            self.after(
+                0,
+                lambda: self.p2_status.configure(
+                    text=f"수집 실패 (exit={code})", fg="#b91c1c"
+                ),
+            )
 
 
 def main() -> None:
