@@ -30,8 +30,9 @@ from library import (  # noqa: E402
     search_xlsx,
     set_selected,
 )
+from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.13"
+VERSION = "2.0.14"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -45,6 +46,7 @@ class BoardApp(tk.Tk):
 
         self._p1_result = None
         self._p2_proc: subprocess.Popen | None = None
+        self._last_shot_dir: Path | None = None
         self._build()
         self._show("p1")
         self._refresh_p2_list()
@@ -301,7 +303,7 @@ class BoardApp(tk.Tk):
         btn_row.pack(fill="x")
         tk.Checkbutton(
             btn_row,
-            text="1행 검증",
+            text="1행 전과정 스크린샷",
             variable=self.var_verify,
             bg="#ffffff",
             font=("Malgun Gothic", 9),
@@ -323,9 +325,19 @@ class BoardApp(tk.Tk):
         tk.Button(btn_row, text="로그 지우기", command=self._clear_p2_log).pack(
             side="left", padx=6
         )
+        tk.Button(
+            btn_row,
+            text="스크린샷 보기",
+            command=self._show_shot_viewer,
+            bg="#0f766e",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=8,
+            pady=4,
+        ).pack(side="left", padx=6)
         tk.Label(
             actions,
-            text="수집 시작 → 더망고 로그인창에서 직접 로그인 · 진행은 하단 실행로그에 표시",
+            text="1행 전과정 스크린샷 ON → 로그인~완료까지 단계별 샷 기록 · [스크린샷 보기]로 확인",
             bg="#ffffff",
             fg="#0f766e",
             anchor="w",
@@ -476,6 +488,7 @@ class BoardApp(tk.Tk):
         if m:
             t = m.group(1)
             text = m.group(2)
+        self._capture_shot_dir_from_log(text)
         if not stage:
             stage = self._guess_log_stage(text)
         self.p2_log.insert("", "end", values=(t, stage, text))
@@ -483,9 +496,30 @@ class BoardApp(tk.Tk):
         if children:
             self.p2_log.see(children[-1])
 
+    def _capture_shot_dir_from_log(self, text: str) -> None:
+        """로그에서 샷 폴더 경로를 잡아 둔다."""
+        for key in ("[샷폴더]", "[갤러리]", "스크린샷·로그:", "로그="):
+            if key not in text:
+                continue
+            part = text.split(key, 1)[-1].strip()
+            # "[갤러리] C:\...\index.html (12장)" → 폴더
+            part = part.split(" (", 1)[0].strip()
+            if part.lower().endswith("index.html"):
+                part = str(Path(part).parent)
+            # "verify=True · 로그=C:\...\run-logs\..." 형태
+            if "로그=" in text and key == "로그=":
+                part = text.split("로그=", 1)[-1].strip()
+            p = Path(part)
+            if p.is_dir():
+                self._last_shot_dir = p
+            elif p.parent.is_dir() and p.parent.name:
+                self._last_shot_dir = p.parent
+
     @staticmethod
     def _guess_log_stage(text: str) -> str:
         low = text.lower()
+        if "[샷]" in text or "샷폴더" in text or "갤러리" in text:
+            return "샷"
         if "로그인" in text:
             return "로그인"
         if "초기화" in text or "대량" in text:
@@ -503,6 +537,12 @@ class BoardApp(tk.Tk):
         if "행" in text or "row" in low:
             return "행처리"
         return "진행"
+
+    def _show_shot_viewer(self) -> None:
+        folder = self._last_shot_dir
+        if folder is None or not folder.is_dir():
+            folder = latest_shot_dir(ROOT)
+        open_shot_viewer(self, shot_dir=folder, root=ROOT)
 
     def _p2_log_ui(self, message: str, stage: str = "") -> None:
         self.after(0, lambda: self._p2_log_line(message, stage))
@@ -538,7 +578,7 @@ class BoardApp(tk.Tk):
             args.append("--verify")
 
         set_selected(path)
-        mode = "1행 검증" if verify else "전체(--yes)"
+        mode = "1행 전과정 스크린샷" if verify else "전체(--yes)"
         self._p2_log_line(f"수집 시작 ({mode}): {path}", "시작")
         self.p2_status.configure(
             text=f"수집 실행 중 ({mode}) — 브라우저에서 직접 로그인하세요",
@@ -612,20 +652,30 @@ class BoardApp(tk.Tk):
         code = proc.wait()
         if code == 0:
             self._p2_log_ui(f"수집 종료 OK (exit={code}): {path}", "완료")
-            self.after(
-                0,
-                lambda: self.p2_status.configure(
-                    text=f"수집 완료: {path}", fg="#15803d"
-                ),
-            )
+            self.after(0, lambda: self._on_p2_finished(True, path))
         else:
             self._p2_log_ui(f"수집 종료 FAIL (exit={code}): {path}", "오류")
-            self.after(
-                0,
-                lambda: self.p2_status.configure(
-                    text=f"수집 실패 (exit={code})", fg="#b91c1c"
-                ),
-            )
+            self.after(0, lambda: self._on_p2_finished(False, path, code))
+
+    def _on_p2_finished(self, ok: bool, path: str, code: int = 0) -> None:
+        if ok:
+            self.p2_status.configure(text=f"수집 완료: {path}", fg="#15803d")
+            folder = self._last_shot_dir or latest_shot_dir(ROOT)
+            if folder and folder.is_dir() and any(folder.glob("*.png")):
+                self._p2_log_line(f"스크린샷 폴더: {folder}", "샷")
+                # 1행 전과정 샷이 있으면 바로 보여 줌
+                if bool(self.var_verify.get()):
+                    open_shot_viewer(self, shot_dir=folder, root=ROOT)
+        else:
+            self.p2_status.configure(text=f"수집 실패 (exit={code})", fg="#b91c1c")
+            folder = self._last_shot_dir or latest_shot_dir(ROOT)
+            if folder and folder.is_dir() and any(folder.glob("*.png")):
+                if messagebox.askyesno(
+                    "스크린샷",
+                    f"실패했지만 단계 스크린샷이 있습니다.\n{folder}\n\n지금 볼까요?",
+                    parent=self,
+                ):
+                    open_shot_viewer(self, shot_dir=folder, root=ROOT)
 
 
 def main() -> None:

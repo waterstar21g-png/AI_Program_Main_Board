@@ -77,6 +77,30 @@ SAVE_FAIL_PATTERNS = [
 
 SHOT_ROOT = Path(__file__).parent / "run-logs"
 
+# 현재 실행 컨텍스트(로그인 등 단계 샷을 같은 폴더에 모으기)
+_ACTIVE_CTX: "RunCtx | None" = None
+
+# 파일명 태그 → 한글 단계명 (갤러리/보드 표시용)
+SHOT_STEP_LABELS: dict[str, str] = {
+    "login_wait": "로그인 대기(창 표시)",
+    "login_ok": "로그인 완료",
+    "login_gate": "로그인 게이트",
+    "login_required": "세션만료·재로그인",
+    "ready": "준비완료(대량수집 진입)",
+    "00_init_bulk": "0. 초기화 — 대량데이터수집",
+    "01_url_filled": "1. URL 입력 완료",
+    "01_popup_missing": "1. 검색 팝업 미표시(오류)",
+    "01_popup_closed": "1. 검색 팝업 닫힘",
+    "01_results_ready": "1. 검색 결과 준비",
+    "02_save_modal": "2. 모두저장 모달",
+    "02_no_count_field": "2. 저장수 필드 없음(오류)",
+    "02_count_mismatch": "2. 저장수 불일치(오류)",
+    "02_modal_filled": "2. 필터명·저장수 입력",
+    "03_modal_stuck": "3. 저장 모달 미종료(오류)",
+    "03_modal_closed": "3. 저장 모달 닫힘",
+    "04_row_done": "4. 행 완료",
+}
+
 # 사용자 수동 로그인 대기 제한 (초)
 LOGIN_WAIT_SEC = 600
 
@@ -98,6 +122,7 @@ class RunCtx:
         batch: bool = False,
         shot_dir: Path | None = None,
     ) -> None:
+        global _ACTIVE_CTX
         self.save_count = save_count
         self.retries = max(1, retries)
         self.verify = verify
@@ -107,14 +132,28 @@ class RunCtx:
         self.shot_dir = shot_dir or (SHOT_ROOT / stamp)
         self.shot_dir.mkdir(parents=True, exist_ok=True)
         self.step_i = 0
+        self.shots: list[dict] = []
+        self._gallery_written = False
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
+        _ACTIVE_CTX = self
+        self.info(f"[샷폴더] {self.shot_dir}")
 
     def close(self) -> None:
+        global _ACTIVE_CTX
+        try:
+            self.write_gallery()
+        except Exception as e:  # noqa: BLE001
+            try:
+                self.info(f"  [갤러리 작성 실패] {e}")
+            except Exception:
+                pass
         try:
             self._log_file.close()
         except Exception:
             pass
+        if _ACTIVE_CTX is self:
+            _ACTIVE_CTX = None
 
     def info(self, msg: str) -> None:
         line = f"[{time.strftime('%H:%M:%S')}] {msg}"
@@ -125,18 +164,133 @@ class RunCtx:
         except Exception:
             pass
 
+    @staticmethod
+    def label_for_tag(tag: str) -> str:
+        if tag in SHOT_STEP_LABELS:
+            return SHOT_STEP_LABELS[tag]
+        for key, label in SHOT_STEP_LABELS.items():
+            if key in tag:
+                return label
+        if tag.startswith("fail_attempt"):
+            return f"실패 시도 {tag.replace('fail_attempt', '')}"
+        return tag
+
     def shot(self, page: Page, tag: str, row_no: int | None = None) -> Path | None:
         self.step_i += 1
         safe = re.sub(r"[^\w\-가-힣]+", "_", tag)[:40]
         name = f"{self.step_i:02d}_r{row_no or 0}_{safe}.png"
         path = self.shot_dir / name
+        label = self.label_for_tag(tag)
         try:
             page.screenshot(path=str(path), full_page=True)
-            self.info(f"  [샷] {path.name}")
+            self.shots.append(
+                {
+                    "step": self.step_i,
+                    "row": row_no or 0,
+                    "tag": tag,
+                    "label": label,
+                    "file": name,
+                    "path": str(path),
+                }
+            )
+            self.info(f"  [샷] {self.step_i:02d}. {label} → {path.name}")
             return path
         except Exception as e:  # noqa: BLE001
-            self.info(f"  [샷 실패] {e}")
+            self.info(f"  [샷 실패] {label}: {e}")
             return None
+
+    def write_gallery(self) -> Path | None:
+        """1행 전과정 스크린샷 HTML 갤러리 + JSON 인덱스 작성."""
+        if self._gallery_written:
+            gallery = self.shot_dir / "index.html"
+            return gallery if gallery.is_file() else None
+        pngs = sorted(self.shot_dir.glob("*.png"))
+        if not pngs and not self.shots:
+            return None
+
+        # shots 목록이 비어 있으면 파일명에서 재구성
+        items = list(self.shots)
+        if not items:
+            for i, p in enumerate(pngs, start=1):
+                stem = p.stem
+                tag = stem
+                m = re.match(r"^\d+_r\d+_(.+)$", stem)
+                if m:
+                    tag = m.group(1)
+                items.append(
+                    {
+                        "step": i,
+                        "row": 0,
+                        "tag": tag,
+                        "label": self.label_for_tag(tag),
+                        "file": p.name,
+                        "path": str(p),
+                    }
+                )
+
+        import json
+
+        idx_path = self.shot_dir / "shots.json"
+        idx_path.write_text(
+            json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+        rows_html: list[str] = []
+        for it in items:
+            f = it["file"]
+            label = it["label"]
+            step = it["step"]
+            rows_html.append(
+                f'<section class="shot">'
+                f"<h2>{step:02d}. {label}</h2>"
+                f'<p class="meta">{f}</p>'
+                f'<img src="{f}" alt="{label}"/>'
+                f"</section>"
+            )
+
+        html = f"""<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<title>1행 전과정 스크린샷</title>
+<style>
+body {{ font-family: "Malgun Gothic", sans-serif; margin: 16px; background: #0f172a; color: #e2e8f0; }}
+h1 {{ font-size: 20px; }}
+.shot {{ margin: 24px 0; padding: 12px; background: #1e293b; border-radius: 8px; }}
+.shot h2 {{ margin: 0 0 6px; font-size: 16px; color: #93c5fd; }}
+.meta {{ margin: 0 0 10px; color: #94a3b8; font-size: 12px; }}
+img {{ max-width: 100%; height: auto; border: 1px solid #334155; background: #fff; }}
+</style>
+</head>
+<body>
+<h1>1행 전과정 스크린샷 ({len(items)}장)</h1>
+<p>폴더: {self.shot_dir}</p>
+{''.join(rows_html)}
+</body>
+</html>
+"""
+        gallery = self.shot_dir / "index.html"
+        gallery.write_text(html, encoding="utf-8")
+        self._gallery_written = True
+        self.info(f"[갤러리] {gallery} ({len(items)}장)")
+        return gallery
+
+
+def shot_now(page: Page, tag: str, row_no: int | None = 0) -> Path | None:
+    """활성 RunCtx가 있으면 같은 샷폴더에, 없으면 run-logs 루트에 저장."""
+    ctx = _ACTIVE_CTX
+    if ctx is not None:
+        return ctx.shot(page, tag, row_no)
+    SHOT_ROOT.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w\-가-힣]+", "_", tag)[:40]
+    path = SHOT_ROOT / f"{time.strftime('%Y%m%d_%H%M%S')}_{safe}.png"
+    try:
+        page.screenshot(path=str(path), full_page=True)
+        log(f"  [샷] {path.name}")
+        return path
+    except Exception as e:  # noqa: BLE001
+        log(f"  [샷 실패] {e}")
+        return None
 
 
 # ── 브라우저 연결 (기존 Chrome/Edge에 CDP로 붙기, Chromium 다운로드 없음) ──
@@ -653,15 +807,7 @@ def wait_for_user_login(page: Page, timeout_sec: int = LOGIN_WAIT_SEC) -> Page:
     print(f"  로그인 완료 후 자동으로 계속됩니다. (최대 {timeout_sec}초)", flush=True)
     print("================================================", flush=True)
     log("사용자 로그인 대기 중...")
-
-    try:
-        SHOT_ROOT.mkdir(parents=True, exist_ok=True)
-        page.screenshot(
-            path=str(SHOT_ROOT / f"login_wait_{time.strftime('%Y%m%d_%H%M%S')}.png"),
-            full_page=True,
-        )
-    except Exception:  # noqa: BLE001
-        pass
+    shot_now(page, "login_wait", 0)
 
     deadline = time.time() + max(30, int(timeout_sec))
     last_url = ""
@@ -676,15 +822,7 @@ def wait_for_user_login(page: Page, timeout_sec: int = LOGIN_WAIT_SEC) -> Page:
             log(f"  [대기] URL={cur}")
         if _is_logged_in(page):
             log("사용자 로그인 확인 — 계속 진행")
-            try:
-                page.screenshot(
-                    path=str(
-                        SHOT_ROOT / f"login_ok_{time.strftime('%Y%m%d_%H%M%S')}.png"
-                    ),
-                    full_page=True,
-                )
-            except Exception:  # noqa: BLE001
-                pass
+            shot_now(page, "login_ok", 0)
             return page
         page.wait_for_timeout(1000)
 
@@ -725,13 +863,7 @@ def handle_possible_login_page(page: Page) -> None:
     if "admin_login" not in page.url:
         return
     log("  [경고] 로그인 화면 — 사용자 직접 로그인 대기")
-    try:
-        SHOT_ROOT.mkdir(parents=True, exist_ok=True)
-        shot = SHOT_ROOT / f"login_required_{time.strftime('%Y%m%d_%H%M%S')}.png"
-        page.screenshot(path=str(shot), full_page=True)
-        log(f"  [샷] 로그인 화면: {shot}")
-    except Exception as e:  # noqa: BLE001
-        log(f"  [샷 실패] {e}")
+    shot_now(page, "login_required", 0)
     wait_for_user_login(page)
     page = refresh_if_closed(page)
     if "admin_login" in page.url:
@@ -1043,13 +1175,7 @@ def ensure_ready_page(page: Page) -> Page:
             log("더망고 로그인창으로 이동: " + LOGIN_URL)
             safe_goto(page, LOGIN_URL)
             page = refresh_if_closed(page)
-        try:
-            SHOT_ROOT.mkdir(parents=True, exist_ok=True)
-            shot = SHOT_ROOT / f"login_gate_{time.strftime('%Y%m%d_%H%M%S')}.png"
-            page.screenshot(path=str(shot), full_page=True)
-            log(f"  [샷] 로그인 게이트: {shot}")
-        except Exception as e:  # noqa: BLE001
-            log(f"  [샷 실패] {e}")
+        shot_now(page, "login_gate", 0)
         page = wait_for_user_login(page)
         page = refresh_if_closed(page)
         try:
@@ -1176,10 +1302,13 @@ def main() -> None:
                             break
 
             ctx.info(f"완료: 성공 {ok} / 실패 {fail} / 대상 {len(rows)}행")
+            gallery = ctx.write_gallery()
             ctx.info(f"스크린샷·로그: {ctx.shot_dir}")
+            if gallery:
+                ctx.info(f"[갤러리] {gallery}")
             print("브라우저는 그대로 열어둡니다 (이 창만 닫으면 됩니다).")
             if verify and ok >= 1 and fail == 0:
-                print("✔ 검증 모드 PASS — 1행×저장수 완료")
+                print("✔ 검증 모드 PASS — 1행×저장수 완료 · 전과정 스크린샷 기록됨")
                 sys.exit(0)
             if fail:
                 sys.exit(2)

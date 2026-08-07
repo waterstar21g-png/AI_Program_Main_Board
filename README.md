@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.0.13** (Python B안)
+# AI_Program_Main_Board **v2.0.14** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
@@ -46,10 +46,11 @@ git pull origin main
 .\make-desktop-icon.cmd
 ```
 
-### P2 더망고 로그인
+### P2 더망고 로그인 · 1행 스크린샷
 
 수집 시작 → 더망고 **로그인창이 열림** → **브라우저에서 직접 로그인**  
-(자동 ID/PW 입력·1초 딜레이 입력 없음. 로그인 확인 후 수집 계속)
+**1행 전과정 스크린샷** 체크 시: 로그인~행완료까지 단계별 PNG 저장  
+→ 보드 **[스크린샷 보기]** 또는 `P2/run-logs/<시각>/index.html` 갤러리
 
 ## 예전 Next UI
 
