@@ -20,4 +20,6 @@ run.bat 엑셀.xlsx
 python collect.py 엑셀.xlsx 3 --retries 3 --yes
 ```
 
+로그인: 더망고 로그인창에서 **사용자가 직접** 입력 (자동 입력 없음).
+
 엑셀 헤더: `상위 최종 카테고리명` | `최종 카테고리 URL주소`
