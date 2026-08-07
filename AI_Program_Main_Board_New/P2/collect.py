@@ -47,6 +47,11 @@ CHROME_CANDIDATES = [
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/google-chrome",
+    "/usr/local/bin/google-chrome",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
 ]
 
 POPUP_WAIT_SEC = 600
@@ -596,6 +601,22 @@ def with_nav_retry(page: Page, fn, retries: int = 3):
     return None
 
 
+def _ask_human(prompt: str) -> None:
+    """대화형 터미널에서만 대기. CI/비대화형이면 즉시 실패."""
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "로그인이 필요하지만 비대화형 실행입니다. "
+            "로컬 PC에서 망고 로그인 후 다시 실행하세요."
+        )
+    try:
+        input(prompt)
+    except EOFError as e:
+        raise RuntimeError(
+            "로그인이 필요하지만 입력을 받을 수 없습니다. "
+            "로컬 PC에서 망고 로그인 후 다시 실행하세요."
+        ) from e
+
+
 def handle_possible_login_page(page: Page) -> None:
     """
     세션이 갑자기 만료돼(또는 애초에 로그인이 안 된 채) admin_login.php로
@@ -605,7 +626,14 @@ def handle_possible_login_page(page: Page) -> None:
     if "admin_login" not in page.url:
         return
     log("  [경고] 로그인 화면으로 이동됨 — 세션이 없거나 만료된 것 같습니다")
-    input("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
+    try:
+        SHOT_ROOT.mkdir(parents=True, exist_ok=True)
+        shot = SHOT_ROOT / f"login_required_{time.strftime('%Y%m%d_%H%M%S')}.png"
+        page.screenshot(path=str(shot), full_page=True)
+        log(f"  [샷] 로그인 화면: {shot}")
+    except Exception as e:  # noqa: BLE001
+        log(f"  [샷 실패] {e}")
+    _ask_human("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
     try:
         page.wait_for_load_state("domcontentloaded", timeout=15_000)
     except Exception:  # noqa: BLE001
@@ -907,7 +935,14 @@ def ensure_ready_page(page: Page) -> Page:
         safe_goto(page, MAIN_URL)
 
     if "admin_login" in page.url:
-        input("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
+        try:
+            SHOT_ROOT.mkdir(parents=True, exist_ok=True)
+            shot = SHOT_ROOT / f"login_gate_{time.strftime('%Y%m%d_%H%M%S')}.png"
+            page.screenshot(path=str(shot), full_page=True)
+            log(f"  [샷] 로그인 게이트: {shot}")
+        except Exception as e:  # noqa: BLE001
+            log(f"  [샷 실패] {e}")
+        _ask_human("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
         page = refresh_if_closed(page)
         # 로그인 직후 사이트 자체가 리다이렉트 중일 수 있으므로(m_login_ok.php 등)
         # 안정될 때까지 잠깐 기다린 뒤에 필요하면 이동한다.
