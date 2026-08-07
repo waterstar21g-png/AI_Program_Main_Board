@@ -70,3 +70,14 @@ $p='D:\My_Project\AI_Program_Main_Board'; $t=Join-Path $p 'run.bat'; if(-not(Tes
 ```
 
 또는 폴더에서 `make-desktop-icon.cmd` / `make-shortcut.bat` 더블클릭.
+
+### 작업표시줄에 고정
+
+소스가 있는 폴더에서:
+
+```powershell
+Set-Location D:\My_Project\AI_Program_Main_Board
+.\pin-taskbar.cmd
+```
+
+자동 고정이 안 되면: 바탕화면 **AI_Program_Main_Board** 우클릭 → **작업 표시줄에 고정**.
