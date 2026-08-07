@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.next-dev/
+out/
+.env
+.env.local
+.env*.local
+*.tsbuildinfo
+next-env.d.ts
+.vercel
+.data/
+카테고리별_상품목록_URL_LIST추출/
+.local/
+My_Project/
