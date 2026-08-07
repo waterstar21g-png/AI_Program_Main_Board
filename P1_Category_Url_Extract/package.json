@@ -1,0 +1,15 @@
+{
+  "name": "p1-category-url-extract",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "P1_Category_Url_Extract — ABC마트/A-RT 카테고리 URL 엑셀 추출 (배치)",
+  "scripts": {
+    "start": "node cli.mjs",
+    "collect": "node cli.mjs"
+  },
+  "dependencies": {
+    "cheerio": "^1.2.0",
+    "xlsx": "^0.18.5"
+  }
+}

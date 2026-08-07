@@ -1,14 +1,25 @@
+# Dependencies
 node_modules/
-.next/
-.next-dev/
-out/
+**/node_modules/
+
+# Python
+**/__pycache__/
+**/.venv/
+**/.chrome-profile/
+**/.local/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.lnk
+.vscode/
+.idea/
+
+# Logs / output
+*.log
+*.xlsx
+!**/fixtures/**/*.xlsx
+
+# Env
 .env
 .env.local
-.env*.local
-*.tsbuildinfo
-next-env.d.ts
-.vercel
-.data/
-카테고리별_상품목록_URL_LIST추출/
-.local/
-My_Project/
