@@ -32,7 +32,7 @@ from library import (  # noqa: E402
 )
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.21"
+VERSION = "2.0.22"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -532,6 +532,8 @@ class BoardApp(tk.Tk):
             return "샷"
         if "망고 자체" in text or "검색결과가 없습니다" in text or "무결과" in text:
             return "무결과"
+        if "망고알림" in text or "수집되었" in text or "수집건수" in text:
+            return "알림"
         if "중단" in text or "수집 종료" in text:
             return "중단"
         if "다음행" in text or "오버레이" in text or "모달/창 닫힘" in text or "팝업/모달" in text:
