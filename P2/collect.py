@@ -123,6 +123,8 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "서버 최종 갱신",
     "팝업창 모달이 나타나지",
     "팝업 없이 초기화",
+    "최종 팝업이 닫히지",
+    "팝업화면이 닫히지",
 )
 
 
@@ -290,8 +292,9 @@ class RunCtx:
         self.row_deadline: float | None = None  # 행당 제한시간(epoch)
         # 저장하기(서버 최종 갱신) 성공 여부 — True 되기 전 행 완료 금지
         self.server_save_ok: bool = False
-        # 저장하기 후 팝업창 모달을 실제로 봤는지 — 없으면 초기화 금지
+        # 저장하기 후 최종 팝업: 열림 확인 + 닫힘 확인 (둘 다 필수)
         self.save_popup_seen: bool = False
+        self.save_popup_closed: bool = False
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
@@ -316,6 +319,7 @@ class RunCtx:
         self.row_deadline = time.time() + ROW_BUDGET_SEC
         self.server_save_ok = False
         self.save_popup_seen = False
+        self.save_popup_closed = False
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
@@ -2263,7 +2267,9 @@ def run_save_submit_and_verify(
     """★저장하기 = 서버 최종 갱신 (필터정보·수집갯수·수집상품).
 
     입력만 하고 이 버튼을 빼먹으면 서버에 아무것도 반영되지 않는다.
-    클릭 → 서버 제출 반응 확인(최대 1회 재시도) → 결과 팝업/알림 → 수집건수 검증.
+    클릭 → 서버 제출 반응 확인(최대 1회 재시도)
+    → 최종 팝업화면 열림 → (열린 상태에서 건수 검증)
+    → 최종 팝업화면 닫힘까지 대기 → 그 다음에만 초기화/다음행.
     재시도 후에도 동일 실패면 다음 행으로 진행한다.
     """
     ctx.server_save_ok = False
@@ -2395,12 +2401,13 @@ def run_save_submit_and_verify(
                 "1회 재시도 후에도 동일. 다음 입력으로 진행."
             )
 
-        # ★필수: 저장 시간 + 팝업창 모달 대기 — 없으면 초기화 금지
+        # ★필수 순서: 팝업 열림 → 건수확인 → 팝업 닫힘 → 다음단계
+        # (최초 요건: 팝업창 열고, 닫힘까지 처리)
         ctx.info(
-            "3. ★★★ 저장하기 후 저장시간·팝업창 모달을 반드시 기다림 "
-            "(잔여 00건·모달닫힘으로 초기화 금지)"
+            "3. ★★★ 저장하기 후 최종 팝업: 열림 대기 "
+            "(잔여 00건·설정모달 닫힘만으로 통과 금지)"
         )
-        wait_save_overlays_settle(
+        wait_save_execution_popup(
             page,
             ctx,
             rn,
@@ -2409,15 +2416,14 @@ def run_save_submit_and_verify(
             baseline=alert_baseline,
             dialog_from=dialog_from,
         )
-
         if not getattr(ctx, "save_popup_seen", False):
             ctx.shot(page, "03_result_missing", rn)
             raise RuntimeError(
-                f"#{rn} 저장하기 후 팝업창 모달을 확인하지 못함 — "
+                f"#{rn} 최종 팝업화면이 열리지 않음 — "
                 "팝업 없이 초기화할 수 없습니다."
             )
 
-        # 최종: 망고 자체 메세지 — 저장된 상품 건수 = 서버 반영 확인
+        # 팝업이 열린 상태에서 망고 저장건수 메세지 확인
         verify_mango_collect_alert(
             page,
             ctx,
@@ -2428,11 +2434,39 @@ def run_save_submit_and_verify(
             dialog_from=dialog_from,
         )
 
+        # ★최종 팝업화면이 닫힐 때까지 대기 — 닫히기 전 초기화 금지
+        ctx.info(
+            "3. ★★★ 최종 팝업화면이 닫힐 때까지 기다림 "
+            "(열린 채로 초기화/다음행 금지)"
+        )
+        wait_save_popup_closed(
+            page,
+            ctx,
+            rn,
+            before_popup_ids=before_popup_ids,
+            baseline=alert_baseline,
+        )
+        if not getattr(ctx, "save_popup_closed", False):
+            ctx.shot(page, "03_modal_stuck", rn)
+            raise RuntimeError(
+                f"#{rn} 최종 팝업화면이 닫히지 않음 — "
+                "닫힐 때까지 초기화할 수 없습니다."
+            )
+
         verify_row_save_done(page, ctx, rn, save_count)
+        # 열림+닫힘 둘 다 확인된 경우에만 서버 저장 성공
+        if not (
+            getattr(ctx, "save_popup_seen", False)
+            and getattr(ctx, "save_popup_closed", False)
+        ):
+            raise RuntimeError(
+                f"#{rn} 최종 팝업 열림/닫힘 미완료 — "
+                "팝업이 닫힐 때까지 기다린 뒤에만 초기화 가능"
+            )
         ctx.server_save_ok = True
         ctx.info(
             f"4. -> 서버 최종 갱신 완료 "
-            f"(저장하기 OK + 팝업 확인 OK / 저장수 {save_count})"
+            f"(저장하기 OK + 팝업 열림→닫힘 OK / 저장수 {save_count})"
         )
         ctx.shot(page, "04_row_done", rn)
     finally:
@@ -2731,6 +2765,111 @@ def wait_save_execution_popup(
     ctx.save_popup_seen = True
 
 
+def final_save_popup_still_open(
+    page: Page,
+    *,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+) -> bool:
+    """최종 저장 팝업/레이어가 아직 화면에 열려 있는지.
+
+    - 저장하기 이후 새로 뜬 브라우저 창
+    - 저장 실행 인페이지 레이어(확인 버튼 포함)
+    본문에 남은 잔여 텍스트만으로는 '열림'으로 보지 않음.
+    """
+    prev = before_popup_ids or set()
+    for p in popups(page):
+        try:
+            if _popup_id(p) in prev:
+                continue
+            if not p.is_closed():
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+
+    if save_execution_layer_visible(page, baseline=baseline or set()):
+        return True
+
+    # 수집 결과 레이어의 확인/닫기 버튼이 보이면 아직 열린 것
+    try:
+        btn = (
+            page.locator("button, a, input[type='button'], input[type='submit']")
+            .filter(has_text=re.compile(r"^(확인|닫기|OK|Yes)$", re.I))
+            .first
+        )
+        if btn.count() > 0 and btn.is_visible():
+            # 상품저장설정 푸터의 취소하기와 구분 — 확인 근처 수집문구
+            try:
+                root = btn.locator("xpath=ancestor::*[self::div or self::td or self::form][1]")
+                txt = root.inner_text(timeout=400) if root.count() else ""
+            except Exception:  # noqa: BLE001
+                txt = ""
+            if parse_mango_collect_count(txt or "")[0] is not None:
+                return True
+            if re.search(r"수집\s*완료|저장\s*완료|처리\s*완료", txt or ""):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def wait_save_popup_closed(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    *,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+    timeout_sec: float | None = None,
+) -> None:
+    """★최종 팝업화면이 뜰 때까지가 아니라 — 뜬 뒤 '닫힐 때까지' 대기.
+
+    최초 요건: 팝업창 열고, 닫힘까지 처리. 열린 채로 초기화/다음단계 금지.
+    """
+    wait_sec = float(timeout_sec or MODAL_WAIT_SEC)
+    base = baseline or set()
+    ctx.info(
+        "3. ★★★ 최종 팝업화면이 닫힐 때까지 대기 "
+        f"(최대 {int(wait_sec)}초) — 닫히기 전 초기화 금지"
+    )
+    end = time.time() + wait_sec
+    closed_stable = 0
+    helped = False
+
+    while time.time() < end:
+        ctx.check_budget("최종 팝업 닫힘 대기")
+        open_now = final_save_popup_still_open(
+            page, before_popup_ids=before_popup_ids, baseline=base
+        )
+        if not open_now:
+            closed_stable += 1
+            if closed_stable >= 3:  # ~1초 이상 닫힌 상태 유지
+                ctx.save_popup_closed = True
+                ctx.info("3. ★ 최종 팝업화면 닫힘 확인 완료")
+                ctx.shot(page, "03_modal_closed", rn)
+                return
+            page.wait_for_timeout(350)
+            continue
+
+        closed_stable = 0
+        # 열려 있으면 확인 버튼으로 닫기 보조 (한두 번)
+        if not helped:
+            dismiss_mango_alert_ui(page)
+            helped = True
+            page.wait_for_timeout(400)
+            continue
+        # 주기적으로 확인 재시도
+        dismiss_mango_alert_ui(page)
+        page.wait_for_timeout(400)
+
+    ctx.shot(page, "03_modal_stuck", rn)
+    raise TimeoutError(
+        f"#{rn} 최종 팝업화면이 닫히지 않음. "
+        "팝업이 열린 채로 초기화/다음 행 진행 불가. "
+        "저장하기 → 팝업 열림 → 팝업 닫힘 → 다음 단계 순서 필수."
+    )
+
+
 def wait_save_overlays_settle(
     page: Page,
     ctx: RunCtx,
@@ -2741,11 +2880,15 @@ def wait_save_overlays_settle(
     baseline: set[str] | None = None,
     dialog_from: int = 0,
 ) -> None:
-    """저장 실행 팝업 출현(필수) 후 닫힘·정리 대기.
+    """저장 실행 팝업: 열림(필수) → 닫힘(필수).
 
-    팝업을 보기 전에는 반환하지 않는다. 모달 닫힘 ≠ 완료.
+    요건 원문: 팝업창 열고, 닫힘 등 후속 과정 처리.
+    열림만 보고 다음으로 가면 안 된다.
     """
     base = baseline if baseline is not None else set()
+    ctx.save_popup_closed = False
+
+    # 1) 열림
     wait_save_execution_popup(
         page,
         ctx,
@@ -2755,43 +2898,23 @@ def wait_save_overlays_settle(
         baseline=base,
         dialog_from=dialog_from,
     )
-
-    end = time.time() + min(30.0, float(MODAL_WAIT_SEC))
-    while time.time() < end:
-        ctx.check_budget("저장 팝업 정리 대기")
-        alert_n, _, _, _ = find_mango_collect_alert(
-            page, dialog_msgs, baseline=base, dialog_from=dialog_from
+    if not getattr(ctx, "save_popup_seen", False):
+        raise RuntimeError(
+            f"#{rn} 최종 팝업 열림 미확인 — 닫힘 대기/초기화 불가"
         )
-        if alert_n is not None:
-            ctx.info(
-                f"3. 팝업/알림에 수집건수 문구 확인됨 → 검증 단계로 ({alert_n}건)"
-            )
-            return
-        cur_new = [
-            p
-            for p in popups(page)
-            if _popup_id(p) not in (before_popup_ids or set())
-        ]
-        if not cur_new and not save_modal_visible(page):
-            page.wait_for_timeout(600)
-            alert_n, _, _, _ = find_mango_collect_alert(
-                page, dialog_msgs, baseline=base, dialog_from=dialog_from
-            )
-            if alert_n is not None:
-                return
-            if getattr(ctx, "save_popup_seen", False):
-                ctx.info("3. 저장 팝업 닫힘 — 수집건수 알림 검증으로 진행")
-                return
-        page.wait_for_timeout(400)
 
-    if getattr(ctx, "save_popup_seen", False):
-        ctx.info("3. 팝업은 확인됨 — 수집건수 알림 검증으로 진행")
-        return
-    ctx.shot(page, "03_result_missing", rn)
-    raise TimeoutError(
-        f"#{rn} 저장하기 후 팝업창 모달/알림 확인 실패 — "
-        "초기화로 진행할 수 없습니다."
+    # 2) 닫힘 — 여기 통과 전에 초기화·다음단계 금지
+    wait_save_popup_closed(
+        page,
+        ctx,
+        rn,
+        before_popup_ids=before_popup_ids,
+        baseline=base,
     )
+    if not getattr(ctx, "save_popup_closed", False):
+        raise RuntimeError(
+            f"#{rn} 최종 팝업화면이 닫히지 않음 — 초기화 진행 불가"
+        )
 
 
 def dismiss_mango_alert_ui(page: Page) -> None:
@@ -2977,11 +3100,13 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                 )
                 page = refresh_if_closed(page)
                 _process_row_once(page, row, ctx)
-                if not ctx.server_save_ok:
+                if not ctx.server_save_ok or not getattr(
+                    ctx, "save_popup_closed", False
+                ):
                     raise RuntimeError(
                         f"#{row['row']} 저장하기 서버 최종 갱신 미확인 — "
-                        "필터정보·수집갯수·수집상품이 서버에 반영되지 않음. "
-                        "저장하기 성공 전에 행을 완료할 수 없습니다."
+                        "최종 팝업 열림→닫힘 완료 전 행을 끝낼 수 없습니다. "
+                        "팝업이 닫힐 때까지 기다린 뒤 초기화하세요."
                     )
                 ctx.info(
                     f"[OK] 엑셀{row['row']}행 성공 (저장하기 서버갱신 OK, 시도 {attempt}) | "

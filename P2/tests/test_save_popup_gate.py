@@ -354,6 +354,89 @@ def test_new_alert_after_click_accepted_despite_stale_00(browser):
     page.close()
 
 
+def test_must_wait_until_final_popup_closes(browser):
+    """최종 팝업이 열린 뒤 닫힐 때까지 대기 — 열린 채 통과 금지."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    base = C.collect_alert_baseline(page)
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    ctx = FakeCtx()
+    C.wait_save_execution_popup(
+        page,
+        ctx,  # type: ignore[arg-type]
+        1,
+        dialog_msgs=[],
+        before_popup_ids=before,
+        baseline=base,
+        timeout_sec=10.0,
+        grace_sec=1.0,
+    )
+    assert ctx.save_popup_seen is True
+    assert C.final_save_popup_still_open(
+        page, before_popup_ids=before, baseline=base
+    )
+
+    # 열림 상태에서 닫힘 대기를 백그라운드로 — 잠시 후 확인 클릭
+    import threading
+
+    def _close_later():
+        page.wait_for_timeout(800)
+        page.click("#ok")
+
+    threading.Thread(target=_close_later, daemon=True).start()
+    C.wait_save_popup_closed(
+        page,
+        ctx,  # type: ignore[arg-type]
+        1,
+        before_popup_ids=before,
+        baseline=base,
+        timeout_sec=10.0,
+    )
+    assert ctx.save_popup_closed is True
+    assert not C.final_save_popup_still_open(
+        page, before_popup_ids=before, baseline=base
+    )
+    page.close()
+
+
+def test_open_plus_close_gate(browser):
+    """wait_save_overlays_settle = 열림 + 닫힘 둘 다."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    base = C.collect_alert_baseline(page)
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    ctx = FakeCtx()
+
+    import threading
+
+    def _close_later():
+        page.wait_for_timeout(1200)
+        try:
+            page.click("#ok")
+        except Exception:
+            pass
+
+    threading.Thread(target=_close_later, daemon=True).start()
+    old_g = C.SAVE_POPUP_GRACE_SEC
+    C.SAVE_POPUP_GRACE_SEC = 1.0
+    try:
+        C.wait_save_overlays_settle(
+            page,
+            ctx,  # type: ignore[arg-type]
+            1,
+            dialog_msgs=[],
+            before_popup_ids=before,
+            baseline=base,
+        )
+    finally:
+        C.SAVE_POPUP_GRACE_SEC = old_g
+    assert ctx.save_popup_seen is True
+    assert ctx.save_popup_closed is True
+    page.close()
+
+
 if __name__ == "__main__":
     # pytest 없이도 직접 실행 가능
     failed = 0
@@ -368,6 +451,8 @@ if __name__ == "__main__":
             ("full_gate", test_full_gate_blocks_server_save_ok_without_popup),
             ("stale_00", test_stale_00_collect_text_is_not_save_popup),
             ("stale_00_then_new", test_new_alert_after_click_accepted_despite_stale_00),
+            ("wait_until_closed", test_must_wait_until_final_popup_closes),
+            ("open_plus_close", test_open_plus_close_gate),
         ]:
             try:
                 fn(b)
