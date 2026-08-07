@@ -18,9 +18,10 @@ if ($PSScriptRoot -match 'OneDrive') {
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.3.1"
+$ExpectedVersion = "3.3.2"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+$Sha = "main"
 
 function Get-LocalAppVersion {
   if (-not (Test-Path "lib\app-version.ts")) { return "" }
@@ -72,6 +73,41 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
     }
   }
   throw $lastErr
+}
+
+function Ensure-ShortcutOnLocal {
+  # 로컬 폴더에 바로가기만들기.bat 확보 + 바탕화면 AI_Program_Main_Board.lnk 생성
+  foreach ($pair in @(
+      @("바로가기만들기.bat", "바로가기만들기.bat"),
+      @("create-shortcut.ps1", "create-shortcut.ps1")
+    )) {
+    if (-not (Test-Path -LiteralPath $pair[0])) {
+      try {
+        Download-RepoFile $pair[0] $pair[1]
+        Write-Host "[OK] $($pair[0]) 로컬에 받음"
+      } catch {
+        Write-Host "[WARN] $($pair[0]) 다운로드 실패 — $($_.Exception.Message)"
+      }
+    }
+  }
+
+  $desktop = [Environment]::GetFolderPath("Desktop")
+  if (-not $desktop) { return }
+  $lnkPath = Join-Path $desktop "AI_Program_Main_Board.lnk"
+  $target = Join-Path $PSScriptRoot "run.bat"
+  if (-not (Test-Path -LiteralPath $target)) { return }
+  try {
+    $w = New-Object -ComObject WScript.Shell
+    $sc = $w.CreateShortcut($lnkPath)
+    $sc.TargetPath = $target
+    $sc.WorkingDirectory = $PSScriptRoot
+    $sc.WindowStyle = 1
+    $sc.Description = "AI_Program_Main_Board — 보드 실행 (P1/P2/P3)"
+    $sc.Save()
+    Write-Host "[OK] 바탕화면 바로가기: $lnkPath"
+  } catch {
+    Write-Host "[WARN] 바탕화면 바로가기 실패 — $($_.Exception.Message)"
+  }
 }
 
 Write-Host "========================================"
@@ -162,6 +198,9 @@ if ($skipSync) {
     exit 1
   }
 }
+
+# 로컬 폴더에 바로가기만들기.bat 확보 + 바탕화면 바로가기 생성
+Ensure-ShortcutOnLocal
 
 $prevVer = ""
 if (Test-Path "VERSION.txt") {
