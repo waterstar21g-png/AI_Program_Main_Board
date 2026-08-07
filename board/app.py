@@ -32,7 +32,7 @@ from library import (  # noqa: E402
 )
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.14"
+VERSION = "2.0.15"
 APP_TITLE = "AI_Program_Main_Board"
 
 

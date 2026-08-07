@@ -33,6 +33,34 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
+# Windows cp949 콘솔/파이프에서 특수기호 출력 시 UnicodeEncodeError 방지
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+except Exception:
+    pass
+
+
+def safe_print(msg: str = "", *, flush: bool = True) -> None:
+    """stdout이 cp949여도 죽지 않게 출력."""
+    text = "" if msg is None else str(msg)
+    try:
+        print(text, flush=flush)
+        return
+    except UnicodeEncodeError:
+        pass
+    enc = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        data = (text + "\n").encode(enc, errors="replace")
+        sys.stdout.buffer.write(data)
+        if flush:
+            sys.stdout.flush()
+    except Exception:
+        try:
+            print(text.encode("ascii", errors="replace").decode("ascii"), flush=flush)
+        except Exception:
+            pass
+
 LOGIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin_login.php"
 MAIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin.php"
 BULK_URL = "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsNew.php"
@@ -106,7 +134,7 @@ LOGIN_WAIT_SEC = 600
 
 
 def log(msg: str) -> None:
-    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+    safe_print(f"[{time.strftime('%H:%M:%S')}] {msg}")
 
 
 class RunCtx:
@@ -157,7 +185,7 @@ class RunCtx:
 
     def info(self, msg: str) -> None:
         line = f"[{time.strftime('%H:%M:%S')}] {msg}"
-        print(line, flush=True)
+        safe_print(line)
         try:
             self._log_file.write(line + "\n")
             self._log_file.flush()
@@ -193,7 +221,7 @@ class RunCtx:
                     "path": str(path),
                 }
             )
-            self.info(f"  [샷] {self.step_i:02d}. {label} → {path.name}")
+            self.info(f"  [샷] {self.step_i:02d}. {label} -> {path.name}")
             return path
         except Exception as e:  # noqa: BLE001
             self.info(f"  [샷 실패] {label}: {e}")
@@ -800,12 +828,12 @@ def wait_for_user_login(page: Page, timeout_sec: int = LOGIN_WAIT_SEC) -> Page:
     except Exception:  # noqa: BLE001
         pass
 
-    print("", flush=True)
-    print("================================================", flush=True)
-    print("  더망고 로그인창에서 직접 로그인하세요.", flush=True)
-    print("  (프로그램이 ID/PW를 입력하지 않습니다)", flush=True)
-    print(f"  로그인 완료 후 자동으로 계속됩니다. (최대 {timeout_sec}초)", flush=True)
-    print("================================================", flush=True)
+    safe_print("")
+    safe_print("================================================")
+    safe_print("  더망고 로그인창에서 직접 로그인하세요.")
+    safe_print("  (프로그램이 ID/PW를 입력하지 않습니다)")
+    safe_print(f"  로그인 완료 후 자동으로 계속됩니다. (최대 {timeout_sec}초)")
+    safe_print("================================================")
     log("사용자 로그인 대기 중...")
     shot_now(page, "login_wait", 0)
 
@@ -1115,27 +1143,42 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
     last_err: Exception | None = None
     for attempt in range(1, ctx.retries + 1):
         try:
-            ctx.info(f"▶ 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행)")
+            ctx.info(f"> 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행)")
             page = refresh_if_closed(page)
             _process_row_once(page, row, ctx)
-            ctx.info(f"✔ {row['row']}행 성공 (시도 {attempt})")
+            ctx.info(f"[OK] {row['row']}행 성공 (시도 {attempt})")
             return True
         except Exception as e:  # noqa: BLE001
             last_err = e
-            ctx.info(f"✘ {row['row']}행 실패 (시도 {attempt}/{ctx.retries}): {e}")
+            err_name = type(e).__name__
+            ctx.info(
+                f"[FAIL] {row['row']}행 실패 (시도 {attempt}/{ctx.retries}): "
+                f"{err_name}: {e}"
+            )
             try:
+                page = refresh_if_closed(page)
                 ctx.shot(page, f"fail_attempt{attempt}", row["row"])
             except Exception:
                 pass
+            # 탭/브라우저가 닫힌 경우 같은 컨텍스트에서 페이지 다시 확보
+            if "TargetClosed" in err_name or "Target closed" in str(e):
+                ctx.info("  탭 닫힘 감지 — 작업 페이지 재연결 시도")
+                try:
+                    page = refresh_if_closed(page)
+                except Exception as re:  # noqa: BLE001
+                    ctx.info(f"  재연결 경고: {re}")
             if attempt < ctx.retries:
-                ctx.info("  같은 행 재시도 전 대량수집 화면 복귀…")
+                ctx.info("  같은 행 재시도 전 대량수집 화면 복귀...")
                 try:
                     page = refresh_if_closed(page)
                     reset_to_bulk_menu(page)
                 except Exception as re:  # noqa: BLE001
                     ctx.info(f"  복귀 중 경고: {re}")
-                page.wait_for_timeout(1000)
-    ctx.info(f"✖ {row['row']}행 최종 실패: {last_err}")
+                try:
+                    page.wait_for_timeout(1000)
+                except Exception:
+                    page = refresh_if_closed(page)
+    ctx.info(f"[FAIL] {row['row']}행 최종 실패: {last_err}")
     return False
 
 
@@ -1264,7 +1307,7 @@ def main() -> None:
 
     rows = read_excel(excel_path)
     if not rows:
-        print("엑셀에 처리할 행이 없습니다.")
+        safe_print("엑셀에 처리할 행이 없습니다.")
         sys.exit(1)
     if max_rows is not None:
         rows = rows[: max(0, max_rows)]
@@ -1306,9 +1349,9 @@ def main() -> None:
             ctx.info(f"스크린샷·로그: {ctx.shot_dir}")
             if gallery:
                 ctx.info(f"[갤러리] {gallery}")
-            print("브라우저는 그대로 열어둡니다 (이 창만 닫으면 됩니다).")
+            safe_print("브라우저는 그대로 열어둡니다 (이 창만 닫으면 됩니다).")
             if verify and ok >= 1 and fail == 0:
-                print("✔ 검증 모드 PASS — 1행×저장수 완료 · 전과정 스크린샷 기록됨")
+                safe_print("[OK] 검증 모드 PASS — 1행x저장수 완료 · 전과정 스크린샷 기록됨")
                 sys.exit(0)
             if fail:
                 sys.exit(2)
