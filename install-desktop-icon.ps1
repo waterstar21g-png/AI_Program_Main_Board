@@ -1,51 +1,82 @@
 #Requires -Version 5.1
-# D:\My_Project\AI_Program_Main_Board 시작 아이콘을 바탕화면에 만듭니다.
-# 사용 (어디서든):
+# Create desktop start icon -> D:\My_Project\AI_Program_Main_Board\run.bat
+# ASCII-only (PS 5.1 download encoding safe)
+# Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\install-desktop-icon.ps1
 $ErrorActionPreference = "Stop"
-chcp 65001 > $null
 
 $PreferredRoot = "D:\My_Project\AI_Program_Main_Board"
+$Repo = "https://github.com/waterstar21g-png/AI_Program_Main_Board.git"
 $RepoRaw = "https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main"
 
 Write-Host "========================================"
-Write-Host "  바탕화면 시작 아이콘 만들기"
+Write-Host "  Desktop icon: AI_Program_Main_Board"
 Write-Host "  $PreferredRoot"
 Write-Host "========================================"
 
+function Save-Utf8NoBom([string]$Path, [string]$Content) {
+  $utf8 = New-Object System.Text.UTF8Encoding $false
+  [System.IO.File]::WriteAllText($Path, $Content, $utf8)
+}
+
+function Get-RawText([string]$Url) {
+  $wc = New-Object System.Net.WebClient
+  $wc.Encoding = [System.Text.Encoding]::UTF8
+  return $wc.DownloadString($Url)
+}
+
 if (-not (Test-Path -LiteralPath (Join-Path $PreferredRoot "run.bat"))) {
-  Write-Host "[안내] 소스가 없습니다. fetch-local 로 먼저 받습니다..." -ForegroundColor Yellow
+  Write-Host "[INFO] Source missing. Cloning into $PreferredRoot ..." -ForegroundColor Yellow
   New-Item -ItemType Directory -Force -Path "D:\My_Project" | Out-Null
-  $fetch = Join-Path $env:TEMP "fetch-local-ai-board.ps1"
-  Invoke-WebRequest -Uri "$RepoRaw/fetch-local.ps1" -OutFile $fetch -UseBasicParsing
-  # fetch-local 의 대화형 실행 질문은 스킵되도록 비대화형 복제 로직은 여기서 clone
   if (Get-Command git -ErrorAction SilentlyContinue) {
     if (Test-Path (Join-Path $PreferredRoot ".git")) {
       Set-Location $PreferredRoot
       git pull origin main
     } else {
       if (Test-Path $PreferredRoot) { Remove-Item -Recurse -Force $PreferredRoot }
-      git clone "https://github.com/waterstar21g-png/AI_Program_Main_Board.git" $PreferredRoot
+      git clone $Repo $PreferredRoot
     }
   } else {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $fetch
+    $zip = Join-Path $env:TEMP "AI_Program_Main_Board-main.zip"
+    $tmp = Join-Path $env:TEMP "AI_Program_Main_Board-unz"
+    Invoke-WebRequest -Uri "https://github.com/waterstar21g-png/AI_Program_Main_Board/archive/refs/heads/main.zip" -OutFile $zip -UseBasicParsing
+    if (Test-Path $tmp) { Remove-Item -Recurse -Force $tmp }
+    Expand-Archive -Path $zip -DestinationPath $tmp -Force
+    New-Item -ItemType Directory -Force -Path $PreferredRoot | Out-Null
+    Copy-Item -Path (Join-Path $tmp "AI_Program_Main_Board-main\*") -Destination $PreferredRoot -Recurse -Force
+    Remove-Item -Recurse -Force $tmp, $zip -ErrorAction SilentlyContinue
   }
 }
 
-if (-not (Test-Path -LiteralPath (Join-Path $PreferredRoot "run.bat"))) {
-  Write-Host "[ERROR] $PreferredRoot\run.bat 없음. 소스 받기를 확인하세요." -ForegroundColor Red
+$runBat = Join-Path $PreferredRoot "run.bat"
+if (-not (Test-Path -LiteralPath $runBat)) {
+  Write-Host "[ERROR] Not found: $runBat" -ForegroundColor Red
   exit 1
 }
 
-# 최신 create-shortcut.ps1 받기
-$createPs1 = Join-Path $PreferredRoot "create-shortcut.ps1"
+# Refresh create-shortcut.ps1 (UTF-8 no BOM)
 try {
-  Invoke-WebRequest -Uri "$RepoRaw/create-shortcut.ps1" -OutFile $createPs1 -UseBasicParsing
+  $createPs1 = Join-Path $PreferredRoot "create-shortcut.ps1"
+  Save-Utf8NoBom $createPs1 (Get-RawText "$RepoRaw/create-shortcut.ps1")
 } catch {
-  Write-Host "[WARN] GitHub에서 create-shortcut.ps1 다운로드 실패 — 로컬 파일 사용" -ForegroundColor Yellow
+  Write-Host "[WARN] Could not refresh create-shortcut.ps1 - using local if present" -ForegroundColor Yellow
 }
 
-& powershell -NoProfile -ExecutionPolicy Bypass -File $createPs1
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+# Create shortcut here (no nested script parse issues)
+$desktop = [Environment]::GetFolderPath("Desktop")
+$lnkPath = Join-Path $desktop "AI_Program_Main_Board.lnk"
+$w = New-Object -ComObject WScript.Shell
+$sc = $w.CreateShortcut($lnkPath)
+$sc.TargetPath = $runBat
+$sc.WorkingDirectory = $PreferredRoot
+$sc.WindowStyle = 1
+$sc.Description = "AI_Program_Main_Board start"
+$sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
+$sc.Save()
 
-Write-Host "[DONE] 바탕화면의 AI_Program_Main_Board 아이콘을 더블클릭하세요." -ForegroundColor Green
+Write-Host ""
+Write-Host "[OK] Project : $PreferredRoot" -ForegroundColor Green
+Write-Host "[OK] Shortcut: $lnkPath" -ForegroundColor Green
+Write-Host "     Target  : $runBat"
+Write-Host "[DONE] Double-click desktop icon: AI_Program_Main_Board" -ForegroundColor Green
+Write-Host ""
