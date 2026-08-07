@@ -201,7 +201,8 @@ if ($skipSync) {
     @("README.md", "README.md"),
     @("PROJECTS.md", "PROJECTS.md"),
     @("fetch-local.ps1", "fetch-local.ps1"),
-    @("install-desktop-icon.ps1", "install-desktop-icon.ps1")
+    @("install-desktop-icon.ps1", "install-desktop-icon.ps1"),
+    @("make-desktop-icon.cmd", "make-desktop-icon.cmd")
   )
 
   $failed = @()
