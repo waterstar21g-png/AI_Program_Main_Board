@@ -1508,10 +1508,117 @@ def resolve_save_submit_control(page: Page):
     )
 
 
-def trusted_click_save_submit(page: Page, el) -> bool:
+def diagnose_save_click_environment(
+    page: Page, el, ctx: "RunCtx | None" = None, tag: str = ""
+) -> dict:
+    """9항 클릭이 안 먹힐 때 '왜' 안 되는지 바로 보이게 진단.
+
+    - 대상 disabled/pointer-events/visibility/opacity
+    - 클릭 좌표를 실제로 가로채는 요소(오버레이·z-index 문제)
+    - iframe 존재(모달이 iframe 안일 가능성)
+    - 미선택 필수 라디오/셀렉트/체크박스(정책 선택 등 숨은 필수값)
+    """
+    info: dict = {}
+    try:
+        info["frames"] = len(page.frames)
+        urls = [f.url for f in page.frames if f.url and f.url != page.url]
+        if urls:
+            info["frame_urls"] = urls[:5]
+    except Exception as e:  # noqa: BLE001
+        info["frames_error"] = str(e)
+
+    if el is not None:
+        try:
+            info["target"] = el.evaluate(
+                """(node) => {
+                    const cs = getComputedStyle(node);
+                    const r = node.getBoundingClientRect();
+                    return {
+                        tag: node.tagName,
+                        disabled: !!node.disabled,
+                        ariaDisabled: node.getAttribute('aria-disabled'),
+                        display: cs.display,
+                        visibility: cs.visibility,
+                        pointerEvents: cs.pointerEvents,
+                        opacity: cs.opacity,
+                        rect: [
+                            Math.round(r.x), Math.round(r.y),
+                            Math.round(r.width), Math.round(r.height)
+                        ],
+                    };
+                }"""
+            )
+        except Exception as e:  # noqa: BLE001
+            info["target_error"] = str(e)
+        try:
+            info["intercept"] = el.evaluate(
+                """(node) => {
+                    const r = node.getBoundingClientRect();
+                    const cx = r.x + r.width / 2;
+                    const cy = r.y + r.height / 2;
+                    const top = document.elementFromPoint(cx, cy);
+                    if (!top) return { hit: 'none(offscreen?)' };
+                    const same = (top === node) || node.contains(top) || top.contains(node);
+                    if (same) return { same: true };
+                    return {
+                        same: false,
+                        tag: top.tagName,
+                        id: top.id || '',
+                        cls: (top.className || '').toString().slice(0, 80),
+                    };
+                }"""
+            )
+        except Exception as e:  # noqa: BLE001
+            info["intercept_error"] = str(e)
+
+    try:
+        info["unselected_required"] = page.evaluate(
+            """() => {
+                const out = [];
+                const groups = {};
+                document.querySelectorAll('input[type=radio]').forEach((r) => {
+                    if (!r.name) return;
+                    groups[r.name] = groups[r.name] || [];
+                    groups[r.name].push(r);
+                });
+                for (const [name, radios] of Object.entries(groups)) {
+                    const anyChecked = radios.some((r) => r.checked);
+                    const visible = radios.some((r) => {
+                        const rc = r.getBoundingClientRect();
+                        return rc.width > 0 && rc.height > 0;
+                    });
+                    if (!anyChecked && visible) out.push('radio:' + name);
+                }
+                document.querySelectorAll('select').forEach((s) => {
+                    const rc = s.getBoundingClientRect();
+                    if (rc.width > 0 && rc.height > 0 && s.value === '') {
+                        out.push('select:' + (s.name || s.id || '?'));
+                    }
+                });
+                document.querySelectorAll('input[type=checkbox][required]').forEach((c) => {
+                    if (!c.checked) out.push('checkbox:' + (c.name || c.id || '?'));
+                });
+                return out.slice(0, 10);
+            }"""
+        )
+    except Exception as e:  # noqa: BLE001
+        info["unselected_error"] = str(e)
+
+    line = f"[9항 진단{(':' + tag) if tag else ''}] {info!r}"
+    if ctx is not None:
+        ctx.info(f"  {line}")
+    else:
+        log(f"  {line}")
+    return info
+
+
+def trusted_click_save_submit(
+    page: Page, el, ctx: "RunCtx | None" = None
+) -> bool:
     """하단 저장하기 클릭 — 실제 a/button/input 에 클릭.
 
     div 래퍼 클릭·JS 가짜 성공으로 서버 미제출되던 경로를 막는다.
+    실패할 때마다 원인(가로채기·비활성화·미선택 필수값)을 진단·기록한다.
     """
     el = _prefer_clickable_save(el)
     try:
@@ -1519,20 +1626,31 @@ def trusted_click_save_submit(page: Page, el) -> bool:
         log(f"  [9항 클릭대상] <{tag}> 저장하기")
     except Exception:  # noqa: BLE001
         pass
+    diagnose_save_click_environment(page, el, ctx, tag="클릭전")
     try:
         el.scroll_into_view_if_needed(timeout=5_000)
     except Exception:  # noqa: BLE001
         pass
-    page.wait_for_timeout(150)
-
-    # 1) 일반 클릭
+    # 스크롤/애니메이션 중 좌표가 흔들리는 경우 대비 — 위치 안정화 대기
     try:
-        el.click(timeout=15_000)
-        return True
+        prev_box = el.bounding_box()
+        for _ in range(6):
+            page.wait_for_timeout(120)
+            cur_box = el.bounding_box()
+            if prev_box and cur_box and abs(cur_box["y"] - prev_box["y"]) < 1:
+                break
+            prev_box = cur_box
     except Exception:  # noqa: BLE001
         pass
 
-    # 2) 좌표 마우스 클릭
+    # 1) 일반 클릭 (trusted)
+    try:
+        el.click(timeout=15_000)
+        return True
+    except Exception as e:  # noqa: BLE001
+        log(f"  [경고] 저장하기 일반클릭 실패: {type(e).__name__}")
+
+    # 2) 좌표 마우스 클릭 (trusted)
     try:
         box = el.bounding_box()
         if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
@@ -1541,17 +1659,29 @@ def trusted_click_save_submit(page: Page, el) -> bool:
                 box["y"] + box["height"] / 2,
             )
             return True
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        log(f"  [경고] 저장하기 좌표클릭 실패: {type(e).__name__}")
 
-    # 3) force 클릭
+    # 3) force 클릭 (trusted, 가로채는 요소 무시)
     try:
         el.click(timeout=8_000, force=True)
         return True
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        log(f"  [경고] 저장하기 force클릭 실패: {type(e).__name__}")
 
-    # 4) 최후 JS — 클릭 가능 노드 + bubble 이벤트. 성공으로 단정하지 않음(재시도 유도)
+    # 4) 키보드 활성화 (trusted) — onclick이 키보드 이벤트에도 걸린 경우
+    try:
+        el.focus()
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(200)
+        page.keyboard.press("Space")
+        return True
+    except Exception as e:  # noqa: BLE001
+        log(f"  [경고] 저장하기 키보드 활성화 실패: {type(e).__name__}")
+
+    diagnose_save_click_environment(page, el, ctx, tag="클릭실패직전")
+
+    # 5) 최후 JS — 클릭 가능 노드 + bubble 이벤트. 성공으로 단정하지 않음(재시도 유도)
     try:
         el.evaluate(
             """(node) => {
@@ -2259,7 +2389,7 @@ def run_save_submit_and_verify(
             alert_baseline = collect_alert_baseline(page)
             dialog_from = len(dialog_msgs)
             before_popup_ids = {_popup_id(p) for p in popups(page)}
-            last_click_ok = trusted_click_save_submit(page, btn)
+            last_click_ok = trusted_click_save_submit(page, btn, ctx)
             # 클릭 시도 순간부터 팝업 닫힘까지 초기화 진입 금지
             ctx.save_awaiting_popup = True
             ctx.info(
@@ -2292,6 +2422,22 @@ def run_save_submit_and_verify(
             )
             ctx.shot(page, "02_save_no_react", rn)
             dump_save_button_candidates(page, ctx)
+            diag = diagnose_save_click_environment(page, btn, ctx, tag="반응없음")
+            if diag.get("intercept", {}).get("same") is False:
+                ctx.info(
+                    "  [9항 원인추정] 클릭 좌표를 다른 요소가 가로챔 → "
+                    f"{diag['intercept']}"
+                )
+            if diag.get("unselected_required"):
+                ctx.info(
+                    "  [9항 원인추정] 미선택 필수값 있음(정책 등) → "
+                    f"{diag['unselected_required']}"
+                )
+            if diag.get("frame_urls"):
+                ctx.info(
+                    "  [9항 원인추정] 다른 프레임 존재(iframe 가능) → "
+                    f"{diag['frame_urls']}"
+                )
             if save_modal_visible(page) and attempt < 2:
                 page.wait_for_timeout(600)
                 continue
@@ -2302,8 +2448,9 @@ def run_save_submit_and_verify(
             ctx.shot(page, "02_save_failed", rn)
             raise RuntimeError(
                 f"#{rn} 9항 하단 '저장하기' 서버 제출 실패 — "
-                "클릭해도 저장 팝업이 없음 (래퍼 div 오클릭·미클릭 가능). "
-                "팝업 없이 초기화/다음단계 불가. 1회 재시도 후에도 동일."
+                "클릭해도 저장 팝업이 없음. 위 [9항 진단]/[9항 원인추정] 로그로 "
+                "가로채는 요소·미선택 필수값·iframe 여부를 확인하세요. "
+                "1회 재시도 후에도 동일."
             )
 
         # ★필수 순서(사용자 14단계): 10 열림 → 11 닫힘확인 → 12 건수로그 → 13 초기화
