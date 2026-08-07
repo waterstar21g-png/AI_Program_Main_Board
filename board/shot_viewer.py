@@ -1,4 +1,4 @@
-"""1행 전과정 스크린샷 뷰어 (Tkinter)."""
+"""1·2행 전과정 스크린샷 뷰어 (Tkinter)."""
 
 from __future__ import annotations
 
@@ -49,7 +49,7 @@ class ShotViewer(tk.Toplevel):
     def __init__(self, master: tk.Misc, shot_dir: Path) -> None:
         super().__init__(master)
         self.shot_dir = Path(shot_dir)
-        self.title(f"1행 전과정 스크린샷 — {self.shot_dir.name}")
+        self.title(f"1·2행 전과정 스크린샷 — {self.shot_dir.name}")
         self.geometry("1100x720")
         self.minsize(800, 500)
         self._photo: tk.PhotoImage | None = None
@@ -59,7 +59,7 @@ class ShotViewer(tk.Toplevel):
         head.pack(fill="x")
         tk.Label(
             head,
-            text=f"샷 폴더: {self.shot_dir}  ({len(self._items)}장)",
+            text=f"샷 폴더: {self.shot_dir}  ({len(self._items)}장) · 입력1·2행 단계샷",
             fg="white",
             bg="#164a59",
             font=("Malgun Gothic", 10, "bold"),
@@ -99,7 +99,12 @@ class ShotViewer(tk.Toplevel):
         for it in self._items:
             step = it.get("step", "")
             label = it.get("label") or it.get("file") or ""
-            self.listbox.insert("end", f"{step:02d}. {label}" if step != "" else label)
+            ord_n = it.get("ordinal") or ""
+            cat = it.get("category") or ""
+            prefix = f"{step:02d}. " if step != "" else ""
+            mid = f"[입력#{ord_n}] " if ord_n else ""
+            cat_bit = f" · {cat}" if cat else ""
+            self.listbox.insert("end", f"{prefix}{mid}{label}{cat_bit}")
 
         if self._items:
             self.listbox.selection_set(0)
@@ -119,14 +124,19 @@ class ShotViewer(tk.Toplevel):
         it = self._items[idx]
         path = Path(it.get("path") or (self.shot_dir / it["file"]))
         label = it.get("label") or path.name
-        self.caption.configure(text=f"{it.get('step', idx + 1)}. {label}  —  {path.name}")
+        cat = it.get("category") or ""
+        url = it.get("url") or ""
+        cap = f"{it.get('step', idx + 1)}. {label}  —  {path.name}"
+        if cat or url:
+            cap += f"\n상위 최종 카테고리명={cat}\n최종 카테고리 URL주소={url}"
+        self.caption.configure(text=cap, justify="left", anchor="w")
         if not path.is_file():
             self.canvas.configure(image="", text=f"파일 없음:\n{path}", fg="white")
             return
         try:
             img = tk.PhotoImage(file=str(path))
             # 창에 맞게 축소 (정수 배수 subsample)
-            max_w, max_h = 820, 560
+            max_w, max_h = 820, 520
             factor = max(1, (img.width() + max_w - 1) // max_w, (img.height() + max_h - 1) // max_h)
             if factor > 1:
                 img = img.subsample(factor, factor)

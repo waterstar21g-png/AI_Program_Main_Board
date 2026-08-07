@@ -138,7 +138,10 @@ def log(msg: str) -> None:
 
 
 class RunCtx:
-    """1행×N상품 검증·재시도·스크린샷용 실행 컨텍스트"""
+    """행 단위 수집·재시도·스크린샷용 실행 컨텍스트
+
+    shot_first_n: 입력 데이터 앞 N건(기본 2=1·2행)만 단계별 스크린샷.
+    """
 
     def __init__(
         self,
@@ -149,6 +152,7 @@ class RunCtx:
         max_rows: int | None = None,
         batch: bool = False,
         shot_dir: Path | None = None,
+        shot_first_n: int = 2,
     ) -> None:
         global _ACTIVE_CTX
         self.save_count = save_count
@@ -156,16 +160,40 @@ class RunCtx:
         self.verify = verify
         self.max_rows = max_rows
         self.batch = batch or verify  # 검증 모드는 기본 무중단
+        self.shot_first_n = max(0, int(shot_first_n))
         stamp = time.strftime("%Y%m%d_%H%M%S")
         self.shot_dir = shot_dir or (SHOT_ROOT / stamp)
         self.shot_dir.mkdir(parents=True, exist_ok=True)
         self.step_i = 0
         self.shots: list[dict] = []
         self._gallery_written = False
+        self.input_ordinal = 0  # 처리 중인 입력 순서(1부터)
+        self.current_label = ""
+        self.current_url = ""
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
         self.info(f"[샷폴더] {self.shot_dir}")
+        if self.shot_first_n > 0:
+            self.info(f"[샷대상] 입력 데이터 1~{self.shot_first_n}행 단계별 스크린샷")
+
+    def begin_row(self, ordinal: int, row: dict) -> None:
+        """행 처리 시작 — 로그에 카테고리명·URL 기록."""
+        self.input_ordinal = ordinal
+        self.current_label = str(row.get("label") or "").strip()
+        self.current_url = str(row.get("url") or "").strip()
+        excel_row = row.get("row", "?")
+        self.info(
+            f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
+            f"상위 최종 카테고리명={self.current_label} | "
+            f"최종 카테고리 URL주소={self.current_url} ---"
+        )
+
+    def wants_row_shot(self, row_no: int | None = None) -> bool:
+        """공통(로그인 등 row_no=0) 또는 입력 1~N행만 샷."""
+        if row_no in (None, 0):
+            return True
+        return 0 < self.input_ordinal <= self.shot_first_n
 
     def close(self) -> None:
         global _ACTIVE_CTX
@@ -204,9 +232,12 @@ class RunCtx:
         return tag
 
     def shot(self, page: Page, tag: str, row_no: int | None = None) -> Path | None:
+        if not self.wants_row_shot(row_no):
+            return None
         self.step_i += 1
         safe = re.sub(r"[^\w\-가-힣]+", "_", tag)[:40]
-        name = f"{self.step_i:02d}_r{row_no or 0}_{safe}.png"
+        ord_part = f"i{self.input_ordinal}" if self.input_ordinal else "i0"
+        name = f"{self.step_i:02d}_{ord_part}_r{row_no or 0}_{safe}.png"
         path = self.shot_dir / name
         label = self.label_for_tag(tag)
         try:
@@ -214,14 +245,20 @@ class RunCtx:
             self.shots.append(
                 {
                     "step": self.step_i,
+                    "ordinal": self.input_ordinal,
                     "row": row_no or 0,
                     "tag": tag,
                     "label": label,
+                    "category": self.current_label,
+                    "url": self.current_url,
                     "file": name,
                     "path": str(path),
                 }
             )
-            self.info(f"  [샷] {self.step_i:02d}. {label} -> {path.name}")
+            extra = ""
+            if self.current_label or self.current_url:
+                extra = f" | {self.current_label} | {self.current_url}"
+            self.info(f"  [샷] {self.step_i:02d}. {label} -> {path.name}{extra}")
             return path
         except Exception as e:  # noqa: BLE001
             self.info(f"  [샷 실패] {label}: {e}")
@@ -266,12 +303,23 @@ class RunCtx:
         rows_html: list[str] = []
         for it in items:
             f = it["file"]
-            label = it["label"]
-            step = it["step"]
+            label = it.get("label") or ""
+            step = it.get("step", 0)
+            cat = it.get("category") or ""
+            url = it.get("url") or ""
+            ord_n = it.get("ordinal") or 0
+            meta_bits = [f]
+            if ord_n:
+                meta_bits.append(f"입력#{ord_n}")
+            if cat:
+                meta_bits.append(f"상위 최종 카테고리명={cat}")
+            if url:
+                meta_bits.append(f"최종 카테고리 URL주소={url}")
+            meta = " | ".join(meta_bits)
             rows_html.append(
                 f'<section class="shot">'
                 f"<h2>{step:02d}. {label}</h2>"
-                f'<p class="meta">{f}</p>'
+                f'<p class="meta">{meta}</p>'
                 f'<img src="{f}" alt="{label}"/>'
                 f"</section>"
             )
@@ -280,18 +328,18 @@ class RunCtx:
 <html lang="ko">
 <head>
 <meta charset="utf-8"/>
-<title>1행 전과정 스크린샷</title>
+<title>1·2행 전과정 스크린샷</title>
 <style>
 body {{ font-family: "Malgun Gothic", sans-serif; margin: 16px; background: #0f172a; color: #e2e8f0; }}
 h1 {{ font-size: 20px; }}
 .shot {{ margin: 24px 0; padding: 12px; background: #1e293b; border-radius: 8px; }}
 .shot h2 {{ margin: 0 0 6px; font-size: 16px; color: #93c5fd; }}
-.meta {{ margin: 0 0 10px; color: #94a3b8; font-size: 12px; }}
+.meta {{ margin: 0 0 10px; color: #94a3b8; font-size: 12px; word-break: break-all; }}
 img {{ max-width: 100%; height: auto; border: 1px solid #334155; background: #fff; }}
 </style>
 </head>
 <body>
-<h1>1행 전과정 스크린샷 ({len(items)}장)</h1>
+<h1>1·2행 전과정 스크린샷 ({len(items)}장)</h1>
 <p>폴더: {self.shot_dir}</p>
 {''.join(rows_html)}
 </body>
@@ -985,18 +1033,21 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     url = normalize_url(row["url"])
     save_count = ctx.save_count
     rn = row["row"]
-    ctx.info(f"--- {rn}행 : {label} (목표 저장수={save_count}) ---")
+    ctx.info(
+        f"처리 시작 | 상위 최종 카테고리명={label} | "
+        f"최종 카테고리 URL주소={row['url']} | 목표 저장수={save_count}"
+    )
 
     ctx.info("0. 초기화 : 상품데이터수집 -> 대량데이터수집")
     reset_to_bulk_menu(page)
     page.wait_for_timeout(500)
     ctx.shot(page, "00_init_bulk", rn)
 
-    ctx.info(f"  엑셀 원본 값: {row['url']!r}")
+    ctx.info(f"  엑셀 원본 URL: {row['url']}")
     if url != row["url"].strip():
         ctx.info(f"  [정보] 프로토콜 보정됨: {url}")
 
-    ctx.info(f"1. 필드값 입력: {url}")
+    ctx.info(f"1. URL 입력 | 상위 최종 카테고리명={label} | 최종 카테고리 URL주소={url}")
     target = url_input(page)
     type_into(page, target, url)
     actual = ""
@@ -1141,18 +1192,27 @@ def verify_row_save_done(page: Page, ctx: RunCtx, row_no: int, save_count: int) 
 def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
     """행 단위 재시도. 성공 True / 최종 실패 False."""
     last_err: Exception | None = None
+    label = str(row.get("label") or "").strip()
+    raw_url = str(row.get("url") or "").strip()
     for attempt in range(1, ctx.retries + 1):
         try:
-            ctx.info(f"> 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행)")
+            ctx.info(
+                f"> 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행) | "
+                f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+            )
             page = refresh_if_closed(page)
             _process_row_once(page, row, ctx)
-            ctx.info(f"[OK] {row['row']}행 성공 (시도 {attempt})")
+            ctx.info(
+                f"[OK] 엑셀{row['row']}행 성공 (시도 {attempt}) | "
+                f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+            )
             return True
         except Exception as e:  # noqa: BLE001
             last_err = e
             err_name = type(e).__name__
             ctx.info(
-                f"[FAIL] {row['row']}행 실패 (시도 {attempt}/{ctx.retries}): "
+                f"[FAIL] 엑셀{row['row']}행 실패 (시도 {attempt}/{ctx.retries}) | "
+                f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url} | "
                 f"{err_name}: {e}"
             )
             try:
@@ -1260,13 +1320,19 @@ def main() -> None:
     ap.add_argument(
         "--verify",
         action="store_true",
-        help="1행 검증 모드: 첫 행만, 단계 스크린샷, 행 재시도, 무중단",
+        help="검증 모드: 앞 N행 처리(기본 2), 1·2행 단계 스크린샷, 재시도, 무중단",
     )
     ap.add_argument(
         "--max-rows",
         type=int,
         default=None,
-        help="처리할 최대 행 수 (검증 모드 기본 1)",
+        help="처리할 최대 행 수 (검증 모드 기본 2)",
+    )
+    ap.add_argument(
+        "--shot-first",
+        type=int,
+        default=2,
+        help="단계별 스크린샷을 남길 앞쪽 입력 행 수 (기본 2 = 1·2행)",
     )
     ap.add_argument(
         "--retries",
@@ -1299,18 +1365,17 @@ def main() -> None:
     save_count = args.save_count if args.save_count and args.save_count > 0 else DEFAULT_SAVE_COUNT
     verify = bool(args.verify)
     max_rows = args.max_rows
+    shot_first = max(0, int(args.shot_first))
     if verify and max_rows is None:
-        max_rows = 1
+        max_rows = max(2, shot_first)  # 검증 기본: 1·2행
 
     if args.tmg_id or args.tmg_pw:
         log("[안내] --id/--pw 는 더 이상 사용하지 않습니다. 브라우저에서 직접 로그인하세요.")
 
-    rows = read_excel(excel_path)
-    if not rows:
+    all_rows = read_excel(excel_path)
+    if not all_rows:
         safe_print("엑셀에 처리할 행이 없습니다.")
         sys.exit(1)
-    if max_rows is not None:
-        rows = rows[: max(0, max_rows)]
 
     ctx = RunCtx(
         save_count=save_count,
@@ -1318,10 +1383,26 @@ def main() -> None:
         verify=verify,
         max_rows=max_rows,
         batch=args.batch or verify,
+        shot_first_n=shot_first,
     )
+
+    # 모든 입력 데이터 카테고리명·URL을 실행 로그에 기록
+    ctx.info(f"[입력목록] 파일={excel_path}")
+    ctx.info(f"[입력목록] 총 {len(all_rows)}건 (상위 최종 카테고리명 / 최종 카테고리 URL주소)")
+    for i, r in enumerate(all_rows, start=1):
+        ctx.info(
+            f"  입력#{i} 엑셀{r['row']}행 | "
+            f"상위 최종 카테고리명={r['label']} | "
+            f"최종 카테고리 URL주소={r['url']}"
+        )
+
+    rows = all_rows
+    if max_rows is not None:
+        rows = all_rows[: max(0, max_rows)]
     ctx.info(
-        f"엑셀 {len(rows)}행 · 저장수={save_count} · 재시도={ctx.retries} "
-        f"· verify={verify} · 로그={ctx.shot_dir}"
+        f"처리대상 {len(rows)}행 / 전체입력 {len(all_rows)}행 · 저장수={save_count} · "
+        f"재시도={ctx.retries} · verify={verify} · 샷=입력1~{shot_first}행 · "
+        f"로그={ctx.shot_dir}"
     )
 
     ok = 0
@@ -1333,7 +1414,8 @@ def main() -> None:
             page = ensure_ready_page(page)
             ctx.shot(page, "ready", 0)
 
-            for row in rows:
+            for ordinal, row in enumerate(rows, start=1):
+                ctx.begin_row(ordinal, row)
                 page = refresh_if_closed(page)
                 success = process_row_with_retries(page, row, ctx)
                 if success:
@@ -1344,14 +1426,17 @@ def main() -> None:
                         if input("계속 진행할까요? (y/n) ").strip().lower() != "y":
                             break
 
-            ctx.info(f"완료: 성공 {ok} / 실패 {fail} / 대상 {len(rows)}행")
+            ctx.info(f"완료: 성공 {ok} / 실패 {fail} / 대상 {len(rows)}행 / 입력전체 {len(all_rows)}건")
             gallery = ctx.write_gallery()
             ctx.info(f"스크린샷·로그: {ctx.shot_dir}")
             if gallery:
                 ctx.info(f"[갤러리] {gallery}")
             safe_print("브라우저는 그대로 열어둡니다 (이 창만 닫으면 됩니다).")
             if verify and ok >= 1 and fail == 0:
-                safe_print("[OK] 검증 모드 PASS — 1행x저장수 완료 · 전과정 스크린샷 기록됨")
+                safe_print(
+                    f"[OK] 검증 모드 PASS — {ok}행 완료 · "
+                    f"입력 1~{shot_first}행 전과정 스크린샷 기록됨"
+                )
                 sys.exit(0)
             if fail:
                 sys.exit(2)

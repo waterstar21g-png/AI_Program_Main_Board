@@ -32,7 +32,7 @@ from library import (  # noqa: E402
 )
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.15"
+VERSION = "2.0.16"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -303,7 +303,7 @@ class BoardApp(tk.Tk):
         btn_row.pack(fill="x")
         tk.Checkbutton(
             btn_row,
-            text="1행 전과정 스크린샷",
+            text="1·2행 전과정 스크린샷",
             variable=self.var_verify,
             bg="#ffffff",
             font=("Malgun Gothic", 9),
@@ -337,7 +337,7 @@ class BoardApp(tk.Tk):
         ).pack(side="left", padx=6)
         tk.Label(
             actions,
-            text="1행 전과정 스크린샷 ON → 로그인~완료까지 단계별 샷 기록 · [스크린샷 보기]로 확인",
+            text="실행로그: 전행 카테고리명·URL 기록 · 1·2행은 단계별 스크린샷 · [스크린샷 보기]",
             bg="#ffffff",
             fg="#0f766e",
             anchor="w",
@@ -520,6 +520,8 @@ class BoardApp(tk.Tk):
         low = text.lower()
         if "[샷]" in text or "샷폴더" in text or "갤러리" in text:
             return "샷"
+        if "입력목록" in text or "상위 최종 카테고리명" in text or "최종 카테고리 URL" in text:
+            return "입력"
         if "로그인" in text:
             return "로그인"
         if "초기화" in text or "대량" in text:
@@ -573,13 +575,20 @@ class BoardApp(tk.Tk):
             "--retries",
             "3",
             "--yes",
+            "--shot-first",
+            "2",
         ]
         if verify:
-            args.append("--verify")
+            # 검증: 입력 1·2행 처리 + 단계 스크린샷 (전행 카테고리명·URL은 로그에 기록)
+            args.extend(["--verify", "--max-rows", "2"])
 
         set_selected(path)
-        mode = "1행 전과정 스크린샷" if verify else "전체(--yes)"
+        mode = "1·2행 전과정 스크린샷" if verify else "전체(앞2행 샷)"
         self._p2_log_line(f"수집 시작 ({mode}): {path}", "시작")
+        self._p2_log_line(
+            "실행로그에 모든 입력의 상위 최종 카테고리명 / 최종 카테고리 URL주소 기록",
+            "입력",
+        )
         self.p2_status.configure(
             text=f"수집 실행 중 ({mode}) — 브라우저에서 직접 로그인하세요",
             fg="#15803d",

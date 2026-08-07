@@ -1,2 +1,2 @@
-버전 2.0.15 (Python B안)
-P2: Windows cp949 로그 UnicodeEncodeError(특수기호) 수정 + TargetClosed 재시도
+버전 2.0.16 (Python B안)
+P2: 전행 카테고리명·URL 실행로그 기록 + 입력 1·2행 단계 스크린샷
