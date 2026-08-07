@@ -14,6 +14,7 @@ My_Project/
 **/*.pyc
 P2/.chrome-profile/
 P2/run-logs/
+P2/.tmg_credentials.json
 legacy-next/node_modules/
 legacy-next/.next/
 legacy-next/.next-dev/

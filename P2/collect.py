@@ -78,13 +78,32 @@ SAVE_FAIL_PATTERNS = [
 
 SHOT_ROOT = Path(__file__).parent / "run-logs"
 
-# CLI/환경변수로 받은 더망고 로그인 (세션 없을 때 사용)
+# CLI/환경변수/저장파일로 받은 더망고 로그인 (세션 없을 때 사용)
 _TMG_ID: str | None = None
 _TMG_PW: str | None = None
 
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def _load_saved_credentials() -> tuple[str, str]:
+    try:
+        from tmg_auth import load_credentials
+
+        return load_credentials()
+    except Exception:
+        return "", ""
+
+
+def _persist_credentials(uid: str, pw: str) -> None:
+    try:
+        from tmg_auth import save_credentials
+
+        save_credentials(uid, pw)
+        log(f"  [저장] 로그인 정보 → {Path(__file__).parent / '.tmg_credentials.json'}")
+    except Exception as e:  # noqa: BLE001
+        log(f"  [경고] 로그인 정보 저장 실패: {e}")
 
 
 class RunCtx:
@@ -619,38 +638,57 @@ def set_tmg_credentials(user_id: str | None, password: str | None) -> None:
 
 
 def prompt_tmg_credentials() -> tuple[str, str]:
-    """CLI로 더망고 아이디/비밀번호 요청 (환경변수 TMG_ID / TMG_PW 우선)."""
+    """로그인 정보: 인자/환경변수 → 로컬 저장파일 → CLI(최초 1회 후 저장)."""
     global _TMG_ID, _TMG_PW
     uid = (_TMG_ID or os.environ.get("TMG_ID") or "").strip()
     pw = _TMG_PW or os.environ.get("TMG_PW") or ""
 
+    if not uid or not pw:
+        saved_id, saved_pw = _load_saved_credentials()
+        if not uid:
+            uid = saved_id
+        if not pw:
+            pw = saved_pw
+        if uid and pw:
+            print("", flush=True)
+            print("=== 더망고 로그인 정보 (저장파일) ===", flush=True)
+            print(f"아이디: {uid}", flush=True)
+            print("비밀번호: ********  (저장값 사용 · 재입력 없음)", flush=True)
+            _TMG_ID, _TMG_PW = uid, pw
+            return uid, pw
+
     print("", flush=True)
-    print("=== 더망고 로그인 정보 (CLI) ===", flush=True)
+    print("=== 더망고 로그인 정보 ===", flush=True)
     if not uid:
         try:
             uid = input("아이디: ").strip()
         except EOFError as e:
-            raise RuntimeError("아이디 입력이 필요합니다 (CLI).") from e
+            raise RuntimeError(
+                "아이디가 없습니다. 보드에서 [더망고 로그인 저장]을 먼저 실행하거나 "
+                "--id / TMG_ID 를 지정하세요."
+            ) from e
     else:
-        print(f"아이디: {uid}  (환경변수/인자)", flush=True)
+        print(f"아이디: {uid}", flush=True)
 
     if not pw:
         try:
             if sys.stdin.isatty():
                 pw = getpass.getpass("비밀번호: ")
             else:
-                # 비TTY: 비밀번호도 한 줄 입력 (로컬 파이프/테스트용)
                 print("비밀번호: ", end="", flush=True)
                 pw = input().strip()
         except EOFError as e:
-            raise RuntimeError("비밀번호 입력이 필요합니다 (CLI).") from e
+            raise RuntimeError(
+                "비밀번호가 없습니다. 보드에서 [더망고 로그인 저장]을 먼저 실행하세요."
+            ) from e
     else:
-        print("비밀번호: ********  (환경변수/인자)", flush=True)
+        print("비밀번호: ********", flush=True)
 
     if not uid or not pw:
         raise RuntimeError("아이디와 비밀번호를 모두 입력해야 합니다.")
 
     _TMG_ID, _TMG_PW = uid, pw
+    _persist_credentials(uid, pw)
     return uid, pw
 
 
@@ -682,22 +720,25 @@ def type_into_slow(page: Page, locator, value: str, per_char_ms: int = 1000) -> 
 
 
 def perform_tmg_login(page: Page, user_id: str | None = None, password: str | None = None) -> None:
-    """로그인 화면에서 CLI 자격증명으로 로그인 시도.
+    """더망고 실제 로그인 창(admin_login.php)을 띄운 뒤 저장 ID/PW로 입력·제출.
 
     Cafe24 로그인 HTML은 <form>이 즉시 닫혀 있고, 아이디/비번 필드는
     form 소유자(form owner)로만 연결된다. 로그인 버튼은 form에 속하지
     않아 클릭만으로는 제출되지 않는 경우가 많다.
     → form.requestSubmit() 으로 onSubmitLoginForm(reCAPTCHA) 경로를 탄다.
     """
+    # 항상 더망고 로그인 페이지를 그대로 연다 (사용자에게 실제 로그인창 표시)
     if "admin_login" not in page.url:
-        return
+        log("더망고 로그인창 열기: " + LOGIN_URL)
+        safe_goto(page, LOGIN_URL)
+        page = refresh_if_closed(page)
 
     uid = (user_id or _TMG_ID or "").strip()
     pw = password or _TMG_PW or ""
     if not uid or not pw:
         uid, pw = prompt_tmg_credentials()
 
-    log(f"로그인 시도 (아이디={uid})")
+    log(f"로그인 시도 (아이디={uid}) — 더망고 로그인창에 저장값 전달")
     dialogs: list[str] = []
 
     def _on_dialog(dialog) -> None:
@@ -718,6 +759,13 @@ def perform_tmg_login(page: Page, user_id: str | None = None, password: str | No
         )
     except Exception:
         pass
+
+    # 로그인 창이 보일 시간을 잠시 둠
+    try:
+        page.bring_to_front()
+    except Exception:  # noqa: BLE001
+        pass
+    page.wait_for_timeout(800)
 
     id_box = page.locator('input[name="login_id"]').first
     pw_box = page.locator('input[name="login_pass"]').first
@@ -1150,7 +1198,20 @@ def ensure_ready_page(page: Page) -> Page:
         log("메인화면으로 이동: " + MAIN_URL)
         safe_goto(page, MAIN_URL)
 
-    if "admin_login" in page.url:
+    # 세션 없으면 더망고 로그인창을 직접 연다 (메인 경유 리다이렉트만 기다리지 않음)
+    need_login = "admin_login" in page.url
+    if not need_login:
+        # 메인에 들어갔는데 세션 쿠키가 없으면 곧 로그인으로 튕김 → 선제 확인
+        try:
+            if page.locator('input[name="login_id"]').count() > 0:
+                need_login = True
+        except Exception:  # noqa: BLE001
+            pass
+    if need_login or ADMIN_HOST not in page.url:
+        if "admin_login" not in page.url:
+            log("더망고 로그인창으로 이동: " + LOGIN_URL)
+            safe_goto(page, LOGIN_URL)
+            page = refresh_if_closed(page)
         try:
             SHOT_ROOT.mkdir(parents=True, exist_ok=True)
             shot = SHOT_ROOT / f"login_gate_{time.strftime('%Y%m%d_%H%M%S')}.png"

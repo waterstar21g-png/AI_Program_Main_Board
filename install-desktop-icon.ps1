@@ -1,5 +1,6 @@
 #Requires -Version 5.1
-# Create desktop start icon -> D:\My_Project\AI_Program_Main_Board\run.bat
+# Create desktop start icon -> D:\My_Project\AI_Program_Main_Board\start.bat
+# start.bat updates source only when VERSION changes, then runs the board.
 # ASCII-only (PS 5.1 download encoding safe)
 # Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File .\install-desktop-icon.ps1
@@ -48,9 +49,11 @@ if (-not (Test-Path -LiteralPath (Join-Path $PreferredRoot "run.bat"))) {
   }
 }
 
+$startBat = Join-Path $PreferredRoot "start.bat"
 $runBat = Join-Path $PreferredRoot "run.bat"
-if (-not (Test-Path -LiteralPath $runBat)) {
-  Write-Host "[ERROR] Not found: $runBat" -ForegroundColor Red
+$targetBat = if (Test-Path -LiteralPath $startBat) { $startBat } else { $runBat }
+if (-not (Test-Path -LiteralPath $targetBat)) {
+  Write-Host "[ERROR] Not found: $targetBat" -ForegroundColor Red
   exit 1
 }
 
@@ -67,16 +70,16 @@ $desktop = [Environment]::GetFolderPath("Desktop")
 $lnkPath = Join-Path $desktop "AI_Program_Main_Board.lnk"
 $w = New-Object -ComObject WScript.Shell
 $sc = $w.CreateShortcut($lnkPath)
-$sc.TargetPath = $runBat
+$sc.TargetPath = $targetBat
 $sc.WorkingDirectory = $PreferredRoot
 $sc.WindowStyle = 1
-$sc.Description = "AI_Program_Main_Board start"
+$sc.Description = "AI_Program_Main_Board start (update if VERSION changed)"
 $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
 $sc.Save()
 
 Write-Host ""
 Write-Host "[OK] Project : $PreferredRoot" -ForegroundColor Green
 Write-Host "[OK] Shortcut: $lnkPath" -ForegroundColor Green
-Write-Host "     Target  : $runBat"
+Write-Host "     Target  : $targetBat"
 Write-Host "[DONE] Double-click desktop icon: AI_Program_Main_Board" -ForegroundColor Green
 Write-Host ""

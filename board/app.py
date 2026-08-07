@@ -15,6 +15,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "P1"))
+sys.path.insert(0, str(ROOT / "P2"))
 sys.path.insert(0, str(ROOT / "board"))
 
 from crawl import crawl_site, save_excel  # noqa: E402
@@ -28,8 +29,14 @@ from library import (  # noqa: E402
     search_xlsx,
     set_selected,
 )
+from tmg_auth import (  # noqa: E402
+    clear_credentials,
+    has_saved_credentials,
+    load_credentials,
+    save_credentials,
+)
 
-VERSION = "2.0.5"
+VERSION = "2.0.8"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -299,6 +306,37 @@ class BoardApp(tk.Tk):
             font=("Malgun Gothic", 9),
         ).pack(anchor="w", pady=(0, 6))
 
+        login_row = tk.Frame(actions, bg="#ffffff")
+        login_row.pack(fill="x", pady=(0, 8))
+        tk.Button(
+            login_row,
+            text="더망고 로그인 저장",
+            command=self._save_tmg_login,
+            bg="#0f766e",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=10,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            login_row,
+            text="저장 삭제",
+            command=self._clear_tmg_login,
+            font=("Malgun Gothic", 9),
+            padx=8,
+            pady=4,
+        ).pack(side="left", padx=6)
+        self.p2_login_status = tk.Label(
+            login_row,
+            text="",
+            bg="#ffffff",
+            fg="#64748b",
+            anchor="w",
+            font=("Malgun Gothic", 9),
+        )
+        self.p2_login_status.pack(side="left", fill="x", expand=True)
+        self._refresh_login_status()
+
         btn_row = tk.Frame(actions, bg="#ffffff")
         btn_row.pack(fill="x")
         tk.Button(
@@ -384,6 +422,63 @@ class BoardApp(tk.Tk):
         remove_path(self._lib_paths[sel[0]])
         self._refresh_p2_list()
 
+    def _refresh_login_status(self) -> None:
+        if not hasattr(self, "p2_login_status"):
+            return
+        if has_saved_credentials():
+            uid, _ = load_credentials()
+            self.p2_login_status.configure(
+                text=f"저장됨: {uid}  (수집 시 더망고 로그인창에 자동 입력)",
+                fg="#0f766e",
+            )
+        else:
+            self.p2_login_status.configure(
+                text="미저장 — [더망고 로그인 저장]을 먼저 하세요",
+                fg="#b45309",
+            )
+
+    def _save_tmg_login(self) -> None:
+        """ID/PW를 로컬에 1회 저장. 이후 수집 시 재입력 없이 전달."""
+        cur_id, _ = load_credentials()
+        tmg_id = simpledialog.askstring(
+            "더망고 로그인 저장",
+            "아이디 (1회 저장 후 재사용):",
+            initialvalue=cur_id or "",
+            parent=self,
+        )
+        if not tmg_id:
+            return
+        tmg_pw = simpledialog.askstring(
+            "더망고 로그인 저장",
+            "비밀번호 (1회 저장 후 재사용):",
+            show="*",
+            parent=self,
+        )
+        if not tmg_pw:
+            return
+        try:
+            path = save_credentials(tmg_id, tmg_pw)
+        except Exception as e:
+            messagebox.showerror("저장 실패", str(e))
+            return
+        self._refresh_login_status()
+        messagebox.showinfo(
+            "저장 완료",
+            f"로그인 정보를 저장했습니다.\n{path}\n\n"
+            "수집 시작 시 더망고 실제 로그인창이 열리고\n"
+            "저장된 ID/PW가 자동으로 입력됩니다.",
+        )
+
+    def _clear_tmg_login(self) -> None:
+        if not has_saved_credentials():
+            messagebox.showinfo("안내", "저장된 로그인 정보가 없습니다.")
+            return
+        if not messagebox.askyesno("확인", "저장된 더망고 ID/PW를 삭제할까요?"):
+            return
+        clear_credentials()
+        self._refresh_login_status()
+        self.p2_status.configure(text="로그인 저장 삭제됨", fg="#64748b")
+
     def _run_p2(self) -> None:
         sel = self.lib_list.curselection()
         if not sel:
@@ -397,31 +492,40 @@ class BoardApp(tk.Tk):
             messagebox.showerror("오류", f"파일 없음:\n{path}")
             return
 
-        # CLI와 동일하게 실행 전 ID/PW 요청 (콘솔 창에서 입력)
-        tmg_id = simpledialog.askstring("더망고 로그인", "아이디:", parent=self)
-        if not tmg_id:
+        # ID/PW는 저장값만 사용 (매 실행 재입력 없음)
+        if not has_saved_credentials():
+            messagebox.showwarning(
+                "로그인 필요",
+                "저장된 더망고 ID/PW가 없습니다.\n"
+                "먼저 [더망고 로그인 저장]을 실행하세요.",
+            )
             return
-        tmg_pw = simpledialog.askstring("더망고 로그인", "비밀번호:", show="*", parent=self)
-        if not tmg_pw:
-            return
+        tmg_id, tmg_pw = load_credentials()
 
         run_bat = ROOT / "P2" / "run.bat"
         collect_py = ROOT / "P2" / "collect.py"
         verify = bool(self.var_verify.get())
         try:
-            if os.name == "nt" and run_bat.exists():
-                # NOTE: `start TITLE cmd` treats TITLE as a program name if unquoted.
-                # Use CREATE_NEW_CONSOLE instead of start "P2_수집" ...
-                extra = f'--id "{tmg_id}" --pw "{tmg_pw}"'
+            # Avoid nested quotes like: call "path" inside cmd /k "..."
+            # which becomes '"path"' and Windows reports "not recognized".
+            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010) if os.name == "nt" else 0
+            env = os.environ.copy()
+            env["TMG_ID"] = tmg_id
+            env["TMG_PW"] = tmg_pw
+            if os.name == "nt" and run_bat.is_file():
+                args = [
+                    "cmd.exe",
+                    "/k",
+                    str(run_bat),
+                    path,
+                    "--id",
+                    tmg_id,
+                    "--pw",
+                    tmg_pw,
+                ]
                 if verify:
-                    extra += " --verify"
-                cmdline = f'call "{run_bat}" "{path}" {extra}'
-                flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
-                subprocess.Popen(
-                    ["cmd", "/k", cmdline],
-                    cwd=str(ROOT / "P2"),
-                    creationflags=flags,
-                )
+                    args.append("--verify")
+                subprocess.Popen(args, cwd=str(ROOT / "P2"), creationflags=flags, env=env)
             else:
                 args = [
                     sys.executable,
@@ -438,10 +542,13 @@ class BoardApp(tk.Tk):
                 ]
                 if verify:
                     args.append("--verify")
-                subprocess.Popen(args, cwd=str(ROOT / "P2"))
+                subprocess.Popen(args, cwd=str(ROOT / "P2"), creationflags=flags, env=env)
             set_selected(path)
             mode = "1행 검증" if verify else "전체(--yes)"
-            self.p2_status.configure(text=f"수집 시작 ({mode}): {path}", fg="#15803d")
+            self.p2_status.configure(
+                text=f"수집 시작 ({mode}) · 로그인창+저장계정 전달: {path}",
+                fg="#15803d",
+            )
         except Exception as e:
             messagebox.showerror("실행 실패", str(e))
 

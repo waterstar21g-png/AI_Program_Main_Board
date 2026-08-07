@@ -4,11 +4,13 @@
 $ErrorActionPreference = "Stop"
 
 $PreferredRoot = "D:\My_Project\AI_Program_Main_Board"
+$startBat = Join-Path $PreferredRoot "start.bat"
 $runBat = Join-Path $PreferredRoot "run.bat"
+$targetBat = if (Test-Path -LiteralPath $startBat) { $startBat } else { $runBat }
 $lnkName = "AI_Program_Main_Board.lnk"
 
-if (-not (Test-Path -LiteralPath $runBat)) {
-  Write-Host "[ERROR] Not found: $runBat" -ForegroundColor Red
+if (-not (Test-Path -LiteralPath $targetBat)) {
+  Write-Host "[ERROR] Not found: $targetBat" -ForegroundColor Red
   exit 1
 }
 
@@ -20,10 +22,10 @@ $cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
 $w = New-Object -ComObject WScript.Shell
 $sc = $w.CreateShortcut($lnkPath)
 $sc.TargetPath = $cmdExe
-$sc.Arguments = "/c `"$runBat`""
+$sc.Arguments = "/c `"$targetBat`""
 $sc.WorkingDirectory = $PreferredRoot
 $sc.WindowStyle = 1
-$sc.Description = "AI_Program_Main_Board start"
+$sc.Description = "AI_Program_Main_Board start (update if VERSION changed)"
 $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
 $sc.Save()
 [System.Runtime.Interopservices.Marshal]::ReleaseComObject($sc) | Out-Null
