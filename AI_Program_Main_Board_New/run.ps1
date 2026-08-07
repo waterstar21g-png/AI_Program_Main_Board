@@ -3,7 +3,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$ExpectedVersion = "1.0.0"
+$ExpectedVersion = "1.0.1"
 $Port = if ($env:PORT) { [int]$env:PORT } else { 3001 }
 
 Write-Host "=== AI_Program_Main_Board_New v$ExpectedVersion ===" -ForegroundColor Cyan

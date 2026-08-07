@@ -36,7 +36,7 @@ export const PROGRAMS: ProgramEntry[] = [
     id: 'p3-python-item-collector',
     name: 'P3_Python_Item_Collector',
     description: '파이썬 독립 더망고 대량수집',
-    summaryLine: 'python-collector/run.bat 에 엑셀 드래그 → 더망고 대량수집',
+    summaryLine: 'P1 출력 엑셀을 로컬 검색→목록 보관 → 리스트박스에서 선택 후 수집',
     component: PythonItemCollectorApp,
   },
 ];
