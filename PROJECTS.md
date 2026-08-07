@@ -2,6 +2,8 @@
 
 GitHub 저장소 루트: **`AI_Program_Main_Board`** (모노레포 + 논리 분리 유지)
 
+**로컬 작업 경로(고정):** `D:\My_Project\AI_Program_Main_Board` — [LOCAL_WORKSPACE.md](./LOCAL_WORKSPACE.md)
+
 공식 프로젝트명(캡처 기준)은 아래 3개입니다.
 
 | # | 공식 프로젝트명 | 역할 |

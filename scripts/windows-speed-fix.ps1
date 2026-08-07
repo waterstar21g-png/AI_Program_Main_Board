@@ -14,14 +14,23 @@ Write-Host "========================================"
 Write-Host "  폴더: $root"
 Write-Host ""
 
+$PreferredLocalRoot = "D:\My_Project\AI_Program_Main_Board"
+
 if ($root -match 'OneDrive') {
   Write-Host "[치명] OneDrive 안에 있습니다." -ForegroundColor Red
   Write-Host "  기능 삭제와 무관하게 node_modules(수만 파일)를 OneDrive가 감시하면" -ForegroundColor Yellow
   Write-Host "  컴파일이 수십 분 걸릴 수 있습니다." -ForegroundColor Yellow
-  Write-Host "  → C:\Projects\AI_Program_Main_Board 처럼 OneDrive 밖으로 폴더 이동!" -ForegroundColor Cyan
+  Write-Host "  → $PreferredLocalRoot 로 폴더 이동! (node_modules/.next 제외 후 npm install)" -ForegroundColor Cyan
   Write-Host ""
 } else {
   Write-Host "[OK] OneDrive 경로 아님" -ForegroundColor Green
+}
+
+if ($root -eq $PreferredLocalRoot) {
+  Write-Host "[OK] 권장 로컬 경로: $PreferredLocalRoot" -ForegroundColor Green
+} else {
+  Write-Host "[안내] 권장 로컬 경로: $PreferredLocalRoot" -ForegroundColor Yellow
+  Write-Host "  현재: $root" -ForegroundColor Gray
 }
 
 try {
