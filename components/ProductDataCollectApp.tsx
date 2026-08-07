@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { APP_VERSION } from '@/lib/app-version';
+import { BADGE_LIVE } from '@/lib/ui-labels';
 import { WORKFLOW_STEPS, TMG_BULK_URL, TMG_MAIN_URL } from '@/lib/product-data-collect/steps';
 import type { TmgCollectRow, WorkflowStepId, WorkflowStepLog } from '@/lib/product-data-collect/types';
 
@@ -240,7 +241,7 @@ export function ProductDataCollectApp() {
       {(running || logs.length > 0) && (
         <section className="panel panel--compact">
           <h2 className="panel__title">
-            실행 로그 {running && <span className="badge badge--live">LIVE</span>}
+            실행 로그 {running && <span className="badge badge--live">{BADGE_LIVE}</span>}
           </h2>
           <div className="log-box">
             {logs.map((l, i) => (

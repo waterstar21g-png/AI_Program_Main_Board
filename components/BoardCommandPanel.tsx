@@ -1,6 +1,13 @@
 'use client';
 
 import { useState } from 'react';
+import {
+  RESULT_CHECK,
+  RESULT_FAIL_OR_CHECK,
+  RESULT_OK,
+  RESULT_PASS,
+  smokeStatusLabel,
+} from '@/lib/ui-labels';
 
 type Check = { name: string; status: 'pass' | 'fail' | 'warn'; detail: string };
 type Result = { id: string; name: string; ok: boolean; checks: Check[] };
@@ -122,7 +129,7 @@ export function BoardCommandPanel() {
 
       {ok !== null && (
         <p className="board-cmd__summary">
-          결과: <strong>{ok ? 'PASS' : 'FAIL/CHECK'}</strong>
+          결과: <strong>{ok ? RESULT_PASS : RESULT_FAIL_OR_CHECK}</strong>
           {busy && ' · 실행 중…'}
         </p>
       )}
@@ -134,13 +141,13 @@ export function BoardCommandPanel() {
               <div className="smoke-panel__project-title">
                 {r.name}{' '}
                 <span className={`badge${r.ok ? '' : ' badge--warn'}`}>
-                  {r.ok ? 'OK' : 'CHECK'}
+                  {r.ok ? RESULT_OK : RESULT_CHECK}
                 </span>
               </div>
               <ul className="smoke-list">
                 {r.checks.map((c, i) => (
                   <li key={i} className={`smoke-list__item is-${c.status}`}>
-                    <span className="smoke-list__status">{c.status.toUpperCase()}</span>
+                    <span className="smoke-list__status">{smokeStatusLabel(c.status)}</span>
                     <span className="smoke-list__name">{c.name}</span>
                     <span className="smoke-list__detail">{c.detail}</span>
                   </li>

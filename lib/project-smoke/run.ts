@@ -39,7 +39,7 @@ function check(name: string, status: SmokeStatus, detail: string): SmokeCheck {
 /** P1: 실행(수집) → 데이터 검증 */
 async function smokeP1(): Promise<SmokeProjectResult> {
   const checks: SmokeCheck[] = [];
-  const name = 'P1_Category_Url_Extract';
+  const name = 'P1 · 카테고리 URL 추출';
 
   try {
     checks.push(check('1) 실행', 'pass', 'ABC마트 · 상위 MEN 카테고리 수집 시작'));
@@ -110,7 +110,7 @@ async function smokeP1(): Promise<SmokeProjectResult> {
 /** P2: 실행(파서·모듈) → 샘플 엑셀 데이터 검증 */
 async function smokeP2(): Promise<SmokeProjectResult> {
   const checks: SmokeCheck[] = [];
-  const name = 'P2_Product_Capture_App';
+  const name = 'P2 · 상품 대량수집';
 
   try {
     checks.push(check('1) 실행', 'pass', '엑셀 파서·워크플로·Playwright 점검'));
@@ -215,7 +215,7 @@ function runPython(code: string): { ok: boolean; out: string } {
 /** P3: 실행(환경·구문) → 데이터 검증(샘플 엑셀 읽기) */
 async function smokeP3(): Promise<SmokeProjectResult> {
   const checks: SmokeCheck[] = [];
-  const name = 'P3_Python_Item_Collector';
+  const name = 'P3 · 파이썬 독립수집';
   const root = join(process.cwd(), 'python-collector');
   const collectPy = join(root, 'collect.py');
 

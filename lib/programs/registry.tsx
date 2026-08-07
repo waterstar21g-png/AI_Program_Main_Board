@@ -1,7 +1,5 @@
 import dynamic from 'next/dynamic';
 import type { ComponentType } from 'react';
-import { CATEGORY_APP_NAME } from '@/lib/category-app-name';
-
 export type ProgramEntry = {
   id: string;
   name: string;
@@ -35,21 +33,21 @@ const PythonItemCollectorApp = dynamic(
 export const PROGRAMS: ProgramEntry[] = [
   {
     id: 'p1-category-url-extract',
-    name: CATEGORY_APP_NAME,
+    name: 'P1 · 카테고리 URL 추출',
     description: '카테고리별 상품 URL 리스트 추출',
     summaryLine: '사이트·상위 카테고리 지정 → 계층 URL 엑셀 저장 (ABC마트/A-RT)',
     component: CategoryExtractorApp,
   },
   {
     id: 'p2-product-capture-app',
-    name: 'P2_Product_Capture_App',
+    name: 'P2 · 상품 대량수집',
     description: '더망고 URL 엑셀 기반 상품 대량수집',
     summaryLine: '수집용 엑셀 업로드 → 더망고 로그인 → 스텝별 자동 수집 반복',
     component: ProductDataCollectApp,
   },
   {
     id: 'p3-python-item-collector',
-    name: 'P3_Python_Item_Collector',
+    name: 'P3 · 파이썬 독립수집',
     description: 'P2의 파이썬 독립 버전',
     summaryLine: 'python-collector/run.bat 에 엑셀 드래그 → 더망고 대량수집',
     component: PythonItemCollectorApp,
