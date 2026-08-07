@@ -16,6 +16,16 @@ GitHub 저장소: `waterstar21g-png/AI_Program_Main_Board`
 
 **정리 검토(미실행):** 배치 3개만 남기는 안 → [docs/BATCH_THREE_CLEANUP_PLAN.md](./docs/BATCH_THREE_CLEANUP_PLAN.md)
 
+## 신규 컴팩트 보드 (별도 · Python)
+
+기존 보드(**이 루트**, Next.js)는 유지합니다.  
+정제본: [`AI_Program_Main_Board_New/`](./AI_Program_Main_Board_New/) — **Python만**, **P1 + P2**, **npm 없음**.
+
+```bat
+cd AI_Program_Main_Board_New
+run.bat
+```
+
 ## 로컬 작업 경로 (고정)
 
 ```
