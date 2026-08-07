@@ -1,2 +1,2 @@
-버전 2.0.24 (Python B안)
-업데이트: run.bat/updater 선갱신 — git pull PS NativeCommandError 오탐 제거
+버전 2.0.25 (Python B안)
+업데이트: remote VERSION을 git+HTTP 둘 다 확인(최신 선택) · 콘솔 ASCII
