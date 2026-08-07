@@ -44,11 +44,11 @@ export function PythonItemCollectorApp() {
         <div className="panel__head">
           <h2 className="panel__title">실행 방법 (로컬 PC)</h2>
           <p className="panel__hint">
-            Next.js/npm 없이 <code>python-collector/run.bat</code> 만 사용합니다.
+            웹앱·npm 없이 <code>python-collector/run.bat</code> 만 사용합니다.
           </p>
         </div>
         <ol className="workflow-steps">
-          <li className="workflow-steps__item">Python 설치 (PATH에 추가)</li>
+          <li className="workflow-steps__item">파이썬 설치 (환경변수 PATH에 추가)</li>
           <li className="workflow-steps__item">
             수집 엑셀을 <strong>run.bat</strong> 위에 드래그 앤 드롭
           </li>

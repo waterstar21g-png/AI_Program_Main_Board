@@ -88,7 +88,7 @@ export function BoardCommandPanel() {
       </div>
 
       <div className="board-cmd__block">
-        <strong className="board-cmd__title">PowerShell 대체 (로컬)</strong>
+        <strong className="board-cmd__title">로컬 명령 대체</strong>
         <p className="board-cmd__hint">명령창 없이 버튼으로 실행</p>
         <div className="board-cmd__actions">
           <button
