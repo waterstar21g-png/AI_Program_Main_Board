@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { runProjectSmoke, type SmokeRunResult } from '@/lib/project-smoke/run';
+import { projectOkLabel, smokeStatusLabel, verifyResultLabel } from '@/lib/smoke-status-label';
 
 export type BoardAction =
   | 'verify-p1'
@@ -25,6 +26,7 @@ const REF = 'main';
 /** PowerShell run.ps1 -Sync 에 해당하는 핵심 파일 */
 const SYNC_FILES = [
   'lib/app-version.ts',
+  'lib/smoke-status-label.ts',
   'lib/programs/registry.tsx',
   'lib/project-smoke/run.ts',
   'lib/board-actions/run.ts',
@@ -84,13 +86,13 @@ async function downloadFile(rel: string, logs: string[]): Promise<boolean> {
       const head = buf.subarray(0, 40).toString('utf8');
       if (/^\s*\{\s*"message"/.test(head)) continue;
       writeFileSync(dest, buf);
-      logs.push(`OK ${rel}`);
+      logs.push(`완료 ${rel}`);
       return true;
     } catch {
       /* try next */
     }
   }
-  logs.push(`FAIL ${rel}`);
+  logs.push(`실패 ${rel}`);
   return false;
 }
 
@@ -109,7 +111,7 @@ function actionClean(logs: string[]): boolean {
   logs.push('[CLEAN] node scripts/clean-next.mjs --all');
   const script = join(process.cwd(), 'scripts', 'clean-next.mjs');
   if (!existsSync(script)) {
-    logs.push('FAIL scripts/clean-next.mjs 없음');
+    logs.push('실패 scripts/clean-next.mjs 없음');
     return false;
   }
   const r = spawnSync(process.execPath, [script, '--all'], {
@@ -120,7 +122,7 @@ function actionClean(logs: string[]): boolean {
   if (r.stdout) logs.push(...r.stdout.trim().split('\n').filter(Boolean));
   if (r.stderr) logs.push(...r.stderr.trim().split('\n').filter(Boolean));
   if (r.error) {
-    logs.push(`FAIL ${r.error.message}`);
+    logs.push(`실패 ${r.error.message}`);
     return false;
   }
   logs.push(r.status === 0 ? '[CLEAN] 완료' : `[CLEAN] exit ${r.status}`);
@@ -163,12 +165,12 @@ export async function runBoardAction(action: BoardAction): Promise<BoardActionRe
   }
   const smoke = await runProjectSmoke(target);
   for (const r of smoke.results) {
-    logs.push(`— ${r.name}: ${r.ok ? 'OK' : 'FAIL'}`);
+    logs.push(`— ${r.name}: ${projectOkLabel(r.ok)}`);
     for (const c of r.checks) {
-      logs.push(`  ${c.status.toUpperCase()} ${c.name} — ${c.detail}`);
+      logs.push(`  ${smokeStatusLabel(c.status)} ${c.name} — ${c.detail}`);
     }
   }
-  logs.push(smoke.ok ? '[VERIFY] PASS' : '[VERIFY] FAIL/CHECK');
+  logs.push(smoke.ok ? `[VERIFY] ${verifyResultLabel(true)}` : `[VERIFY] ${verifyResultLabel(false)}`);
   return { ok: smoke.ok, action, at, logs, smoke };
 }
 

@@ -10,7 +10,7 @@ export async function POST() {
       {
         ok: false,
         message:
-          '상품데이터수집(Chromium)은 로컬 PC에서만 실행됩니다.\n' +
+          '상품데이터수집(브라우저)은 로컬 PC에서만 실행됩니다.\n' +
           'PC에서 .\\run.ps1 실행 후 사용하세요.\n' +
           `보드 UI: https://ai-program-main-board.vercel.app`,
       },
@@ -34,7 +34,7 @@ export async function POST() {
       url,
     });
   } catch (e) {
-    const message = e instanceof Error ? e.message : 'Chromium 열기 실패';
+    const message = e instanceof Error ? e.message : '브라우저 열기 실패';
     return Response.json({ ok: false, message }, { status: 500 });
   }
 }
