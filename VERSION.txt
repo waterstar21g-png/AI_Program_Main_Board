@@ -1,2 +1,2 @@
-버전 2.0.4 (Python B안)
-P1 + P2(구P3) 심플 보드 — npm/Next 없음
+버전 2.0.5 (Python B안)
+P2 수집 시작: Windows start 제목 오류 수정
