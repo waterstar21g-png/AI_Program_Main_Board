@@ -159,6 +159,32 @@ def test_buttons_are_distinct(browser):
     page.close()
 
 
+def test_save_modal_visible_survives_icon_wrapped_button(browser):
+    """저장하기 버튼에 아이콘/공백이 섞여 정확매치가 깨져도 모달을 인식해야 함.
+
+    회귀: save_modal_visible()의 '^저장하기$' 정확매치가 실패하면
+    run_save_submit_and_verify 가 클릭 시도조차 하지 않고 즉시 실패 처리했다.
+    """
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.set_content(
+        """
+        <html><body>
+        <div class="footer">
+          <a href="#" id="saveBtn"><i class="ico"></i>　저장하기　</a>
+          <a href="#" id="cancelBtn">취소하기</a>
+        </div>
+        </body></html>
+        """
+    )
+    # 제목 문구도 없고, 저장하기 텍스트에 전각공백·아이콘이 섞인 최악의 경우
+    assert C.save_modal_visible(page) is True
+    el = C.resolve_save_submit_control(page)
+    tag = el.evaluate("(n) => n.tagName.toLowerCase()")
+    assert tag == "a"
+    ctx.close()
+
+
 def test_save_popup_on_admin_host_is_detected(browser):
     """저장 팝업이 ADMIN_HOST(같은 관리자사이트) 새 창으로 떠도 감지해야 함.
 
@@ -679,6 +705,7 @@ if __name__ == "__main__":
         b = p.chromium.launch(headless=True)
         for name, fn in [
             ("distinct", test_buttons_are_distinct),
+            ("modal_visible_icon_wrapped", test_save_modal_visible_survives_icon_wrapped_button),
             ("admin_host_popup_detected", test_save_popup_on_admin_host_is_detected),
             ("diag_overlay", test_diagnose_detects_overlay_interception),
             ("diag_required_radio", test_diagnose_detects_unselected_required_radio),
