@@ -156,7 +156,10 @@ def check_stop(where: str = "") -> None:
         raise CollectStopped(f"사용자 수집 종료 요청{detail}")
 
 FILTER_NAME_LABEL = re.compile(r"검색\s*필터\s*명")
-SAVE_COUNT_LABEL = re.compile(r"저장\s*상품\s*수|검색결과\s*상위")
+# 화면 표기: 저장상품수 / 검색결과상위 / (사용자 호칭) 수집상품수
+SAVE_COUNT_LABEL = re.compile(
+    r"저장\s*상품\s*수|검색결과\s*상위|수집\s*상품\s*수"
+)
 # 저장 완료로 볼 수 있는 화면 문구 (망고 버전에 따라 다를 수 있음)
 SAVE_OK_PATTERNS = [
     re.compile(r"저장\s*(이\s*)?(완료|성공)"),
@@ -1132,6 +1135,23 @@ def _url_input_once(page: Page):
 
 
 def save_modal(page: Page):
+    """상품저장설정 팝업 전체 — 하단 '저장하기'·'취소하기' 포함.
+
+    안쪽 작은 div만 잡으면 하단 버튼이 범위 밖이 되어 클릭이 누락된다.
+    (v2.0.7.3 실화면 수정과 동일: 상품저장설정+저장하기+취소하기)
+    """
+    full = (
+        page.locator("div, form, table")
+        .filter(has_text=re.compile(r"상품\s*저장\s*설정"))
+        .filter(has_text=re.compile(r"저장하기"))
+        .filter(has_text=re.compile(r"취소하기"))
+    )
+    try:
+        if full.count() > 0:
+            return full.last
+    except Exception:  # noqa: BLE001
+        pass
+    # 폴백: 취소하기 문구가 다른 화면
     return (
         page.locator("div, form, table")
         .filter(has_text=re.compile(r"상품\s*저장\s*설정|검색\s*필터\s*명"))
@@ -1148,78 +1168,197 @@ def save_modal_visible(page: Page) -> bool:
 
 
 def save_submit_button(page: Page):
-    """하위 호환: 상품저장설정 모달의 실제 '저장하기' 컨트롤 locator."""
+    """하위 호환: 상품저장설정 모달 하단 '저장하기' locator."""
     return resolve_save_submit_control(page)
 
 
+def _first_visible(locator):
+    """locator 후보 중 보이는 첫 요소. 없으면 None."""
+    try:
+        n = locator.count()
+    except Exception:  # noqa: BLE001
+        return None
+    for i in range(n):
+        el = locator.nth(i)
+        try:
+            if el.is_visible():
+                return el
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def scroll_save_modal_to_footer(page: Page) -> None:
+    """상품저장설정 모달 하단(저장하기·취소하기)이 보이도록 스크롤."""
+    try:
+        modal = save_modal(page)
+        modal.evaluate(
+            """(node) => {
+                node.scrollTop = node.scrollHeight;
+                let p = node.parentElement;
+                for (let i = 0; i < 6 && p; i++) {
+                    if (p.scrollHeight > p.clientHeight + 8) {
+                        p.scrollTop = p.scrollHeight;
+                    }
+                    p = p.parentElement;
+                }
+                window.scrollTo(0, document.body.scrollHeight);
+            }"""
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+    except Exception:  # noqa: BLE001
+        pass
+    page.wait_for_timeout(250)
+
+
+def dump_save_button_candidates(page: Page, ctx: "RunCtx | None" = None) -> str:
+    """디버그: 화면에 보이는 '저장하기' 후보 나열."""
+    try:
+        info = page.evaluate(
+            """() => {
+                const out = [];
+                const nodes = document.querySelectorAll(
+                    'input, button, a, span, div, td, li'
+                );
+                for (const el of nodes) {
+                    const val = (el.value || '').trim();
+                    const txt = (el.innerText || el.textContent || '')
+                        .replace(/\\s+/g, ' ').trim();
+                    const hit = val === '저장하기' || txt === '저장하기'
+                        || val.includes('저장하기')
+                        || /^저장하기$/.test(txt);
+                    if (!hit) continue;
+                    const r = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    out.push({
+                        tag: el.tagName,
+                        type: el.getAttribute('type') || '',
+                        value: val.slice(0, 40),
+                        text: txt.slice(0, 40),
+                        w: Math.round(r.width),
+                        h: Math.round(r.height),
+                        y: Math.round(r.top),
+                        display: style.display,
+                        vis: style.visibility,
+                    });
+                    if (out.length >= 12) break;
+                }
+                return out;
+            }"""
+        )
+    except Exception as e:  # noqa: BLE001
+        info = [{"error": str(e)}]
+    line = f"저장하기 후보={info!r}"
+    if ctx is not None:
+        ctx.info(f"  [진단] {line}")
+    else:
+        log(f"  [진단] {line}")
+    return line
+
+
 def resolve_save_submit_control(page: Page):
-    """서버 최종 제출용 '저장하기' — 실제 버튼/input 만 (텍스트 노드 금지).
+    """모달 하단 버튼명 '저장하기' — 서버 최종 제출 컨트롤.
 
-    필터명·수집갯수·수집상품을 서버에 갱신하는 핵심 컨트롤이다.
-    보이지 않는 라벨/텍스트를 클릭하면 서버 제출이 누락된다.
+    Cafe24 실화면: input[value=저장하기] 또는 a/button/span/div 텍스트.
+    모달 전체를(하단 푸터 포함) 잡은 뒤 그 안의 버튼을 클릭해야 한다.
     """
+    scroll_save_modal_to_footer(page)
     modal = save_modal(page)
-    # 모달 안 실제 제출 컨트롤 우선
-    scoped = [
-        'input[type="button"][value*="저장하기"]',
-        'input[type="submit"][value*="저장하기"]',
-        'button:has-text("저장하기")',
-        'a[href][onclick*="save"], a[href*="save"]:has-text("저장하기")',
-        'a:has-text("저장하기")',
-    ]
-    for sel in scoped:
-        loc = modal.locator(sel)
-        try:
-            n = loc.count()
-        except Exception:  # noqa: BLE001
-            n = 0
-        for i in range(n):
-            el = loc.nth(i)
-            try:
-                if el.is_visible():
-                    return el
-            except Exception:  # noqa: BLE001
-                continue
 
-    # 페이지 전역 — 그래도 input/button/a 만 (순수 텍스트 매칭 제외)
-    page_scoped = [
-        'input[type="button"][value*="저장하기"]',
-        'input[type="submit"][value*="저장하기"]',
-        'button:has-text("저장하기")',
-        'a:has-text("저장하기")',
+    # 1) 모달 안 — 정확한 value / role / 텍스트 (하단 버튼)
+    modal_candidates = [
+        modal.locator(
+            'input[type="button"][value="저장하기"], '
+            'input[type="submit"][value="저장하기"]'
+        ),
+        modal.locator(
+            'input[type="button"][value*="저장하기"], '
+            'input[type="submit"][value*="저장하기"]'
+        ),
+        modal.get_by_role("button", name=re.compile(r"^저장하기$")),
+        modal.locator("button, a, span, div, td").filter(
+            has_text=re.compile(r"^저장하기$")
+        ),
+        modal.get_by_text(re.compile(r"^저장하기$")),
     ]
-    for sel in page_scoped:
-        loc = page.locator(sel)
-        try:
-            n = loc.count()
-        except Exception:  # noqa: BLE001
-            n = 0
-        for i in range(n):
-            el = loc.nth(i)
-            try:
-                if el.is_visible():
-                    return el
-            except Exception:  # noqa: BLE001
-                continue
+    for loc in modal_candidates:
+        el = _first_visible(loc)
+        if el is not None:
+            return el
 
+    # 2) 페이지 전역 (모달 스코프 실패 시)
+    page_candidates = [
+        page.locator(
+            'input[type="button"][value="저장하기"], '
+            'input[type="submit"][value="저장하기"]'
+        ),
+        page.locator(
+            'input[type="button"][value*="저장하기"], '
+            'input[type="submit"][value*="저장하기"]'
+        ),
+        page.get_by_role("button", name=re.compile(r"^저장하기$")),
+        page.locator("button, a").filter(has_text=re.compile(r"^저장하기$")),
+        page.get_by_text(re.compile(r"^저장하기$")),
+    ]
+    for loc in page_candidates:
+        el = _first_visible(loc)
+        if el is not None:
+            return el
+
+    # 3) DOM 직접 탐색 → Playwright 핸들로 재연결
+    try:
+        handle = page.evaluate_handle(
+            """() => {
+                const nodes = Array.from(document.querySelectorAll(
+                    'input[type="button"], input[type="submit"], button, a, span, div'
+                ));
+                const exact = nodes.find((el) => {
+                    const v = (el.value || '').trim();
+                    const t = (el.innerText || el.textContent || '')
+                        .replace(/\\s+/g, ' ').trim();
+                    if (v !== '저장하기' && t !== '저장하기') return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 2 && r.height > 2;
+                });
+                return exact || null;
+            }"""
+        )
+        el = handle.as_element()
+        if el is not None:
+            return el
+    except Exception:  # noqa: BLE001
+        pass
+
+    dump_save_button_candidates(page)
     raise RuntimeError(
-        "저장하기 버튼(input/button)을 모달에서 찾지 못함 — "
+        "상품저장설정 하단 '저장하기' 버튼을 찾지 못함 — "
         "서버 최종 갱신(필터정보·수집갯수·수집상품)을 할 수 없음"
     )
 
 
 def trusted_click_save_submit(page: Page, el) -> bool:
-    """저장하기는 반드시 신뢰 클릭(마우스/Playwright click). JS click 금지.
+    """하단 저장하기 클릭 — 마우스/Playwright 우선, 실패 시 force·JS.
 
-    JS node.click()은 서버 제출/팝업이 조용히 막힐 수 있다.
+    저장 실행 팝업이 window.open 이면 신뢰 클릭이 필요하지만,
+    클릭 자체가 안 되면 서버 제출이 영원히 누락되므로 최후 JS도 허용.
     """
-    el.wait_for(state="visible", timeout=15_000)
-    el.scroll_into_view_if_needed()
     try:
-        el.click(timeout=20_000)
-        return True
-    except PWTimeout:
+        el.scroll_into_view_if_needed(timeout=5_000)
+    except Exception:  # noqa: BLE001
         pass
+    page.wait_for_timeout(150)
+
+    # 1) 일반 클릭
+    try:
+        el.click(timeout=15_000)
+        return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) 좌표 마우스 클릭
     try:
         box = el.bounding_box()
         if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
@@ -1230,9 +1369,18 @@ def trusted_click_save_submit(page: Page, el) -> bool:
             return True
     except Exception:  # noqa: BLE001
         pass
-    # 최후: force click (여전히 Playwright 경로 — evaluate JS click 쓰지 않음)
+
+    # 3) force 클릭
     try:
-        el.click(timeout=10_000, force=True)
+        el.click(timeout=8_000, force=True)
+        return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 4) 최후 JS (미클릭으로 서버 미반영되는 것보다는 나음)
+    try:
+        el.evaluate("(node) => node.click()")
+        log("  [경고] 저장하기 JS click 사용 — 팝업이 안 뜨면 재시도")
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -1242,26 +1390,28 @@ def save_submit_reacted(
     page: Page,
     dialog_msgs: list[str] | None = None,
     *,
-    timeout_sec: float = 8.0,
+    timeout_sec: float = 12.0,
 ) -> bool:
-    """저장하기 클릭 후 서버 제출 반응(모달 닫힘/로딩/결과알림/팝업) 여부."""
-    end = time.time() + max(2.0, float(timeout_sec))
+    """저장하기 클릭 후 '저장 실행' 반응.
+
+    - 결과 팝업/알림/JS dialog
+    - 상품저장설정 모달 닫힘
+    (검색 로딩만으로는 성공으로 보지 않음 — 저장 누락 오탐 방지)
+    """
+    end = time.time() + max(3.0, float(timeout_sec))
     while time.time() < end:
         has_signal, _, _ = save_result_signal_present(page, dialog_msgs)
         if has_signal:
             return True
-        try:
-            if not save_modal_visible(page):
-                return True
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            if is_mango_loading(page):
-                return True
-        except Exception:  # noqa: BLE001
-            pass
         if dialog_msgs:
             return True
+        try:
+            if not save_modal_visible(page):
+                # 모달이 닫혔으면 저장 실행 팝업이 곧 뜰 수 있음
+                page.wait_for_timeout(400)
+                return True
+        except Exception:  # noqa: BLE001
+            pass
         page.wait_for_timeout(300)
     return False
 
@@ -2049,71 +2199,84 @@ def run_save_submit_and_verify(
             )
 
         ctx.info(
-            "2. ★★★ 저장하기 = 서버 최종 갱신 "
-            "(필터정보 + 수집갯수 + 수집상품 데이터) — 누락 금지"
+            "2. ★★★ 상품저장설정 하단 버튼명 '저장하기' 클릭 "
+            "= 서버 최종 갱신(필터정보+수집상품수+수집상품) — 필수"
         )
+        scroll_save_modal_to_footer(page)
+        ctx.shot(page, "02_modal_filled", rn)  # 하단 버튼 보이게 재샷
 
         submitted = False
         last_click_ok = False
         # 최대 1회 재시도(총 2회). 동일 실패면 다음 행으로 진행.
         for attempt in range(1, 3):
             ctx.check_budget(f"저장하기 서버제출 시도 {attempt}")
+            scroll_save_modal_to_footer(page)
             try:
                 btn = resolve_save_submit_control(page)
             except Exception as e:  # noqa: BLE001
+                dump_save_button_candidates(page, ctx)
                 ctx.shot(page, "02_save_missing", rn)
                 raise RuntimeError(
-                    f"#{rn} 저장하기 서버 최종 갱신 실패 — 버튼 없음. "
-                    f"필터정보·수집갯수·수집상품이 서버에 반영되지 않음. "
+                    f"#{rn} 하단 '저장하기' 버튼 없음 — "
+                    f"필터·수집상품수가 서버에 반영되지 않음. "
                     f"다음 입력으로 진행. 원인: {e}"
                 ) from e
 
+            try:
+                desc = _describe(btn)
+            except Exception:  # noqa: BLE001
+                desc = "저장하기"
             ctx.info(
-                f"2. ★ 저장하기 클릭 (서버 제출 {attempt}/2, 재시도 최대 1회) "
-                "— 입력값이 아닌 '저장하기'로만 서버 갱신됨"
+                f"2. ★ 하단 '저장하기' 클릭 "
+                f"({attempt}/2, 재시도 최대 1회) | {desc}"
             )
             last_click_ok = trusted_click_save_submit(page, btn)
             ctx.info(
-                f"  저장하기 클릭 전송 "
-                f"(trusted={last_click_ok}, attempt={attempt})"
+                f"  하단 저장하기 클릭 전송 "
+                f"(ok={last_click_ok}, attempt={attempt})"
             )
-            page.wait_for_timeout(350)
+            page.wait_for_timeout(500)
             ctx.shot(page, "02_save_clicked", rn)
 
             if not last_click_ok:
-                ctx.info("  [경고] 저장하기 신뢰 클릭 실패 — 재시도")
+                ctx.info("  [경고] 하단 저장하기 클릭 실패 — 재시도")
+                dump_save_button_candidates(page, ctx)
                 ctx.shot(page, "02_save_no_react", rn)
                 page.wait_for_timeout(500)
                 continue
 
-            if save_submit_reacted(page, dialog_msgs, timeout_sec=10.0):
+            if save_submit_reacted(page, dialog_msgs, timeout_sec=12.0):
                 submitted = True
                 ctx.info(
-                    "2. ★ 저장하기 서버 제출 반응 확인 "
-                    "(모달닫힘/로딩/결과팝업/알림)"
+                    "2. ★ 저장하기 클릭 반응 확인 "
+                    "(설정모달 닫힘 또는 저장실행 팝업/알림)"
                 )
                 break
 
             ctx.info(
-                "  [경고] 저장하기 클릭 후 서버 반응 없음 — "
-                "제출 누락 가능, 재시도"
+                "  [경고] 하단 저장하기 클릭 후 저장실행 팝업/반응 없음 — "
+                "재시도"
             )
+            dump_save_button_candidates(page, ctx)
             ctx.shot(page, "02_save_no_react", rn)
-            # 모달이 닫혔으면 다시 열 수 없으므로 루프 종료 후 실패 처리
             if not save_modal_visible(page):
                 break
             page.wait_for_timeout(600)
 
         if not submitted:
+            dump_save_button_candidates(page, ctx)
             ctx.shot(page, "02_save_failed", rn)
             raise RuntimeError(
-                f"#{rn} 저장하기 서버 최종 갱신 실패 — "
-                "필터정보·수집갯수·수집상품이 서버에 반영되지 않음. "
-                "저장하기 1회 재시도 후에도 동일. 다음 입력으로 진행."
+                f"#{rn} 하단 '저장하기' 클릭/저장실행 팝업 실패 — "
+                "필터정보·수집상품수·수집상품이 서버에 반영되지 않음. "
+                "1회 재시도 후에도 동일. 다음 입력으로 진행."
             )
 
-        # 저장 직후: 결과 팝업/알림 모달 출현(필수) → 건수 확인
-        ctx.info("3. 저장 후 결과 팝업/알림 모달 대기 (서버 반영 증거)")
+        # 저장하기 후: 저장을 실행하는 팝업창 모달(필수) → 건수 확인
+        ctx.info(
+            "3. ★ 저장하기 후 '저장 실행' 팝업창 모달 대기 "
+            "(안 보이면 저장 미실행)"
+        )
         wait_save_overlays_settle(
             page, ctx, rn, dialog_msgs=dialog_msgs
         )
@@ -2197,14 +2360,55 @@ def find_mango_collect_alert(
     return None, "", "", None
 
 
+def save_execution_layer_visible(page: Page) -> bool:
+    """저장하기 직후 뜨는 '저장 실행' 팝업/레이어(상품저장설정 제외)."""
+    if save_modal_visible(page):
+        # 설정 모달이 아직 떠 있어도, 위에 다른 알림 레이어가 있을 수 있음
+        pass
+    try:
+        # 수집/저장 결과 문구
+        n, _, _, _ = find_mango_collect_alert(page, None)
+        if n is not None:
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        layer = page.locator(
+            '[role="dialog"], .ui-dialog, .modal, '
+            'div[id*="layer"], div[id*="popup"], '
+            'div[class*="layer"], div[class*="popup"], '
+            'div[class*="alert"], div[class*="msg"]'
+        ).filter(
+            has_text=re.compile(
+                r"수집\s*되었|저장\s*되었|저장\s*완료|처리\s*완료|"
+                r"건\s*이\s*수집|확인"
+            )
+        )
+        if layer.count() > 0 and layer.first.is_visible():
+            # 상품저장설정 본문은 제외
+            txt = ""
+            try:
+                txt = layer.first.inner_text(timeout=500) or ""
+            except Exception:  # noqa: BLE001
+                txt = ""
+            if re.search(r"상품\s*저장\s*설정", txt) and re.search(
+                r"검색\s*필터\s*명", txt
+            ):
+                return False
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
 def save_result_signal_present(
     page: Page,
     dialog_msgs: list[str] | None = None,
 ) -> tuple[bool, str, Page | None]:
-    """저장하기 후 '결과 팝업/알림 모달' 출현 여부.
+    """저장하기 후 '저장 실행' 팝업/알림 모달 출현 여부.
 
     - 별도 브라우저 팝업 창
-    - 페이지 내 'N건이 수집되었다' 알림/레이어
+    - 페이지 내 저장실행 레이어 / 'N건이 수집되었다' 알림
     - JS alert/confirm 메시지
     """
     n, msg, src, hit_page = find_mango_collect_alert(page, dialog_msgs)
@@ -2214,6 +2418,9 @@ def save_result_signal_present(
     cur = popups(page)
     if cur:
         return True, f"window_popup:{len(cur)}", cur[0]
+
+    if save_execution_layer_visible(page):
+        return True, "inpage_save_layer", page
 
     return False, "", None
 
