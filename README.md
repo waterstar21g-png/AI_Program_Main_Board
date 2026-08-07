@@ -46,8 +46,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\fetch-local.ps1
 ## Windows — 웹앱 (P1, P2)
 
 **경로:** `D:\My_Project\AI_Program_Main_Board`  
-**바탕화면 바로가기:** `make-shortcut.bat` / `바로가기만들기.bat`  
-**실행:** **`run.bat`** 또는 `run.ps1` 더블클릭 — 이 파일 하나로 전부 처리됩니다.
+**바탕화면 시작 아이콘:**
+
+```powershell
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/install-desktop-icon.ps1" -OutFile "$env:TEMP\install-desktop-icon.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "$env:TEMP\install-desktop-icon.ps1"
+```
+
+또는 폴더에서 `make-shortcut.bat` / `바로가기만들기.bat`  
+**실행:** 바탕화면 **AI_Program_Main_Board** 아이콘, 또는 **`run.bat`**
 
 ```powershell
 .\run.ps1          # 평소: 동기화 생략, 바로 실행
