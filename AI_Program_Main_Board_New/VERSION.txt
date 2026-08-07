@@ -1,2 +1,2 @@
-버전 2.0.2
-P2: CLI 아이디/비밀번호 로그인
+버전 2.0.3
+P2: Cafe24 로그인 form.requestSubmit + reCAPTCHA 실패 안내

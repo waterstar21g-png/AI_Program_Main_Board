@@ -200,6 +200,9 @@ def launch_debug_browser() -> None:
             f"--user-data-dir={PROFILE_DIR}",
             "--no-first-run",
             "--no-default-browser-check",
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
             MAIN_URL,
         ],
         stdout=log_file,
@@ -651,8 +654,15 @@ def prompt_tmg_credentials() -> tuple[str, str]:
     return uid, pw
 
 
+
 def perform_tmg_login(page: Page, user_id: str | None = None, password: str | None = None) -> None:
-    """로그인 화면에서 CLI 자격증명으로 로그인 시도."""
+    """로그인 화면에서 CLI 자격증명으로 로그인 시도.
+
+    Cafe24 로그인 HTML은 <form>이 즉시 닫혀 있고, 아이디/비번 필드는
+    form 소유자(form owner)로만 연결된다. 로그인 버튼은 form에 속하지
+    않아 클릭만으로는 제출되지 않는 경우가 많다.
+    → form.requestSubmit() 으로 onSubmitLoginForm(reCAPTCHA) 경로를 탄다.
+    """
     if "admin_login" not in page.url:
         return
 
@@ -662,6 +672,18 @@ def perform_tmg_login(page: Page, user_id: str | None = None, password: str | No
         uid, pw = prompt_tmg_credentials()
 
     log(f"로그인 시도 (아이디={uid})")
+    dialogs: list[str] = []
+
+    def _on_dialog(dialog) -> None:
+        dialogs.append(dialog.message)
+        log(f"  [로그인 알림] {dialog.message}")
+        try:
+            dialog.accept()
+        except Exception:  # noqa: BLE001
+            pass
+
+    page.on("dialog", _on_dialog)
+
     try:
         SHOT_ROOT.mkdir(parents=True, exist_ok=True)
         page.screenshot(
@@ -677,36 +699,62 @@ def perform_tmg_login(page: Page, user_id: str | None = None, password: str | No
     type_into(page, id_box, uid)
     type_into(page, pw_box, pw)
 
-    # 로그인 버튼
-    clicked = False
-    for sel in (
-        'input[type="submit"][value*="로그인"]',
-        'input[value*="로그인"]',
-        'button:has-text("로그인")',
-    ):
-        loc = page.locator(sel)
-        if loc.count() > 0:
-            click_it(loc)
-            clicked = True
-            break
-    if not clicked:
-        pw_box.press("Enter")
-
+    # reCAPTCHA 스크립트 준비 대기
     try:
-        page.wait_for_load_state("domcontentloaded", timeout=30_000)
+        page.wait_for_function(
+            "() => !!(window.grecaptcha && window.grecaptcha.execute)",
+            timeout=20_000,
+        )
     except Exception:  # noqa: BLE001
-        pass
-    page.wait_for_timeout(1500)
+        log("  [경고] grecaptcha 로드 대기 시간 초과 — 그대로 제출 시도")
+
+    page.wait_for_timeout(800)
+
+    # 정상 경로: form.requestSubmit() → onSubmitLoginForm → grecaptcha → POST
+    submitted = False
+    try:
+        with page.expect_navigation(timeout=45_000, wait_until="domcontentloaded"):
+            page.evaluate(
+                """() => {
+                    const form = document.getElementById('loginForm')
+                        || document.querySelector('form[name="morning_main_login"]');
+                    if (!form) throw new Error('loginForm not found');
+                    if (typeof form.requestSubmit === 'function') form.requestSubmit();
+                    else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                }"""
+            )
+        submitted = True
+    except Exception as e:  # noqa: BLE001
+        log(f"  [경고] requestSubmit 네비게이션 대기 실패: {type(e).__name__}")
+
+    if not submitted:
+        # 폴백: 보이는 로그인 버튼 클릭
+        for sel in (
+            'button.defbtn_lar:has-text("로그인")',
+            'button[type="submit"]:has-text("로그인")',
+            'button:has-text("로그인")',
+        ):
+            loc = page.locator(sel)
+            if loc.count() == 0:
+                continue
+            try:
+                if loc.first.is_visible():
+                    with page.expect_navigation(timeout=45_000, wait_until="domcontentloaded"):
+                        click_it(loc)
+                    submitted = True
+                    break
+            except Exception:  # noqa: BLE001
+                continue
 
     # 로그인 중계/리다이렉트
-    for _ in range(15):
+    for _ in range(20):
         page = refresh_if_closed(page)
         if "admin_login" not in page.url and ADMIN_HOST in page.url:
             break
         if "m_login" in page.url or "login_ok" in page.url:
             page.wait_for_timeout(800)
             continue
-        page.wait_for_timeout(500)
+        page.wait_for_timeout(400)
 
     try:
         page.screenshot(
@@ -716,11 +764,29 @@ def perform_tmg_login(page: Page, user_id: str | None = None, password: str | No
     except Exception:
         pass
 
-    if "admin_login" in page.url:
+    try:
+        page.remove_listener("dialog", _on_dialog)
+    except Exception:  # noqa: BLE001
+        pass
+
+    if "admin_login" not in page.url:
+        log("로그인 성공(로그인 화면 이탈 확인)")
+        return
+
+    url = page.url
+    msg = " ".join(dialogs)
+    if "login=2" in url or "Captcha" in msg or "캡차" in msg or "captcha" in msg.lower():
         raise RuntimeError(
-            "로그인 실패 — 아이디/비밀번호를 확인하거나, 화면에 캡차/추가인증이 있는지 확인하세요."
+            "로그인 실패 — reCAPTCHA(Captcha) 인증이 거부되었습니다.\n"
+            "  · 클라우드/자동화 IP에서는 점수가 낮아 자주 실패합니다.\n"
+            "  · 로컬 PC Chrome에서 동일 명령으로 다시 실행해 주세요.\n"
+            f"  · URL={url}"
         )
-    log("로그인 성공(로그인 화면 이탈 확인)")
+    raise RuntimeError(
+        "로그인 실패 — 아이디/비밀번호를 확인하거나, 화면에 캡차/추가인증이 있는지 확인하세요.\n"
+        f"  · URL={url}"
+        + (f"\n  · 알림={msg}" if msg else "")
+    )
 
 
 def _ask_human(prompt: str) -> None:
