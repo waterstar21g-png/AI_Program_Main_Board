@@ -18,7 +18,7 @@ if ($PSScriptRoot -match 'OneDrive') {
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.3.2"
+$ExpectedVersion = "3.3.3"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $Sha = "main"
@@ -76,8 +76,9 @@ function Download-RepoFile([string]$LocalPath, [string]$RepoPath) {
 }
 
 function Ensure-ShortcutOnLocal {
-  # 로컬 폴더에 바로가기만들기.bat 확보 + 바탕화면 AI_Program_Main_Board.lnk 생성
+  # 로컬 폴더에 바로가기 스크립트 확보 + 바탕화면 AI_Program_Main_Board.lnk 생성
   foreach ($pair in @(
+      @("make-shortcut.bat", "make-shortcut.bat"),
       @("바로가기만들기.bat", "바로가기만들기.bat"),
       @("create-shortcut.ps1", "create-shortcut.ps1")
     )) {
@@ -169,7 +170,10 @@ if ($skipSync) {
     @("verify.bat", "verify.bat"),
     @("p1.bat", "p1.bat"),
     @("p2.bat", "p2.bat"),
-    @("p3.bat", "p3.bat")
+    @("p3.bat", "p3.bat"),
+    @("make-shortcut.bat", "make-shortcut.bat"),
+    @("create-shortcut.ps1", "create-shortcut.ps1"),
+    @("바로가기만들기.bat", "바로가기만들기.bat")
   )
 
   $failed = @()
@@ -193,9 +197,10 @@ if ($skipSync) {
   Write-Host "[CHECK] APP_VERSION = $TargetVersion"
 
   if ($TargetVersion -ne $ExpectedVersion) {
-    Write-Host "[FATAL] version mismatch: file=$TargetVersion / expected=$ExpectedVersion"
-    Read-Host "Press Enter"
-    exit 1
+    # Sync로 run.ps1이 갱신된 경우 — 새 스크립트로 다시 실행
+    Write-Host "[INFO] version updated ($ExpectedVersion → $TargetVersion). re-launch run.ps1 ..."
+    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "run.ps1") @PSBoundParameters
+    exit $LASTEXITCODE
   }
 }
 
