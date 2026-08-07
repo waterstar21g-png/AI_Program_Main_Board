@@ -1,0 +1,6 @@
+{
+  "siteName": "ABC마트",
+  "siteUrl": "https://abcmart.a-rt.com/?track=W0009",
+  "topCategories": ["MEN", "WOMEN", "KIDS"],
+  "out": "ABC마트_카테고리URL_LIST.xlsx"
+}

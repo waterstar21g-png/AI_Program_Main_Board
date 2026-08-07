@@ -1,0 +1,4 @@
+node_modules/
+.local/
+*.xlsx
+!config.example.json
