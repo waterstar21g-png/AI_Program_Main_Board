@@ -29,7 +29,7 @@ from library import (  # noqa: E402
     set_selected,
 )
 
-VERSION = "2.0.4"
+VERSION = "2.0.5"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -410,14 +410,17 @@ class BoardApp(tk.Tk):
         verify = bool(self.var_verify.get())
         try:
             if os.name == "nt" and run_bat.exists():
-                # run.bat → collect.py 에 --id/--pw 전달
+                # NOTE: `start TITLE cmd` treats TITLE as a program name if unquoted.
+                # Use CREATE_NEW_CONSOLE instead of start "P2_수집" ...
                 extra = f'--id "{tmg_id}" --pw "{tmg_pw}"'
                 if verify:
                     extra += " --verify"
                 cmdline = f'call "{run_bat}" "{path}" {extra}'
+                flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
                 subprocess.Popen(
-                    ["cmd", "/c", "start", "P2_수집", "cmd", "/k", cmdline],
+                    ["cmd", "/k", cmdline],
                     cwd=str(ROOT / "P2"),
+                    creationflags=flags,
                 )
             else:
                 args = [
