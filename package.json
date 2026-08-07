@@ -1,6 +1,6 @@
 {
   "name": "ai-program-main-board",
-  "version": "3.4.0",
+  "version": "3.4.1",
   "private": true,
   "description": "AI_Program_Main_Board — P1_Category_Url_Extract / P2_Product_Capture_App / P3_Python_Item_Collector",
   "scripts": {

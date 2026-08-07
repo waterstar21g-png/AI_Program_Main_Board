@@ -8,6 +8,9 @@ chcp 65001 > $null
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 Set-Location $PSScriptRoot
 
+# 고정 로컬 작업 경로 (사용자 지정 — 모든 로컬 작업은 여기서)
+$PreferredLocalRoot = "D:\My_Project\AI_Program_Main_Board"
+
 if ($PSScriptRoot -match 'OneDrive') {
   Write-Host ""
   Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
@@ -16,16 +19,24 @@ if ($PSScriptRoot -match 'OneDrive') {
   Write-Host "  $PSScriptRoot" -ForegroundColor Yellow
   Write-Host "  기능을 아무리 줄여도 OneDrive가 node_modules를 감시하면" -ForegroundColor Yellow
   Write-Host "  컴파일이 26분+ 걸릴 수 있습니다. (이미 관측됨)" -ForegroundColor Yellow
-  Write-Host "  → 폴더를 C:\Projects\AI_Program_Main_Board 로 옮기세요." -ForegroundColor Cyan
+  Write-Host "  → 폴더를 $PreferredLocalRoot 로 옮기세요." -ForegroundColor Cyan
+  Write-Host "  → node_modules / .next 는 복사하지 말고, 옮긴 뒤 npm install" -ForegroundColor Cyan
   Write-Host "  → 또는: powershell -File scripts\windows-speed-fix.ps1" -ForegroundColor Cyan
   Write-Host "  (보드 UI 없이 수집만 하면: python-collector\run.bat = 컴파일 0초)" -ForegroundColor Green
   Write-Host ""
   Write-Host "  Enter = 그래도 계속 / Ctrl+C = 중단" -ForegroundColor Gray
   Read-Host | Out-Null
+} elseif ($PSScriptRoot -ne $PreferredLocalRoot) {
+  Write-Host ""
+  Write-Host "[안내] 권장 로컬 경로가 아닙니다." -ForegroundColor Yellow
+  Write-Host "  현재: $PSScriptRoot" -ForegroundColor Gray
+  Write-Host "  권장: $PreferredLocalRoot" -ForegroundColor Cyan
+  Write-Host "  (앞으로 모든 로컬 작업은 권장 경로에서 수행)" -ForegroundColor Gray
+  Write-Host ""
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.4.0"
+$ExpectedVersion = "3.4.1"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $Sha = "main"
@@ -183,7 +194,12 @@ if ($skipSync) {
     @("p3.bat", "p3.bat"),
     @("make-shortcut.bat", "make-shortcut.bat"),
     @("create-shortcut.ps1", "create-shortcut.ps1"),
-    @("바로가기만들기.bat", "바로가기만들기.bat")
+    @("바로가기만들기.bat", "바로가기만들기.bat"),
+    @("LOCAL_WORKSPACE.md", "LOCAL_WORKSPACE.md"),
+    @("WINDOWS_SETUP.md", "WINDOWS_SETUP.md"),
+    @("VERSION.txt", "VERSION.txt"),
+    @("README.md", "README.md"),
+    @("PROJECTS.md", "PROJECTS.md")
   )
 
   $failed = @()
