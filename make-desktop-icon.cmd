@@ -17,4 +17,8 @@ if errorlevel 1 (
   exit /b 1
 )
 echo [OK] Desktop icon: AI_Program_Main_Board
+if exist "%~dp0pin-taskbar.ps1" (
+  echo [..] Pin to taskbar...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0pin-taskbar.ps1"
+)
 pause

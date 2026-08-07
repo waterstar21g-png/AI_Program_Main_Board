@@ -202,7 +202,9 @@ if ($skipSync) {
     @("PROJECTS.md", "PROJECTS.md"),
     @("fetch-local.ps1", "fetch-local.ps1"),
     @("install-desktop-icon.ps1", "install-desktop-icon.ps1"),
-    @("make-desktop-icon.cmd", "make-desktop-icon.cmd")
+    @("make-desktop-icon.cmd", "make-desktop-icon.cmd"),
+    @("pin-taskbar.ps1", "pin-taskbar.ps1"),
+    @("pin-taskbar.cmd", "pin-taskbar.cmd")
   )
 
   $failed = @()
