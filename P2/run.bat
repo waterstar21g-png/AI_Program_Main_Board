@@ -62,7 +62,8 @@ echo [2/2] starting: %EXCEL%
 echo Extra args: %2 %3 %4 %5 %6 %7 %8 %9
 echo.
 REM 기본: 저장수 3 + 행 재시도 3 + 무중단
-REM 나머지 인자: --id / --pw / --verify 등
+REM 로그인: 브라우저에서 사용자가 직접 (자동 ID/PW 입력 없음)
+REM 나머지 인자: --verify 등
 call %PY% collect.py "%EXCEL%" 3 --retries 3 --yes %2 %3 %4 %5 %6 %7 %8 %9
 set ERR=%ERRORLEVEL%
 

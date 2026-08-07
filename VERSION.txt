@@ -1,3 +1,2 @@
-버전 2.0.9 (Python B안)
-아이콘: boot-from-icon.ps1 — GitHub에서 updater 갱신 후 VERSION 변경 시에만 pull
-run.bat도 동일하게 버전 변경 시에만 자동 반영
+버전 2.0.10 (Python B안)
+P2 로그인: 자동입력/1초딜레이 제거 → 브라우저에서 사용자 직접 로그인

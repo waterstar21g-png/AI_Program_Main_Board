@@ -16,7 +16,6 @@ P2 — 더망고(tmg1898) 상품데이터 대량수집
     run-verify.bat 엑셀.xlsx
 """
 
-import getpass
 import os
 import re
 import socket
@@ -78,32 +77,12 @@ SAVE_FAIL_PATTERNS = [
 
 SHOT_ROOT = Path(__file__).parent / "run-logs"
 
-# CLI/환경변수/저장파일로 받은 더망고 로그인 (세션 없을 때 사용)
-_TMG_ID: str | None = None
-_TMG_PW: str | None = None
+# 사용자 수동 로그인 대기 제한 (초)
+LOGIN_WAIT_SEC = 600
 
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
-
-
-def _load_saved_credentials() -> tuple[str, str]:
-    try:
-        from tmg_auth import load_credentials
-
-        return load_credentials()
-    except Exception:
-        return "", ""
-
-
-def _persist_credentials(uid: str, pw: str) -> None:
-    try:
-        from tmg_auth import save_credentials
-
-        save_credentials(uid, pw)
-        log(f"  [저장] 로그인 정보 → {Path(__file__).parent / '.tmg_credentials.json'}")
-    except Exception as e:  # noqa: BLE001
-        log(f"  [경고] 로그인 정보 저장 실패: {e}")
 
 
 class RunCtx:
@@ -629,245 +608,97 @@ def with_nav_retry(page: Page, fn, retries: int = 3):
     return None
 
 
-def set_tmg_credentials(user_id: str | None, password: str | None) -> None:
-    global _TMG_ID, _TMG_PW
-    if user_id is not None:
-        _TMG_ID = user_id.strip()
-    if password is not None:
-        _TMG_PW = password
-
-
-def prompt_tmg_credentials() -> tuple[str, str]:
-    """로그인 정보: 인자/환경변수 → 로컬 저장파일 → CLI(최초 1회 후 저장)."""
-    global _TMG_ID, _TMG_PW
-    uid = (_TMG_ID or os.environ.get("TMG_ID") or "").strip()
-    pw = _TMG_PW or os.environ.get("TMG_PW") or ""
-
-    if not uid or not pw:
-        saved_id, saved_pw = _load_saved_credentials()
-        if not uid:
-            uid = saved_id
-        if not pw:
-            pw = saved_pw
-        if uid and pw:
-            print("", flush=True)
-            print("=== 더망고 로그인 정보 (저장파일) ===", flush=True)
-            print(f"아이디: {uid}", flush=True)
-            print("비밀번호: ********  (저장값 사용 · 재입력 없음)", flush=True)
-            _TMG_ID, _TMG_PW = uid, pw
-            return uid, pw
-
-    print("", flush=True)
-    print("=== 더망고 로그인 정보 ===", flush=True)
-    if not uid:
-        try:
-            uid = input("아이디: ").strip()
-        except EOFError as e:
-            raise RuntimeError(
-                "아이디가 없습니다. 보드에서 [더망고 로그인 저장]을 먼저 실행하거나 "
-                "--id / TMG_ID 를 지정하세요."
-            ) from e
-    else:
-        print(f"아이디: {uid}", flush=True)
-
-    if not pw:
-        try:
-            if sys.stdin.isatty():
-                pw = getpass.getpass("비밀번호: ")
-            else:
-                print("비밀번호: ", end="", flush=True)
-                pw = input().strip()
-        except EOFError as e:
-            raise RuntimeError(
-                "비밀번호가 없습니다. 보드에서 [더망고 로그인 저장]을 먼저 실행하세요."
-            ) from e
-    else:
-        print("비밀번호: ********", flush=True)
-
-    if not uid or not pw:
-        raise RuntimeError("아이디와 비밀번호를 모두 입력해야 합니다.")
-
-    _TMG_ID, _TMG_PW = uid, pw
-    _persist_credentials(uid, pw)
-    return uid, pw
-
-
-
-def type_into_slow(page: Page, locator, value: str, per_char_ms: int = 1000) -> None:
-    """로그인 등 — 글자마다 per_char_ms 간격으로 키보드 입력."""
-    el = locator.first
-    el.wait_for(state="visible", timeout=60_000)
-    el.scroll_into_view_if_needed()
+def _is_logged_in(page: Page) -> bool:
+    """로그인 화면을 벗어나고 관리자 호스트에 있으면 로그인된 것으로 본다."""
     try:
-        el.click(timeout=15_000)
-    except PWTimeout:
-        pass
-    page.keyboard.press("Control+A")
-    page.keyboard.press("Backspace")
-    page.wait_for_timeout(200)
-    log(f"  [입력] {len(value)}글자 · 글자당 {per_char_ms}ms")
-    for i, ch in enumerate(value):
-        page.keyboard.type(ch, delay=0)
-        if i < len(value) - 1:
-            page.wait_for_timeout(per_char_ms)
-    got = ""
-    try:
-        got = el.input_value()
-    except Exception:
-        pass
-    if got != value:
-        log(f"  [경고] 느린입력 불일치 — 기대 {len(value)}자 / 실제 {len(got)}자")
+        url = page.url or ""
+    except Exception:  # noqa: BLE001
+        return False
+    if not url or url in ("about:blank", "chrome://newtab/"):
+        return False
+    if ADMIN_HOST not in url:
+        return False
+    if "admin_login" in url:
+        return False
+    if "m_login" in url:
+        return False
+    return True
 
 
-def perform_tmg_login(page: Page, user_id: str | None = None, password: str | None = None) -> None:
-    """더망고 실제 로그인 창(admin_login.php)을 띄운 뒤 저장 ID/PW로 입력·제출.
+def wait_for_user_login(page: Page, timeout_sec: int = LOGIN_WAIT_SEC) -> Page:
+    """더망고 로그인 창만 띄우고, 사용자가 직접 로그인할 때까지 대기.
 
-    Cafe24 로그인 HTML은 <form>이 즉시 닫혀 있고, 아이디/비번 필드는
-    form 소유자(form owner)로만 연결된다. 로그인 버튼은 form에 속하지
-    않아 클릭만으로는 제출되지 않는 경우가 많다.
-    → form.requestSubmit() 으로 onSubmitLoginForm(reCAPTCHA) 경로를 탄다.
+    자동 ID/PW 입력·글자 지연 입력·자동 제출은 하지 않는다.
+    (Cafe24 보안/자동화 거절 회피 — 사용자 수동 로그인)
     """
-    # 항상 더망고 로그인 페이지를 그대로 연다 (사용자에게 실제 로그인창 표시)
-    if "admin_login" not in page.url:
+    page = refresh_if_closed(page)
+    if _is_logged_in(page):
+        log("이미 로그인된 세션 — 사용자 로그인 대기 생략")
+        return page
+
+    if "admin_login" not in (page.url or ""):
         log("더망고 로그인창 열기: " + LOGIN_URL)
         safe_goto(page, LOGIN_URL)
         page = refresh_if_closed(page)
 
-    uid = (user_id or _TMG_ID or "").strip()
-    pw = password or _TMG_PW or ""
-    if not uid or not pw:
-        uid, pw = prompt_tmg_credentials()
-
-    log(f"로그인 시도 (아이디={uid}) — 더망고 로그인창에 저장값 전달")
-    dialogs: list[str] = []
-
-    def _on_dialog(dialog) -> None:
-        dialogs.append(dialog.message)
-        log(f"  [로그인 알림] {dialog.message}")
-        try:
-            dialog.accept()
-        except Exception:  # noqa: BLE001
-            pass
-
-    page.on("dialog", _on_dialog)
-
-    try:
-        SHOT_ROOT.mkdir(parents=True, exist_ok=True)
-        page.screenshot(
-            path=str(SHOT_ROOT / f"login_before_{time.strftime('%Y%m%d_%H%M%S')}.png"),
-            full_page=True,
-        )
-    except Exception:
-        pass
-
-    # 로그인 창이 보일 시간을 잠시 둠
     try:
         page.bring_to_front()
     except Exception:  # noqa: BLE001
         pass
-    page.wait_for_timeout(800)
 
-    id_box = page.locator('input[name="login_id"]').first
-    pw_box = page.locator('input[name="login_pass"]').first
-    id_box.wait_for(state="visible", timeout=30_000)
-    # 글자당 1초 간격 입력 (자동화 탐지 완화 시도)
-    log("  아이디 입력 (글자당 1초)")
-    type_into_slow(page, id_box, uid, per_char_ms=1000)
-    page.wait_for_timeout(500)
-    log("  비밀번호 입력 (글자당 1초)")
-    type_into_slow(page, pw_box, pw, per_char_ms=1000)
-    page.wait_for_timeout(500)
-
-    # reCAPTCHA 스크립트 준비 대기
-    try:
-        page.wait_for_function(
-            "() => !!(window.grecaptcha && window.grecaptcha.execute)",
-            timeout=20_000,
-        )
-    except Exception:  # noqa: BLE001
-        log("  [경고] grecaptcha 로드 대기 시간 초과 — 그대로 제출 시도")
-
-    page.wait_for_timeout(800)
-
-    # 정상 경로: form.requestSubmit() → onSubmitLoginForm → grecaptcha → POST
-    submitted = False
-    try:
-        with page.expect_navigation(timeout=45_000, wait_until="domcontentloaded"):
-            page.evaluate(
-                """() => {
-                    const form = document.getElementById('loginForm')
-                        || document.querySelector('form[name="morning_main_login"]');
-                    if (!form) throw new Error('loginForm not found');
-                    if (typeof form.requestSubmit === 'function') form.requestSubmit();
-                    else form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
-                }"""
-            )
-        submitted = True
-    except Exception as e:  # noqa: BLE001
-        log(f"  [경고] requestSubmit 네비게이션 대기 실패: {type(e).__name__}")
-
-    if not submitted:
-        # 폴백: 보이는 로그인 버튼 클릭
-        for sel in (
-            'button.defbtn_lar:has-text("로그인")',
-            'button[type="submit"]:has-text("로그인")',
-            'button:has-text("로그인")',
-        ):
-            loc = page.locator(sel)
-            if loc.count() == 0:
-                continue
-            try:
-                if loc.first.is_visible():
-                    with page.expect_navigation(timeout=45_000, wait_until="domcontentloaded"):
-                        click_it(loc)
-                    submitted = True
-                    break
-            except Exception:  # noqa: BLE001
-                continue
-
-    # 로그인 중계/리다이렉트
-    for _ in range(20):
-        page = refresh_if_closed(page)
-        if "admin_login" not in page.url and ADMIN_HOST in page.url:
-            break
-        if "m_login" in page.url or "login_ok" in page.url:
-            page.wait_for_timeout(800)
-            continue
-        page.wait_for_timeout(400)
+    print("", flush=True)
+    print("================================================", flush=True)
+    print("  더망고 로그인창에서 직접 로그인하세요.", flush=True)
+    print("  (프로그램이 ID/PW를 입력하지 않습니다)", flush=True)
+    print(f"  로그인 완료 후 자동으로 계속됩니다. (최대 {timeout_sec}초)", flush=True)
+    print("================================================", flush=True)
+    log("사용자 로그인 대기 중...")
 
     try:
+        SHOT_ROOT.mkdir(parents=True, exist_ok=True)
         page.screenshot(
-            path=str(SHOT_ROOT / f"login_after_{time.strftime('%Y%m%d_%H%M%S')}.png"),
+            path=str(SHOT_ROOT / f"login_wait_{time.strftime('%Y%m%d_%H%M%S')}.png"),
             full_page=True,
         )
-    except Exception:
-        pass
-
-    try:
-        page.remove_listener("dialog", _on_dialog)
     except Exception:  # noqa: BLE001
         pass
 
-    if "admin_login" not in page.url:
-        log("로그인 성공(로그인 화면 이탈 확인)")
-        return
+    deadline = time.time() + max(30, int(timeout_sec))
+    last_url = ""
+    while time.time() < deadline:
+        page = refresh_if_closed(page)
+        try:
+            cur = page.url or ""
+        except Exception:  # noqa: BLE001
+            cur = ""
+        if cur != last_url:
+            last_url = cur
+            log(f"  [대기] URL={cur}")
+        if _is_logged_in(page):
+            log("사용자 로그인 확인 — 계속 진행")
+            try:
+                page.screenshot(
+                    path=str(
+                        SHOT_ROOT / f"login_ok_{time.strftime('%Y%m%d_%H%M%S')}.png"
+                    ),
+                    full_page=True,
+                )
+            except Exception:  # noqa: BLE001
+                pass
+            return page
+        page.wait_for_timeout(1000)
 
-    url = page.url
-    msg = " ".join(dialogs)
-    if "login=2" in url or "Captcha" in msg or "캡차" in msg or "captcha" in msg.lower() or "자동화" in msg:
-        raise RuntimeError(
-            "로그인 실패 — Cafe24가 자동/원격 접근을 Captcha로 차단했습니다.\n"
-            f"  · 알림: {msg or '(login=2)'}\n"
-            "  · 클라우드 에이전트에서는 통과하기 어렵습니다.\n"
-            "  · 로컬 PC에서 Chrome을 연 뒤 아래처럼 실행하세요:\n"
-            "      python P2/collect.py 엑셀.xlsx 3 --verify --id ID --pw PW\n"
-            f"  · URL={url}"
-        )
     raise RuntimeError(
-        "로그인 실패 — 아이디/비밀번호를 확인하거나, 화면에 캡차/추가인증이 있는지 확인하세요.\n"
-        f"  · URL={url}"
-        + (f"\n  · 알림={msg}" if msg else "")
+        "사용자 로그인 대기 시간 초과.\n"
+        "  · Chrome에 열린 더망고 로그인창에서 직접 로그인한 뒤 다시 실행하세요.\n"
+        f"  · 마지막 URL={last_url or '(unknown)'}"
     )
+
+
+def perform_tmg_login(page: Page, user_id: str | None = None, password: str | None = None) -> Page:
+    """하위 호환: 자동 입력 없음 — 사용자 수동 로그인 대기."""
+    _ = user_id, password
+    return wait_for_user_login(page)
 
 
 def _ask_human(prompt: str) -> None:
@@ -888,12 +719,12 @@ def _ask_human(prompt: str) -> None:
 
 def handle_possible_login_page(page: Page) -> None:
     """
-    세션이 갑자기 만료돼(또는 애초에 로그인이 안 된 채) admin_login.php로
-    튕기는 경우가 있다. CLI로 ID/PW를 받아 자동 로그인한다.
+    세션이 만료돼 admin_login.php로 튕기면 로그인창을 띄우고
+    사용자가 직접 로그인할 때까지 기다린다. (자동 입력 없음)
     """
     if "admin_login" not in page.url:
         return
-    log("  [경고] 로그인 화면 — CLI 자격증명으로 로그인합니다")
+    log("  [경고] 로그인 화면 — 사용자 직접 로그인 대기")
     try:
         SHOT_ROOT.mkdir(parents=True, exist_ok=True)
         shot = SHOT_ROOT / f"login_required_{time.strftime('%Y%m%d_%H%M%S')}.png"
@@ -901,8 +732,8 @@ def handle_possible_login_page(page: Page) -> None:
         log(f"  [샷] 로그인 화면: {shot}")
     except Exception as e:  # noqa: BLE001
         log(f"  [샷 실패] {e}")
-    perform_tmg_login(page)
-    page.wait_for_timeout(800)
+    wait_for_user_login(page)
+    page = refresh_if_closed(page)
     if "admin_login" in page.url:
         raise RuntimeError("로그인 후에도 여전히 로그인 화면입니다 — 다시 확인해 주세요")
 
@@ -1219,17 +1050,15 @@ def ensure_ready_page(page: Page) -> Page:
             log(f"  [샷] 로그인 게이트: {shot}")
         except Exception as e:  # noqa: BLE001
             log(f"  [샷 실패] {e}")
-        perform_tmg_login(page)
+        page = wait_for_user_login(page)
         page = refresh_if_closed(page)
-        # 로그인 직후 사이트 자체가 리다이렉트 중일 수 있으므로(m_login_ok.php 등)
-        # 안정될 때까지 잠깐 기다린 뒤에 필요하면 이동한다.
         try:
             page.wait_for_load_state("domcontentloaded", timeout=15_000)
         except Exception:  # noqa: BLE001
             pass
         page = refresh_if_closed(page)
         try:
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(500)
         except Exception:  # noqa: BLE001
             pass
         page = refresh_if_closed(page)
@@ -1283,8 +1112,18 @@ def main() -> None:
         action="store_true",
         help="실패해도 y/n 묻지 않고 다음 행으로 (또는 재시도만)",
     )
-    ap.add_argument("--id", dest="tmg_id", default=None, help="더망고 아이디 (없으면 CLI 요청)")
-    ap.add_argument("--pw", dest="tmg_pw", default=None, help="더망고 비밀번호 (없으면 CLI 요청)")
+    ap.add_argument(
+        "--id",
+        dest="tmg_id",
+        default=None,
+        help="(미사용) 자동 로그인 제거됨 — 브라우저에서 직접 로그인",
+    )
+    ap.add_argument(
+        "--pw",
+        dest="tmg_pw",
+        default=None,
+        help="(미사용) 자동 로그인 제거됨 — 브라우저에서 직접 로그인",
+    )
     args = ap.parse_args()
 
     excel_path = args.excel
@@ -1294,9 +1133,8 @@ def main() -> None:
     if verify and max_rows is None:
         max_rows = 1
 
-    # 로그인 정보: 인자 → 환경변수 → CLI 입력
-    set_tmg_credentials(args.tmg_id, args.tmg_pw)
-    prompt_tmg_credentials()
+    if args.tmg_id or args.tmg_pw:
+        log("[안내] --id/--pw 는 더 이상 사용하지 않습니다. 브라우저에서 직접 로그인하세요.")
 
     rows = read_excel(excel_path)
     if not rows:
