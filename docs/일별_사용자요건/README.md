@@ -103,3 +103,4 @@ SR_doc_YYYYMMDD_HHMMSS_요건요약20자이내.md
 | [SR_doc_20260808_004055_수집알림및pull오탐.md](./SR_doc_20260808_004055_수집알림및pull오탐.md) | 망고 N건수집 알림확인 · git pull PS오탐 수정 |
 | [SR_doc_20260808_004640_저장하기필수및알림.md](./SR_doc_20260808_004640_저장하기필수및알림.md) | 저장하기 필수·팝업후속·망고저장건수알림 |
 | [SR_doc_20260808_004849_updater선갱신오탐.md](./SR_doc_20260808_004849_updater선갱신오탐.md) | updater 선갱신·git pull PS 오탐 제거 |
+| [SR_doc_20260808_004940_remote버전미갱신.md](./SR_doc_20260808_004940_remote버전미갱신.md) | remote VERSION git+HTTP 최신선택 |

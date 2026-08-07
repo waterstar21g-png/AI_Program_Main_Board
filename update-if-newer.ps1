@@ -15,9 +15,7 @@ if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "VERSION
 Set-Location -LiteralPath $Root
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
 
-# Self-refresh once: old copies still had "git pull 2>&1 | Out-Host" which
-# shows red NativeCommandError on success in Windows PowerShell 5.1.
-# Download latest updater from GitHub, then re-exec so pull uses the new script.
+# Self-refresh once: avoid stale local updater. Re-exec after download.
 if (-not $env:AI_BOARD_UPDATER_REFRESHED) {
   $env:AI_BOARD_UPDATER_REFRESHED = "1"
   $selfPath = Join-Path $Root "update-if-newer.ps1"
@@ -31,7 +29,7 @@ if (-not $env:AI_BOARD_UPDATER_REFRESHED) {
     $bytes = $wc.DownloadData($url)
     if ($bytes -and $bytes.Length -gt 200) {
       [System.IO.File]::WriteAllBytes($selfPath, $bytes)
-      Write-Host "[OK] updater self-refreshed from GitHub — re-exec"
+      Write-Host "[OK] updater self-refreshed from GitHub - re-exec"
       & powershell -NoProfile -ExecutionPolicy Bypass -File $selfPath
       exit $LASTEXITCODE
     }
@@ -40,9 +38,7 @@ if (-not $env:AI_BOARD_UPDATER_REFRESHED) {
   }
 }
 
-# git writes progress ("From https://...") to stderr. In PS 5.1,
-# "git ... 2>&1 | Out-Host" wraps those lines as NativeCommandError (red)
-# even when git succeeds. Run via cmd.exe so stderr is plain text.
+# git progress goes to stderr; run via cmd so PS 5.1 does not show NativeCommandError.
 function Invoke-GitHost {
   param(
     [Parameter(Mandatory = $true)]
@@ -63,6 +59,22 @@ function Get-VersionFromText([string]$text) {
   return ""
 }
 
+function Compare-VersionStrings([string]$a, [string]$b) {
+  # return: 1 if a>b, 0 if equal, -1 if a<b, 2 if unparsable
+  if (-not $a -and -not $b) { return 0 }
+  if (-not $a) { return -1 }
+  if (-not $b) { return 1 }
+  try {
+    $va = [version]$a
+    $vb = [version]$b
+    if ($va -gt $vb) { return 1 }
+    if ($va -lt $vb) { return -1 }
+    return 0
+  } catch {
+    return 2
+  }
+}
+
 function Get-LocalVersion {
   $p = Join-Path $Root "VERSION.txt"
   if (-not (Test-Path -LiteralPath $p)) { return "" }
@@ -77,10 +89,15 @@ function Get-RemoteVersionViaGit {
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return "" }
   if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) { return "" }
   try {
-    cmd.exe /c "git fetch origin main >NUL 2>&1" | Out-Null
+    $code = cmd.exe /c "git fetch origin main --prune"
+    if ($code -ne 0) {
+      Write-Host "[WARN] git fetch origin main failed (exit=$code)"
+    }
     $text = cmd.exe /c "git show origin/main:VERSION.txt 2>NUL"
     if ($text) { return Get-VersionFromText ($text -join "`n") }
-  } catch {}
+  } catch {
+    Write-Host "[WARN] git remote VERSION read failed: $($_.Exception.Message)"
+  }
   return ""
 }
 
@@ -88,18 +105,24 @@ function Get-RemoteVersionViaHttp {
   $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
   $urls = @(
     "https://raw.githubusercontent.com/$Repo/main/VERSION.txt?t=$cb",
-    "https://cdn.jsdelivr.net/gh/${Repo}@main/VERSION.txt"
+    "https://cdn.jsdelivr.net/gh/${Repo}@main/VERSION.txt?t=$cb"
   )
   foreach ($url in $urls) {
     try {
       $wc = New-Object System.Net.WebClient
       $wc.Headers.Add("User-Agent", "AI_Program_Main_Board-update-if-newer")
       $wc.Headers.Add("Cache-Control", "no-cache")
+      $wc.Headers.Add("Pragma", "no-cache")
       $wc.Encoding = [System.Text.Encoding]::UTF8
       $text = $wc.DownloadString($url)
       $v = Get-VersionFromText $text
-      if ($v) { return $v }
-    } catch {}
+      if ($v) {
+        Write-Host "[INFO] HTTP VERSION from $url => $v"
+        return $v
+      }
+    } catch {
+      Write-Host "[WARN] HTTP VERSION fail: $($_.Exception.Message)"
+    }
   }
   return ""
 }
@@ -107,33 +130,58 @@ function Get-RemoteVersionViaHttp {
 Write-Host "[VERSION-CHECK] root=$Root"
 
 $local = Get-LocalVersion
-$remote = Get-RemoteVersionViaGit
-if (-not $remote) {
-  Write-Host "[INFO] git remote VERSION unavailable — try HTTP"
-  $remote = Get-RemoteVersionViaHttp
+
+# Always check BOTH git and HTTP; use the newer one.
+# (Stale origin/main after failed fetch used to keep remote stuck on old VERSION.)
+$remoteGit = Get-RemoteVersionViaGit
+$remoteHttp = Get-RemoteVersionViaHttp
+$remote = ""
+$remoteSrc = ""
+
+if ($remoteGit -and $remoteHttp) {
+  $cmp = Compare-VersionStrings $remoteHttp $remoteGit
+  if ($cmp -ge 0) {
+    # http newer or equal - prefer http when equal too (fresher path)
+    if ($cmp -eq 1) {
+      $remote = $remoteHttp
+      $remoteSrc = "http(newer)"
+    } else {
+      $remote = $remoteHttp
+      $remoteSrc = "http+git"
+    }
+  } else {
+    $remote = $remoteGit
+    $remoteSrc = "git(newer)"
+  }
+} elseif ($remoteHttp) {
+  $remote = $remoteHttp
+  $remoteSrc = "http"
+} elseif ($remoteGit) {
+  $remote = $remoteGit
+  $remoteSrc = "git"
 }
 
-Write-Host "[VERSION] local=$local  remote=$remote"
+Write-Host "[VERSION] local=$local  remote=$remote  (git=$remoteGit http=$remoteHttp src=$remoteSrc)"
 
 if (-not $remote) {
-  Write-Host "[SKIP] Cannot read remote VERSION — start without update"
+  Write-Host "[SKIP] Cannot read remote VERSION - start without update"
   exit 0
 }
 
 if ($local -and ($local -eq $remote)) {
-  Write-Host "[SKIP] Same version ($local) — no git pull"
+  Write-Host "[SKIP] Same version ($local) - no git pull"
   exit 0
 }
 
 Write-Host "[UPDATE] Version changed ($local -> $remote). Applying source..."
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Write-Host "[WARN] git not found — start with local source"
+  Write-Host "[WARN] git not found - start with local source"
   exit 0
 }
 
 if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) {
-  Write-Host "[WARN] Not a git repo — start with local source"
+  Write-Host "[WARN] Not a git repo - start with local source"
   exit 0
 }
 
@@ -149,11 +197,11 @@ if ($branch -and ($branch -ne "main")) {
 
 $pullCode = Invoke-GitHost "git pull origin main"
 if ($pullCode -ne 0) {
-  Write-Host "[WARN] git pull failed — try reset to origin/main"
-  [void](Invoke-GitHost "git fetch origin main")
+  Write-Host "[WARN] git pull failed - try reset to origin/main"
+  [void](Invoke-GitHost "git fetch origin main --prune")
   $resetCode = Invoke-GitHost "git reset --hard origin/main"
   if ($resetCode -ne 0) {
-    Write-Host "[WARN] update failed — start with local source"
+    Write-Host "[WARN] update failed - start with local source"
     exit 0
   }
 }
