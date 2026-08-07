@@ -103,6 +103,22 @@ SAVE_FAIL_PATTERNS = [
     re.compile(r"다시\s*시도"),
 ]
 
+# 더망고(자체 UI) — 검색 결과 없음 문구 (로딩 중 오판 금지, 로딩 종료 후에만 사용)
+MANGO_NO_RESULT_PATTERNS = [
+    re.compile(r"검색하신\s*검색에\s*대한\s*검색결과가\s*없습니다"),
+    re.compile(r"검색결과가\s*없습니다"),
+    re.compile(r"정확한\s*검색어인지\s*다시한번\s*확인"),
+]
+
+# 더망고 로딩 오버레이/문구 (빨간 "잠시만 기다려주세요" 등)
+MANGO_LOADING_PATTERNS = [
+    re.compile(r"load\s*product", re.I),
+    re.compile(r"상품정보를\s*불러오는\s*중"),
+    re.compile(r"잠시만\s*기다려"),
+    re.compile(r"처리\s*중\s*입니다"),
+    re.compile(r"검색\s*중"),
+]
+
 SHOT_ROOT = Path(__file__).parent / "run-logs"
 
 # 현재 실행 컨텍스트(로그인 등 단계 샷을 같은 폴더에 모으기)
@@ -120,6 +136,7 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "01_popup_missing": "1. 검색 팝업 미표시(오류)",
     "01_popup_opened": "1. 검색 팝업 열림",
     "01_popup_closed": "1. 검색 팝업 닫힘",
+    "01_mango_no_results": "1. 망고 검색결과 없음(자체메세지)",
     "01_results_ready": "1. 검색 결과 준비",
     "02_save_modal": "2. 모두저장 모달",
     "02_no_count_field": "2. 저장수 필드 없음(오류)",
@@ -1089,26 +1106,126 @@ def reset_to_bulk_menu(page: Page) -> None:
     with_nav_retry(page, lambda: _reset_to_bulk_menu_once(page))
 
 
+def _page_body_text(page: Page) -> str:
+    try:
+        return page.evaluate(
+            "() => (document.body && document.body.innerText) ? document.body.innerText : ''"
+        ) or ""
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def is_mango_loading(page: Page) -> bool:
+    text = _page_body_text(page)
+    return any(p.search(text) for p in MANGO_LOADING_PATTERNS)
+
+
+def is_mango_no_results(page: Page) -> bool:
+    """더망고 자체 '검색결과가 없습니다' 메세지 여부 (로딩 중이 아닐 때만 의미 있음)."""
+    if is_mango_loading(page):
+        return False
+    text = _page_body_text(page)
+    return any(p.search(text) for p in MANGO_NO_RESULT_PATTERNS)
+
+
+def count_mango_result_products(page: Page) -> int:
+    """대량수집 화면의 검색결과 상품(체크박스/썸네일) 대략 개수."""
+    try:
+        return int(
+            page.evaluate(
+                """() => {
+                    // 결과 영역의 체크박스 + 일정 크기 이상 이미지
+                    const boxes = Array.from(
+                        document.querySelectorAll('input[type="checkbox"]')
+                    ).filter((el) => {
+                        const r = el.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0 && el.offsetParent !== null;
+                    });
+                    const imgs = Array.from(document.querySelectorAll('img')).filter((img) => {
+                        const w = img.naturalWidth || 0;
+                        const h = img.naturalHeight || 0;
+                        const r = img.getBoundingClientRect();
+                        return w >= 40 && h >= 40 && r.width >= 20 && r.height >= 20;
+                    });
+                    // 전체선택 등 UI 체크박스 1~2개는 제외 감안
+                    const boxScore = Math.max(0, boxes.length - 1);
+                    return Math.max(boxScore, imgs.length);
+                }"""
+            )
+            or 0
+        )
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def wait_page_not_loading(page: Page, timeout_sec: float = 15.0) -> None:
     """
-    모두저장 클릭 전에 "로딩 중" 표시가 사라졌는지만 확인한다.
-    (검색결과 있음/없음은 절대 판단하지 않음 — 로딩 중에 "결과없음"
-    문구가 잠깐 보였다가 사라지는 경우를 결과없음으로 오판했던 과거
-    버그가 있어서, 오직 로딩 표시 유무만 본다.)
+    "로딩 중" 표시가 사라질 때까지 확인한다.
+    (검색결과 있음/없음은 여기서 판단하지 않음 — 로딩 중 결과없음 깜빡임 오판 방지)
     """
     end = time.time() + timeout_sec
     while time.time() < end:
         try:
-            loading = page.evaluate(
-                "() => /load\\s*product|상품정보를\\s*불러오는\\s*중|잠시만\\s*기다려/i"
-                ".test(document.body ? document.body.innerText : '')"
-            )
+            loading = is_mango_loading(page)
         except Exception:  # noqa: BLE001
             return
         if not loading:
             page.wait_for_timeout(500)  # 결과 렌더링 여유
             return
         page.wait_for_timeout(300)
+
+
+def wait_mango_search_settle(
+    page: Page,
+    *,
+    timeout_sec: float = 45.0,
+) -> tuple[str, int]:
+    """URL 검색 후 망고 화면이 안정될 때까지 대기.
+
+    반환: (상태, 상품힌트수)
+      - "products": 검색 상품이 보임
+      - "no_results": 망고 자체 '검색결과가 없습니다' 메세지
+      - "unknown": 로딩은 끝났으나 판별 어려움
+    """
+    end = time.time() + max(10.0, float(timeout_sec))
+    # 1) 로딩 종료 대기
+    while time.time() < end:
+        if not is_mango_loading(page):
+            break
+        page.wait_for_timeout(350)
+    else:
+        log("  [경고] 망고 로딩 대기 시간 초과")
+
+    # 2) 결과 렌더 안정화 (로딩 직후 결과없음이 잠깐 뜨는 경우 대비)
+    stable_need = 3
+    stable = 0
+    last_state = "unknown"
+    last_count = 0
+    while time.time() < end:
+        if is_mango_loading(page):
+            stable = 0
+            page.wait_for_timeout(300)
+            continue
+        no_res = is_mango_no_results(page)
+        cnt = count_mango_result_products(page)
+        if cnt >= 1 and not no_res:
+            state = "products"
+        elif no_res and cnt < 1:
+            state = "no_results"
+        elif cnt >= 1:
+            state = "products"
+        else:
+            state = "unknown"
+        if state == last_state and state != "unknown":
+            stable += 1
+        else:
+            stable = 1 if state != "unknown" else 0
+        last_state, last_count = state, cnt
+        if stable >= stable_need:
+            return state, last_count
+        page.wait_for_timeout(400)
+
+    return last_state, last_count
 
 
 def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
@@ -1130,67 +1247,144 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     if url != row["url"].strip():
         ctx.info(f"  [정보] 프로토콜 보정됨: {url}")
 
-    ctx.info(f"1. URL 입력 | 상위 최종 카테고리명={label} | 최종 카테고리 URL주소={url}")
-    target = url_input(page)
-    type_into(page, target, url)
-    actual = ""
-    try:
-        actual = target.input_value()
-    except Exception:
-        pass
-    ctx.info(f"  입력칸 최종 값: {actual!r}")
-    if actual.strip() != url.strip():
-        raise RuntimeError(f"URL 입력 불일치 — 기대 {url!r} / 실제 {actual!r}")
-    ctx.shot(page, "01_url_filled", rn)
-
-    ctx.info("1. URL상품검색하기 클릭")
-    trusted = click_it(url_search_button(page))
-
-    # 07 선행: 검색 팝업 "열림" 확인·샷 → 그 다음 "닫힘"
-    ctx.info("1. 검색 팝업 열림 대기")
-    opened_pages = wait_popup_open(page, grace_sec=15.0)
-    if not opened_pages:
-        ctx.info("  키보드로 재시도 (Enter)")
+    # URL 검색: 망고 자체 '검색결과 없음'이면 재시도 (ABC 팝업에 상품이 있어도 망고가 비는 경우 있음)
+    search_ok = False
+    last_state = "unknown"
+    last_count = 0
+    popup_imgs = 0
+    for search_try in range(1, 4):
+        ctx.info(
+            f"1. URL 검색 시도 {search_try}/3 | "
+            f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={url}"
+        )
+        target = url_input(page)
+        type_into(page, target, url)
+        actual = ""
         try:
-            btn = url_search_button(page).first
-            btn.focus()
-            page.keyboard.press("Enter")
+            actual = target.input_value()
+        except Exception:
+            pass
+        ctx.info(f"  입력칸 최종 값: {actual!r}")
+        if actual.strip() != url.strip():
+            raise RuntimeError(f"URL 입력 불일치 — 기대 {url!r} / 실제 {actual!r}")
+        if search_try == 1:
+            ctx.shot(page, "01_url_filled", rn)
+
+        ctx.info("1. URL상품검색하기 클릭")
+        trusted = click_it(url_search_button(page))
+
+        # 검색 팝업 "열림" 확인·샷 → 그 다음 "닫힘"
+        ctx.info("1. 검색 팝업 열림 대기")
+        opened_pages = wait_popup_open(page, grace_sec=15.0)
+        if not opened_pages:
+            ctx.info("  키보드로 재시도 (Enter)")
+            try:
+                btn = url_search_button(page).first
+                btn.focus()
+                page.keyboard.press("Enter")
+            except Exception:  # noqa: BLE001
+                pass
+            opened_pages = wait_popup_open(page, grace_sec=10.0)
+
+        if not opened_pages:
+            ctx.shot(page, "01_popup_missing", rn)
+            raise RuntimeError(
+                f"#{rn} URL상품검색하기 클릭 후 팝업이 뜨지 않음 "
+                f"(trusted_click={trusted})"
+            )
+
+        popup = opened_pages[0]
+        try:
+            popup.bring_to_front()
         except Exception:  # noqa: BLE001
             pass
-        opened_pages = wait_popup_open(page, grace_sec=10.0)
+        try:
+            popup_imgs = prepare_product_view_for_shot(popup, min_images=2)
+        except Exception as e:  # noqa: BLE001
+            ctx.info(f"  [경고] 팝업 상품이미지 대기 실패: {e}")
+            popup_imgs = 0
+        ctx.info(f"1. 검색 팝업 열림 (상품이미지 약 {popup_imgs}개)")
+        if search_try == 1:
+            ctx.shot(popup, "01_popup_opened", rn)
 
-    if not opened_pages:
-        ctx.shot(page, "01_popup_missing", rn)
-        raise RuntimeError(
-            f"#{rn} URL상품검색하기 클릭 후 팝업이 뜨지 않음 "
-            f"(trusted_click={trusted})"
+        ctx.info("1. 검색 팝업 닫힘 대기")
+        wait_popups_close(page)
+        try:
+            page.bring_to_front()
+        except Exception:  # noqa: BLE001
+            pass
+        ctx.info("1. 검색 팝업 닫힘")
+        if search_try == 1:
+            ctx.shot(page, "01_popup_closed", rn)
+
+        # 망고 로딩(빨간 잠시만 기다려주세요) 종료 후, 자체 무결과 메세지 판별
+        ctx.info("1. 망고 검색결과 안정화 대기 (로딩 종료 후 판별)")
+        last_state, last_count = wait_mango_search_settle(page, timeout_sec=45.0)
+        if last_state == "no_results":
+            ctx.info(
+                "  [망고 자체메세지] 검색하신 검색에 대한 검색결과가 없습니다. "
+                f"(팝업상품이미지약 {popup_imgs}개 / 망고결과힌트 {last_count})"
+            )
+            ctx.shot(page, "01_mango_no_results", rn)
+            if search_try < 3:
+                ctx.info("  망고 무결과 — URL 검색 재시도")
+                page.wait_for_timeout(800)
+                continue
+            raise RuntimeError(
+                f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
+                f"  · 상위 최종 카테고리명={label}\n"
+                f"  · 최종 카테고리 URL주소={url}\n"
+                f"  · ABC검색팝업 상품이미지 약 {popup_imgs}개였으나 "
+                f"망고 수집결과에 상품이 없음\n"
+                "  · URL/카테고리 접근·망고 세션을 확인하세요."
+            )
+
+        if last_state == "products" or last_count >= 1:
+            search_ok = True
+            break
+
+        # unknown: 이미지 로드를 한번 더 기다려 보고 판단
+        result_imgs = prepare_product_view_for_shot(page, min_images=2)
+        if result_imgs >= 1 and not is_mango_no_results(page):
+            last_state, last_count = "products", result_imgs
+            search_ok = True
+            break
+        if is_mango_no_results(page):
+            ctx.info("  [망고 자체메세지] 검색결과가 없습니다. (재확인)")
+            ctx.shot(page, "01_mango_no_results", rn)
+            if search_try < 3:
+                continue
+            raise RuntimeError(
+                f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
+                f"  · 상위 최종 카테고리명={label}\n"
+                f"  · 최종 카테고리 URL주소={url}"
+            )
+        ctx.info(
+            f"  [경고] 검색결과 판별 불명 (state={last_state}, hint={last_count}, "
+            f"imgs={result_imgs}) — 재시도"
         )
+        if search_try < 3:
+            page.wait_for_timeout(800)
+            continue
 
-    popup = opened_pages[0]
-    try:
-        popup.bring_to_front()
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        popup_imgs = prepare_product_view_for_shot(popup, min_images=2)
-    except Exception as e:  # noqa: BLE001
-        ctx.info(f"  [경고] 팝업 상품이미지 대기 실패: {e}")
-        popup_imgs = 0
-    ctx.info(f"1. 검색 팝업 열림 (상품이미지 약 {popup_imgs}개)")
-    ctx.shot(popup, "01_popup_opened", rn)
-
-    ctx.info("1. 검색 팝업 닫힘 대기")
-    wait_popups_close(page)
-    try:
-        page.bring_to_front()
-    except Exception:  # noqa: BLE001
-        pass
-    ctx.info("1. 검색 팝업 닫힘")
-    ctx.shot(page, "01_popup_closed", rn)
+    if not search_ok and last_state != "products" and last_count < 1:
+        raise RuntimeError(
+            f"#{rn} 망고 검색결과 확인 실패 (state={last_state}, hint={last_count})"
+        )
 
     # 08: 검색 결과 준비 — 하단 수집 상품 이미지가 보이도록 대기 후 샷
     result_imgs = prepare_product_view_for_shot(page, min_images=2)
-    ctx.info(f"1. 검색 결과 준비 (하단 상품이미지 약 {result_imgs}개)")
+    ctx.info(
+        f"1. 검색 결과 준비 (하단 상품이미지 약 {result_imgs}개 / "
+        f"망고상태={last_state}, hint={last_count})"
+    )
+    if is_mango_no_results(page):
+        ctx.shot(page, "01_mango_no_results", rn)
+        raise RuntimeError(
+            f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
+            f"  · 상위 최종 카테고리명={label}\n"
+            f"  · 최종 카테고리 URL주소={url}"
+        )
     if result_imgs < 1:
         ctx.info("  [경고] 검색 결과 상품이미지가 거의 보이지 않음 — 그대로 샷")
     ctx.shot(page, "01_results_ready", rn)
