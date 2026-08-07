@@ -14,9 +14,18 @@ GitHub 저장소: `waterstar21g-png/AI_Program_Main_Board`
 
 모노레포 + 논리 분리를 유지합니다. (폴더 4개로 물리 분리하지 않음)
 
+## 컴파일이 느리면 (중요)
+
+기능 삭제만으로는 안 줄어듭니다. **OneDrive / 백신**이 `node_modules`를 스캔하면 26분+ 납니다.
+
+1. 프로젝트를 **OneDrive 밖**으로 이동 (`C:\Projects\AI_Program_Main_Board`)
+2. 관리자 PowerShell: `scripts\windows-speed-fix.ps1`
+3. 보드 UI가 필요 없으면 **컴파일 0초**: `python-collector\run.bat` (P3)
+4. v3.4.0부터 dev 기본은 **Turbopack** (느리면 `NEXT_USE_WEBPACK=1`)
+
 ## Windows — 웹앱 (P1, P2)
 
-**바탕화면 바로가기:** `바로가기만들기.bat` 더블클릭 → `AI_Program_Main_Board`  
+**바탕화면 바로가기:** `make-shortcut.bat` / `바로가기만들기.bat`  
 **실행:** **`run.bat`** 또는 `run.ps1` 더블클릭 — 이 파일 하나로 전부 처리됩니다.
 
 ```powershell
