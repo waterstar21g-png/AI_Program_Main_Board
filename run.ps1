@@ -199,7 +199,8 @@ if ($skipSync) {
     @("WINDOWS_SETUP.md", "WINDOWS_SETUP.md"),
     @("VERSION.txt", "VERSION.txt"),
     @("README.md", "README.md"),
-    @("PROJECTS.md", "PROJECTS.md")
+    @("PROJECTS.md", "PROJECTS.md"),
+    @("fetch-local.ps1", "fetch-local.ps1")
   )
 
   $failed = @()
