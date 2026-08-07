@@ -118,6 +118,8 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "저장하기 서버",
     "서버에 반영되지",
     "서버 최종 갱신",
+    "팝업창 모달이 나타나지",
+    "팝업 없이 초기화",
 )
 
 
@@ -285,6 +287,8 @@ class RunCtx:
         self.row_deadline: float | None = None  # 행당 제한시간(epoch)
         # 저장하기(서버 최종 갱신) 성공 여부 — True 되기 전 행 완료 금지
         self.server_save_ok: bool = False
+        # 저장하기 후 팝업창 모달을 실제로 봤는지 — 없으면 초기화 금지
+        self.save_popup_seen: bool = False
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
@@ -308,6 +312,7 @@ class RunCtx:
         self.current_url = str(row.get("url") or "").strip()
         self.row_deadline = time.time() + ROW_BUDGET_SEC
         self.server_save_ok = False
+        self.save_popup_seen = False
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
@@ -1460,29 +1465,29 @@ def save_submit_reacted(
     page: Page,
     dialog_msgs: list[str] | None = None,
     *,
-    timeout_sec: float = 12.0,
+    before_popup_ids: set[int] | None = None,
+    timeout_sec: float = 15.0,
 ) -> bool:
-    """저장하기 클릭 후 '저장 실행' 반응.
+    """저장하기 클릭 후 '저장 실행 팝업/알림'이 실제로 떴는지.
 
-    - 결과 팝업/알림/JS dialog
-    - 상품저장설정 모달 닫힘
-    (검색 로딩만으로는 성공으로 보지 않음 — 저장 누락 오탐 방지)
+    ★ 상품저장설정 모달만 닫힌 것은 성공이 아님.
+      (모달 닫힘만으로 True 주면 팝업 없이 초기화로 넘어가는 버그)
     """
-    end = time.time() + max(3.0, float(timeout_sec))
+    end = time.time() + max(5.0, float(timeout_sec))
     while time.time() < end:
-        has_signal, _, _ = save_result_signal_present(page, dialog_msgs)
+        has_signal, detail, _ = save_result_signal_present(
+            page,
+            dialog_msgs,
+            before_popup_ids=before_popup_ids,
+        )
         if has_signal:
+            log(f"  [저장반응] {detail}")
             return True
-        if dialog_msgs:
-            return True
-        try:
-            if not save_modal_visible(page):
-                # 모달이 닫혔으면 저장 실행 팝업이 곧 뜰 수 있음
-                page.wait_for_timeout(400)
+        # 수집건수 dialog 만 인정 (아무 dialog나 아님)
+        for msg in list(dialog_msgs or []):
+            if parse_mango_collect_count(msg)[0] is not None:
                 return True
-        except Exception:  # noqa: BLE001
-            pass
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(350)
     return False
 
 
@@ -2259,6 +2264,7 @@ def run_save_submit_and_verify(
     재시도 후에도 동일 실패면 다음 행으로 진행한다.
     """
     ctx.server_save_ok = False
+    ctx.save_popup_seen = False
     dialog_msgs: list[str] = []
 
     def _on_save_dialog(dialog) -> None:
@@ -2291,13 +2297,19 @@ def run_save_submit_and_verify(
         )
         scroll_save_modal_to_footer(page)
         dump_save_button_candidates(page, ctx)
-        ctx.shot(page, "02_modal_filled", rn)  # 하단 버튼 보이게 재샷
+        ctx.shot(page, "02_modal_filled", rn)
 
-        submitted = False
-        last_click_ok = False
+        before_popup_ids = {_popup_id(p) for p in popups(page)}
+        clicked_ok = False
         # 최대 1회 재시도(총 2회). 동일 실패면 다음 행으로 진행.
         for attempt in range(1, 3):
             ctx.check_budget(f"[버튼2] 저장하기 서버제출 시도 {attempt}")
+            if not save_modal_visible(page) and attempt > 1:
+                ctx.info(
+                    "  [경고] 재시도 시 상품저장설정 모달 없음 — "
+                    "팝업 대기로 넘어감"
+                )
+                break
             scroll_save_modal_to_footer(page)
             try:
                 btn = resolve_save_submit_control(page)
@@ -2317,6 +2329,7 @@ def run_save_submit_and_verify(
                 f"2-B. ★ [버튼2] 하단 '저장하기' 클릭 "
                 f"({attempt}/2, 재시도 최대 1회) | {desc}"
             )
+            before_popup_ids = {_popup_id(p) for p in popups(page)}
             last_click_ok = trusted_click_save_submit(page, btn)
             ctx.info(
                 f"  하단 저장하기 클릭 전송 "
@@ -2332,41 +2345,58 @@ def run_save_submit_and_verify(
                 page.wait_for_timeout(500)
                 continue
 
-            if save_submit_reacted(page, dialog_msgs, timeout_sec=12.0):
-                submitted = True
+            clicked_ok = True
+            # 클릭 직후 짧게: 팝업이 바로 뜨면 통과 (모달 닫힘만으로는 통과 금지)
+            if save_submit_reacted(
+                page,
+                dialog_msgs,
+                before_popup_ids=before_popup_ids,
+                timeout_sec=8.0,
+            ):
                 ctx.info(
-                    "2. ★ 저장하기 클릭 반응 확인 "
-                    "(설정모달 닫힘 또는 저장실행 팝업/알림)"
+                    "2-B. ★ 저장하기 클릭 → 저장 실행 팝업/알림 즉시 감지"
                 )
                 break
 
             ctx.info(
-                "  [경고] 하단 저장하기 클릭 후 저장실행 팝업/반응 없음 — "
-                "재시도"
+                "  [경고] 클릭 직후 팝업 미감지 — "
+                "설정모달 닫힘만으로는 부족, 재시도 또는 팝업 대기"
             )
-            dump_save_button_candidates(page, ctx)
             ctx.shot(page, "02_save_no_react", rn)
-            if not save_modal_visible(page):
-                break
-            page.wait_for_timeout(600)
+            # 모달이 남아 있으면 1회 재클릭, 없으면 팝업 대기로
+            if save_modal_visible(page) and attempt < 2:
+                page.wait_for_timeout(600)
+                continue
+            break
 
-        if not submitted:
+        if not clicked_ok:
             dump_save_button_candidates(page, ctx)
             ctx.shot(page, "02_save_failed", rn)
             raise RuntimeError(
-                f"#{rn} 하단 '저장하기' 클릭/저장실행 팝업 실패 — "
-                "필터정보·수집상품수·수집상품이 서버에 반영되지 않음. "
+                f"#{rn} 하단 '저장하기' 클릭 실패 — "
+                "팝업창 모달 없이 초기화할 수 없습니다. "
                 "1회 재시도 후에도 동일. 다음 입력으로 진행."
             )
 
-        # 저장하기 후: 저장을 실행하는 팝업창 모달(필수) → 건수 확인
+        # ★필수: 저장하기 후 팝업창 모달 대기 — 없으면 초기화 금지
         ctx.info(
-            "3. ★ 저장하기 후 '저장 실행' 팝업창 모달 대기 "
-            "(안 보이면 저장 미실행)"
+            "3. ★★★ 저장하기 후 팝업창 모달을 반드시 기다림 "
+            "(없으면 초기화/다음단계 금지)"
         )
         wait_save_overlays_settle(
-            page, ctx, rn, dialog_msgs=dialog_msgs
+            page,
+            ctx,
+            rn,
+            dialog_msgs=dialog_msgs,
+            before_popup_ids=before_popup_ids,
         )
+
+        if not getattr(ctx, "save_popup_seen", False):
+            ctx.shot(page, "03_result_missing", rn)
+            raise RuntimeError(
+                f"#{rn} 저장하기 후 팝업창 모달을 확인하지 못함 — "
+                "팝업 없이 초기화할 수 없습니다."
+            )
 
         # 최종: 망고 자체 메세지 — 저장된 상품 건수 = 서버 반영 확인
         verify_mango_collect_alert(
@@ -2380,8 +2410,8 @@ def run_save_submit_and_verify(
         verify_row_save_done(page, ctx, rn, save_count)
         ctx.server_save_ok = True
         ctx.info(
-            f"4. -> 서버 최종 갱신 완료 확인 "
-            f"(저장하기 OK / 저장수 {save_count})"
+            f"4. -> 서버 최종 갱신 완료 "
+            f"(저장하기 OK + 팝업 확인 OK / 저장수 {save_count})"
         )
         ctx.shot(page, "04_row_done", rn)
     finally:
@@ -2448,12 +2478,12 @@ def find_mango_collect_alert(
 
 
 def save_execution_layer_visible(page: Page) -> bool:
-    """저장하기 직후 뜨는 '저장 실행' 팝업/레이어(상품저장설정 제외)."""
-    if save_modal_visible(page):
-        # 설정 모달이 아직 떠 있어도, 위에 다른 알림 레이어가 있을 수 있음
-        pass
+    """저장하기 직후 뜨는 '저장 실행' 팝업/레이어.
+
+    '확인' 단독 매칭 금지(오탐 → 팝업 없이 초기화로 진행됨).
+    수집/저장 결과 문구가 있는 레이어만 인정.
+    """
     try:
-        # 수집/저장 결과 문구
         n, _, _, _ = find_mango_collect_alert(page, None)
         if n is not None:
             return True
@@ -2467,19 +2497,20 @@ def save_execution_layer_visible(page: Page) -> bool:
             'div[class*="alert"], div[class*="msg"]'
         ).filter(
             has_text=re.compile(
-                r"수집\s*되었|저장\s*되었|저장\s*완료|처리\s*완료|"
-                r"건\s*이\s*수집|확인"
+                r"(\d+)\s*건\s*(이\s*)?(수집|저장)\s*되었|"
+                r"수집\s*완료|저장\s*완료|처리\s*완료|"
+                r"상품\s*(이\s*)?(수집|저장)\s*되었"
             )
         )
         if layer.count() > 0 and layer.first.is_visible():
-            # 상품저장설정 본문은 제외
             txt = ""
             try:
                 txt = layer.first.inner_text(timeout=500) or ""
             except Exception:  # noqa: BLE001
                 txt = ""
+            # 상품저장설정(필터 입력) 본문은 저장실행 팝업이 아님
             if re.search(r"상품\s*저장\s*설정", txt) and re.search(
-                r"검색\s*필터\s*명", txt
+                r"검색\s*필터\s*명|취소하기", txt
             ):
                 return False
             return True
@@ -2488,28 +2519,105 @@ def save_execution_layer_visible(page: Page) -> bool:
     return False
 
 
+def _popup_id(p) -> int:
+    try:
+        return id(p)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
 def save_result_signal_present(
     page: Page,
     dialog_msgs: list[str] | None = None,
+    *,
+    before_popup_ids: set[int] | None = None,
 ) -> tuple[bool, str, Page | None]:
     """저장하기 후 '저장 실행' 팝업/알림 모달 출현 여부.
 
-    - 별도 브라우저 팝업 창
-    - 페이지 내 저장실행 레이어 / 'N건이 수집되었다' 알림
-    - JS alert/confirm 메시지
+    - 클릭 이후에 새로 뜬 브라우저 팝업만 인정 (기존 검색팝업 제외)
+    - 페이지 내 저장실행 레이어 / 'N건이 수집되었다'
+    - JS dialog 의 수집건수 문구
+    ★ 상품저장설정 모달 닫힘만으로는 True 가 되지 않음
     """
     n, msg, src, hit_page = find_mango_collect_alert(page, dialog_msgs)
     if n is not None:
         return True, f"{src}:{msg}", hit_page or page
 
-    cur = popups(page)
-    if cur:
-        return True, f"window_popup:{len(cur)}", cur[0]
+    prev = before_popup_ids or set()
+    for p in popups(page):
+        if _popup_id(p) in prev:
+            continue
+        # 새 팝업 — 저장 실행으로 간주 (텍스트 있으면 더 확실)
+        ptext = _page_visible_text(p)
+        n2, hit2 = parse_mango_collect_count(ptext)
+        if n2 is not None:
+            return True, f"new_popup:{hit2}", p
+        return True, "new_popup_window", p
 
     if save_execution_layer_visible(page):
         return True, "inpage_save_layer", page
 
     return False, "", None
+
+
+def wait_save_execution_popup(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    *,
+    dialog_msgs: list[str] | None = None,
+    before_popup_ids: set[int] | None = None,
+    timeout_sec: float | None = None,
+) -> None:
+    """★저장하기 클릭 후 — 저장 실행 팝업창 모달이 뜰 때까지 필수 대기.
+
+    팝업이 안 보이면 초기화/다음 단계로 절대 넘어가지 않는다.
+    """
+    wait_sec = float(timeout_sec or MODAL_WAIT_SEC)
+    ctx.info(
+        "3. ★★★ 저장하기 후 '팝업창 모달' 대기 중 "
+        f"(최대 {int(wait_sec)}초) — 팝업 없이 초기화 금지"
+    )
+    end = time.time() + wait_sec
+    saw = False
+    detail = ""
+    target: Page | None = None
+
+    while time.time() < end:
+        ctx.check_budget("저장하기 후 팝업창 모달 대기")
+        # 설정 모달만 닫힌 것은 로그로만 — 성공 처리 금지
+        if not save_modal_visible(page):
+            ctx.info(
+                "  [대기] 상품저장설정 모달 닫힘 — "
+                "그래도 저장 실행 팝업창이 뜰 때까지 기다림"
+            )
+
+        has_signal, detail, target = save_result_signal_present(
+            page,
+            dialog_msgs,
+            before_popup_ids=before_popup_ids,
+        )
+        if has_signal:
+            saw = True
+            break
+        page.wait_for_timeout(400)
+
+    if not saw:
+        ctx.shot(page, "03_result_missing", rn)
+        raise TimeoutError(
+            f"#{rn} 저장하기 후 팝업창 모달이 나타나지 않음. "
+            "팝업 없이 초기화/다음 행으로 진행할 수 없습니다. "
+            "저장하기 → 팝업창 모달 열림 → 닫힘 → 수집건수 확인 순서 필수."
+        )
+
+    ctx.info(f"3. ★ 저장 실행 팝업창 모달 확인 — {detail}")
+    shot_page = target or page
+    try:
+        shot_page.bring_to_front()
+    except Exception:  # noqa: BLE001
+        pass
+    ctx.shot(shot_page, "03_result_popup", rn)
+    ctx.save_popup_seen = True
 
 
 def wait_save_overlays_settle(
@@ -2518,92 +2626,58 @@ def wait_save_overlays_settle(
     rn: int,
     *,
     dialog_msgs: list[str] | None = None,
+    before_popup_ids: set[int] | None = None,
 ) -> None:
-    """저장하기 클릭 후: 결과 팝업/알림 출현(필수) → 샷 → 정리 대기.
+    """저장 실행 팝업 출현(필수) 후 닫힘·정리 대기.
 
-    예전 버그는 상품저장설정 모달만 닫히면 곧바로 종료해,
-    저장 후 팝업 모달 없이 다음 행 검색으로 넘어갔다.
-    결과 UI가 나타나기 전에는 절대 다음 단계로 가지 않는다.
+    팝업을 보기 전에는 반환하지 않는다. 모달 닫힘 ≠ 완료.
     """
-    end = time.time() + MODAL_WAIT_SEC
-    saw_result = False
-    modal_closed = False
-    result_detail = ""
-    # 모달이 먼저 닫혀도 결과 팝업이 늦게 뜰 수 있음 — 최소 대기
-    min_wait_until = time.time() + 2.5
+    # 1) 팝업 필수 대기 — 여기 통과 전에 초기화 불가
+    wait_save_execution_popup(
+        page,
+        ctx,
+        rn,
+        dialog_msgs=dialog_msgs,
+        before_popup_ids=before_popup_ids,
+    )
 
+    # 2) 팝업/알림이 처리될 여유 (건수 문구는 verify에서 확정)
+    end = time.time() + min(30.0, float(MODAL_WAIT_SEC))
     while time.time() < end:
-        ctx.check_budget("저장 후 팝업/모달 대기")
-        modal_open = save_modal_visible(page)
-        cur_pops = popups(page)
-        has_signal, detail, signal_page = save_result_signal_present(
-            page, dialog_msgs
-        )
-
-        if not modal_open and not modal_closed:
-            modal_closed = True
-            ctx.info("3. 저장 모달 닫힘 (결과 팝업/알림은 계속 대기)")
-            try:
-                page.bring_to_front()
-            except Exception:  # noqa: BLE001
-                pass
-            ctx.shot(page, "03_modal_closed", rn)
-
-        if has_signal and not saw_result:
-            saw_result = True
-            result_detail = detail
-            ctx.info(f"3. ★ 저장 후 결과 팝업/알림 출현 — {detail}")
-            target = signal_page or (cur_pops[0] if cur_pops else page)
-            try:
-                target.bring_to_front()
-            except Exception:  # noqa: BLE001
-                pass
-            ctx.shot(target, "03_result_popup", rn)
-
-        # 결과 UI를 본 뒤에만 종료 가능
-        if saw_result:
-            # 알림 문구가 화면에 남아 있으면 verify 단계에서 건수 확인·닫기
+        ctx.check_budget("저장 팝업 정리 대기")
+        alert_n, _, _, _ = find_mango_collect_alert(page, dialog_msgs)
+        if alert_n is not None:
+            ctx.info(
+                f"3. 팝업/알림에 수집건수 문구 확인됨 → 검증 단계로 ({alert_n}건)"
+            )
+            return
+        # 새 팝업이 닫히고 설정 모달도 없으면 알림 검증으로
+        cur_new = [
+            p
+            for p in popups(page)
+            if _popup_id(p) not in (before_popup_ids or set())
+        ]
+        if not cur_new and not save_modal_visible(page):
+            # 팝업은 이미 봤음(save_popup_seen) — 닫힌 뒤 본문 알림 대기
+            page.wait_for_timeout(600)
             alert_n, _, _, _ = find_mango_collect_alert(page, dialog_msgs)
-            if alert_n is not None and not modal_open:
-                ctx.info(
-                    "3. 결과 알림 확인됨 — 팝업 모달 단계 완료 "
-                    f"({result_detail})"
-                )
+            if alert_n is not None:
                 return
-            # 별도 창 팝업이었다가 닫힌 경우
-            if not modal_open and not cur_pops and time.time() >= min_wait_until:
-                page.wait_for_timeout(500)
-                still, _, _ = save_result_signal_present(page, dialog_msgs)
-                if not save_modal_visible(page) and not popups(page):
-                    # dialog로만 신호가 왔던 경우도 여기로 올 수 있음
-                    if still or dialog_msgs:
-                        ctx.info(
-                            "3. 저장 후 팝업/모달 종료 확인 "
-                            f"(결과신호={result_detail})"
-                        )
-                        return
-
+            # 팝업을 본 상태면 verify 로 넘겨 본문/dialog 재검사
+            if getattr(ctx, "save_popup_seen", False):
+                ctx.info("3. 저장 팝업 닫힘 — 수집건수 알림 검증으로 진행")
+                return
         page.wait_for_timeout(400)
 
-    if not saw_result:
-        ctx.shot(page, "03_result_missing", rn)
-        raise TimeoutError(
-            f"#{rn} 저장하기 후 결과 팝업·알림 모달이 열리지 않음. "
-            "상품저장설정만 닫힌 채 다음 행 검색으로 넘어갈 수 없습니다. "
-            "저장하기 클릭 → 결과 팝업 열림/닫힘 → 수집건수 알림 순서를 지키세요."
-        )
-
-    # 결과는 봤는데 창/모달이 안 닫힘 — 강제 정리
-    ctx.info("  [경고] 저장 후 오버레이 대기 초과 — 강제 정리")
-    close_search_popups(page)
-    if save_modal_visible(page):
-        try_dismiss_save_modal(page)
-    page.wait_for_timeout(500)
-    if save_modal_visible(page) or popups(page):
-        ctx.shot(page, "03_modal_stuck", rn)
-        raise TimeoutError(f"#{rn} 저장 후 팝업/모달이 닫히지 않음")
-    ctx.info("3. 강제 정리 후 팝업/모달 종료")
-    ctx.shot(page, "03_modal_closed", rn)
+    # 팝업은 봤는데 알림 문구가 아직 — verify 단계에서 한번 더
+    if getattr(ctx, "save_popup_seen", False):
+        ctx.info("3. 팝업은 확인됨 — 수집건수 알림 검증으로 진행")
+        return
+    ctx.shot(page, "03_result_missing", rn)
+    raise TimeoutError(
+        f"#{rn} 저장하기 후 팝업창 모달/알림 확인 실패 — "
+        "초기화로 진행할 수 없습니다."
+    )
 
 
 def dismiss_mango_alert_ui(page: Page) -> None:
@@ -2831,7 +2905,11 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                     except Exception as re:  # noqa: BLE001
                         ctx.info(f"  재연결 경고: {re}")
                 if attempt < ctx.retries:
-                    ctx.info("  같은 행 재시도 전 대량수집 화면 복귀...")
+                    # 팝업 없이 성공 처리된 게 아님 — 실패 후 재시도용 초기화만
+                    ctx.info(
+                        "  같은 행 재시도 전 초기화 "
+                        "(저장 팝업 미확인/실패 후 복귀 — 성공 경로 아님)"
+                    )
                     try:
                         page = refresh_if_closed(page)
                         reset_to_bulk_menu(page)
