@@ -775,11 +775,13 @@ def perform_tmg_login(page: Page, user_id: str | None = None, password: str | No
 
     url = page.url
     msg = " ".join(dialogs)
-    if "login=2" in url or "Captcha" in msg or "캡차" in msg or "captcha" in msg.lower():
+    if "login=2" in url or "Captcha" in msg or "캡차" in msg or "captcha" in msg.lower() or "자동화" in msg:
         raise RuntimeError(
-            "로그인 실패 — reCAPTCHA(Captcha) 인증이 거부되었습니다.\n"
-            "  · 클라우드/자동화 IP에서는 점수가 낮아 자주 실패합니다.\n"
-            "  · 로컬 PC Chrome에서 동일 명령으로 다시 실행해 주세요.\n"
+            "로그인 실패 — Cafe24가 자동/원격 접근을 Captcha로 차단했습니다.\n"
+            f"  · 알림: {msg or '(login=2)'}\n"
+            "  · 클라우드 에이전트에서는 통과하기 어렵습니다.\n"
+            "  · 로컬 PC에서 Chrome을 연 뒤 아래처럼 실행하세요:\n"
+            "      python P2/collect.py 엑셀.xlsx 3 --verify --id ID --pw PW\n"
             f"  · URL={url}"
         )
     raise RuntimeError(
