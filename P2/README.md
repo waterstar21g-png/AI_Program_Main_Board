@@ -22,4 +22,9 @@ python collect.py 엑셀.xlsx 3 --retries 3 --yes
 
 로그인: 더망고 로그인창에서 **사용자가 직접** 입력 (자동 입력 없음).
 
+Chrome 기동 시 **더망고 솔루션** 확장프로그램에 아래 값을 자동 입력·저장합니다.
+
+- 더망고 서비스 URL: `https://tmg1898.cafe24.com`
+- 서비스 인증 KEY: (코드에 고정 — `collect.py` 의 `MANGO_SERVICE_*`)
+
 엑셀 헤더: `상위 최종 카테고리명` | `최종 카테고리 URL주소`
