@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
         type: 'done',
         ok: false,
         message:
-          '상품데이터수집(Chromium)은 로컬 PC에서만 실행됩니다.\nPC에서 .\\run.ps1 실행 후 사용하세요.',
+          '상품데이터수집(브라우저)은 로컬 PC에서만 실행됩니다.\nPC에서 .\\run.ps1 실행 후 사용하세요.',
         logs: [],
         processedCount: 0,
       }) + '\n',
