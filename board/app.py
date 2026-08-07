@@ -32,7 +32,7 @@ from library import (  # noqa: E402
 )
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.19"
+VERSION = "2.0.20"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -318,6 +318,16 @@ class BoardApp(tk.Tk):
             padx=10,
             pady=4,
         ).pack(side="left")
+        tk.Button(
+            btn_row,
+            text="수집 종료",
+            command=self._stop_p2,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=10,
+            pady=4,
+        ).pack(side="left", padx=6)
         tk.Button(btn_row, text="목록에서 제거", command=self._remove_lib).pack(
             side="left", padx=6
         )
@@ -522,6 +532,10 @@ class BoardApp(tk.Tk):
             return "샷"
         if "망고 자체" in text or "검색결과가 없습니다" in text or "무결과" in text:
             return "무결과"
+        if "중단" in text or "수집 종료" in text:
+            return "중단"
+        if "다음행" in text or "오버레이" in text or "모달/창 닫힘" in text or "팝업/모달" in text:
+            return "다음행"
         if "입력목록" in text or "상위 최종 카테고리명" in text or "최종 카테고리 URL" in text:
             return "입력"
         if "로그인" in text:
@@ -568,6 +582,18 @@ class BoardApp(tk.Tk):
             return
 
         collect_py = ROOT / "P2" / "collect.py"
+        stop_flag = ROOT / "P2" / ".collect_stop"
+        try:
+            stop_flag.unlink(missing_ok=True)  # type: ignore[call-arg]
+        except TypeError:
+            if stop_flag.exists():
+                try:
+                    stop_flag.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
         verify = bool(self.var_verify.get())
         args = [
             sys.executable,
@@ -590,6 +616,11 @@ class BoardApp(tk.Tk):
         self._p2_log_line(
             "실행로그에 모든 입력의 상위 최종 카테고리명 / 최종 카테고리 URL주소 기록",
             "입력",
+        )
+        self._p2_log_line(
+            "중단은 [수집 종료] — 로그는 화면에 그대로 보존 · "
+            "1번 종료 후 2번 수집 전 팝업/모달 닫힘 샷 보관",
+            "안내",
         )
         self.p2_status.configure(
             text=f"수집 실행 중 ({mode}) — 브라우저에서 직접 로그인하세요",
@@ -627,6 +658,46 @@ class BoardApp(tk.Tk):
             daemon=True,
         ).start()
 
+    def _stop_flag_path(self) -> Path:
+        return ROOT / "P2" / ".collect_stop"
+
+    def _stop_p2(self) -> None:
+        """중도 수집 중단 — 화면 실행로그는 지우지 않고 보존."""
+        proc = self._p2_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 수집이 없습니다.")
+            return
+        try:
+            self._stop_flag_path().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self._p2_log_line(f"중단 플래그 기록 실패: {e}", "오류")
+        self._p2_log_line(
+            "수집 종료 요청 — 현재 단계 중단 대기 (실행로그는 화면에 보존)",
+            "중단",
+        )
+        self.p2_status.configure(text="수집 종료 요청 중… (로그 보존)", fg="#b45309")
+        threading.Thread(target=self._force_stop_p2, args=(proc,), daemon=True).start()
+
+    def _force_stop_p2(self, proc: subprocess.Popen) -> None:
+        """협조적 중단 후 응답 없으면 프로세스 종료."""
+        for _ in range(24):  # ~12초
+            if proc.poll() is not None:
+                return
+            time.sleep(0.5)
+        if proc.poll() is not None:
+            return
+        self._p2_log_ui("협조 중단 지연 — 프로세스 강제 종료", "중단")
+        try:
+            proc.terminate()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(1.5)
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:  # noqa: BLE001
+                pass
+
     @staticmethod
     def _decode_log_bytes(raw: bytes) -> str:
         """Windows CP949 / UTF-8 혼용 stdout을 깨지지 않게 디코딩."""
@@ -663,12 +734,32 @@ class BoardApp(tk.Tk):
         code = proc.wait()
         if code == 0:
             self._p2_log_ui(f"수집 종료 OK (exit={code}): {path}", "완료")
-            self.after(0, lambda: self._on_p2_finished(True, path))
+            self.after(0, lambda: self._on_p2_finished(True, path, code))
+        elif code == 130:
+            self._p2_log_ui(
+                f"수집 사용자 중단 (exit={code}): {path} — 로그 보존",
+                "중단",
+            )
+            self.after(0, lambda: self._on_p2_finished(False, path, code, stopped=True))
         else:
             self._p2_log_ui(f"수집 종료 FAIL (exit={code}): {path}", "오류")
             self.after(0, lambda: self._on_p2_finished(False, path, code))
 
-    def _on_p2_finished(self, ok: bool, path: str, code: int = 0) -> None:
+    def _on_p2_finished(
+        self,
+        ok: bool,
+        path: str,
+        code: int = 0,
+        *,
+        stopped: bool = False,
+    ) -> None:
+        # 중단/완료 모두 실행로그는 그대로 둔다 (_clear_p2_log 호출 없음)
+        if stopped:
+            self.p2_status.configure(
+                text="수집 종료(사용자 중단) — 실행로그 보존됨",
+                fg="#b45309",
+            )
+            return
         if ok:
             self.p2_status.configure(text=f"수집 완료: {path}", fg="#15803d")
             folder = self._last_shot_dir or latest_shot_dir(ROOT)
