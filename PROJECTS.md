@@ -12,20 +12,6 @@ GitHub 저장소 루트: **`AI_Program_Main_Board`** (모노레포 + 논리 분�
 | 2 | **P2_Product_Capture_App** | 상품 대량데이터 추출 (웹앱) |
 | 3 | **P3_Python_Item_Collector** | P2의 Python 독립 버전 |
 
-## AI_Program_Main_Board_New (Python · 별도)
-
-기존 보드(이 루트, Next P1/P2/P3)는 **유지**.  
-신규: [`AI_Program_Main_Board_New/`](./AI_Program_Main_Board_New/) — **npm 없음**, Tkinter 보드.
-
-| # | 이름 | 역할 |
-|---|------|------|
-| P1 | 카테고리 URL 추출 | Python crawl → 엑셀 |
-| P2 | 더망고 대량수집 | 구 P3 · P1 엑셀 입력 |
-
-실행: `AI_Program_Main_Board_New\run.bat`
-
----
-
 ## P1_Category_Url_Extract
 
 - **위치:** 웹앱 보드 (`components/CategoryExtractorApp.tsx`, `lib/site-crawler/`)
