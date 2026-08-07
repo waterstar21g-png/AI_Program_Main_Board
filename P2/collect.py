@@ -2019,8 +2019,8 @@ def run_save_submit_and_verify(
     """★저장하기 = 서버 최종 갱신 (필터정보·수집갯수·수집상품).
 
     입력만 하고 이 버튼을 빼먹으면 서버에 아무것도 반영되지 않는다.
-    클릭 → 서버 제출 반응 확인(재시도) → 결과 팝업/알림 → 수집건수 검증.
-    서버 반영이 확인되기 전에는 행 완료·다음 행 진행을 하지 않는다.
+    클릭 → 서버 제출 반응 확인(최대 1회 재시도) → 결과 팝업/알림 → 수집건수 검증.
+    재시도 후에도 동일 실패면 다음 행으로 진행한다.
     """
     ctx.server_save_ok = False
     dialog_msgs: list[str] = []
@@ -2055,7 +2055,8 @@ def run_save_submit_and_verify(
 
         submitted = False
         last_click_ok = False
-        for attempt in range(1, 4):
+        # 최대 1회 재시도(총 2회). 동일 실패면 다음 행으로 진행.
+        for attempt in range(1, 3):
             ctx.check_budget(f"저장하기 서버제출 시도 {attempt}")
             try:
                 btn = resolve_save_submit_control(page)
@@ -2063,11 +2064,12 @@ def run_save_submit_and_verify(
                 ctx.shot(page, "02_save_missing", rn)
                 raise RuntimeError(
                     f"#{rn} 저장하기 서버 최종 갱신 실패 — 버튼 없음. "
-                    f"필터정보·수집갯수·수집상품이 서버에 반영되지 않음. 원인: {e}"
+                    f"필터정보·수집갯수·수집상품이 서버에 반영되지 않음. "
+                    f"다음 입력으로 진행. 원인: {e}"
                 ) from e
 
             ctx.info(
-                f"2. ★ 저장하기 클릭 (서버 제출 시도 {attempt}/3) "
+                f"2. ★ 저장하기 클릭 (서버 제출 {attempt}/2, 재시도 최대 1회) "
                 "— 입력값이 아닌 '저장하기'로만 서버 갱신됨"
             )
             last_click_ok = trusted_click_save_submit(page, btn)
@@ -2107,8 +2109,7 @@ def run_save_submit_and_verify(
             raise RuntimeError(
                 f"#{rn} 저장하기 서버 최종 갱신 실패 — "
                 "필터정보·수집갯수·수집상품이 서버에 반영되지 않음. "
-                "저장하기 버튼 클릭/제출 반응이 없습니다. "
-                "입력만 하고 다음 행으로 넘어갈 수 없습니다."
+                "저장하기 1회 재시도 후에도 동일. 다음 입력으로 진행."
             )
 
         # 저장 직후: 결과 팝업/알림 모달 출현(필수) → 건수 확인
