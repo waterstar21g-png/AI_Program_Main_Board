@@ -1,2 +1,2 @@
-버전 2.0.14 (Python B안)
-P2: 1행 전과정 스크린샷 기록 + 보드 뷰어/HTML 갤러리
+버전 2.0.15 (Python B안)
+P2: Windows cp949 로그 UnicodeEncodeError(특수기호) 수정 + TargetClosed 재시도
