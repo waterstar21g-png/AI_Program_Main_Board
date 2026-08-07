@@ -2582,11 +2582,13 @@ def wait_save_execution_popup(
     saw = False
     detail = ""
     target: Page | None = None
+    logged_settings_closed = False
 
     while time.time() < end:
         ctx.check_budget("저장하기 후 팝업창 모달 대기")
-        # 설정 모달만 닫힌 것은 로그로만 — 성공 처리 금지
-        if not save_modal_visible(page):
+        # 설정 모달만 닫힌 것은 성공이 아님 — 한 번만 로그
+        if not save_modal_visible(page) and not logged_settings_closed:
+            logged_settings_closed = True
             ctx.info(
                 "  [대기] 상품저장설정 모달 닫힘 — "
                 "그래도 저장 실행 팝업창이 뜰 때까지 기다림"

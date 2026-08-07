@@ -1,0 +1,290 @@
+"""저장하기 후 팝업창 모달 필수 대기 — 회귀 테스트.
+
+버그: 상품저장설정 모달만 닫히면 성공 처리 → 팝업 없이 초기화로 진행.
+이 테스트가 그 경로를 막는지 검증한다.
+"""
+
+from __future__ import annotations
+
+import sys
+import time
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+from playwright.sync_api import sync_playwright
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+import collect as C  # noqa: E402
+
+MODAL_HTML = """
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>mock mango</title>
+<style>
+.toolbar button { margin: 4px; padding: 8px 12px; }
+#settings { display:none; border:2px solid #333; padding:16px; margin-top:12px; }
+#settings.open { display:block; }
+.footer a { display:inline-block; padding:10px 18px; margin:4px; color:#fff; text-decoration:underline; }
+#saveBtn { background:#1e3a8a; }
+#cancelBtn { background:#3b82f6; }
+#resultLayer { display:none; position:fixed; inset:20% 25%; background:#fff;
+  border:3px solid #111; padding:24px; z-index:99; font-size:18px; }
+#resultLayer.show { display:block; }
+#initFlag { display:none; color:red; font-weight:bold; }
+</style>
+</head><body>
+  <h2>ABCmart 검색 결과</h2>
+  <div class="toolbar">
+    <button id="selAll">전체선택</button>
+    <button id="selSave">선택상품저장</button>
+    <button id="allSave">검색된 상품 모두저장</button>
+  </div>
+  <div id="products">상품카드들</div>
+
+  <div id="settings">
+    <h3>상품저장설정</h3>
+    <div>적용정책: 테스트</div>
+    <div>검색필터명 <input id="filter" type="text" value=""></div>
+    <div>저장상품수 <input id="count" type="text" value=""></div>
+    <div class="footer">
+      <a href="#" id="saveBtn">저장하기</a>
+      <a href="#" id="cancelBtn">취소하기</a>
+    </div>
+  </div>
+
+  <div id="resultLayer">3건이 수집되었다 <button id="ok">확인</button></div>
+  <div id="initFlag">초기화 실행됨</div>
+
+  <script>
+    const settings = document.getElementById('settings');
+    const result = document.getElementById('resultLayer');
+    const initFlag = document.getElementById('initFlag');
+    let mode = new URLSearchParams(location.search).get('mode') || 'popup';
+    // mode=popup → 저장하기 클릭 시 결과 팝업
+    // mode=nopopup → 저장하기 클릭 시 설정모달만 닫힘 (버그 재현)
+    document.getElementById('allSave').onclick = () => {
+      settings.classList.add('open');
+    };
+    document.getElementById('cancelBtn').onclick = (e) => {
+      e.preventDefault();
+      settings.classList.remove('open');
+    };
+    document.getElementById('saveBtn').onclick = (e) => {
+      e.preventDefault();
+      settings.classList.remove('open');
+      if (mode === 'popup') {
+        setTimeout(() => result.classList.add('show'), 200);
+      }
+      // nopopup: 팝업 안 띄움 — 예전 버그는 여기서 초기화로 넘어감
+    };
+    document.getElementById('ok').onclick = () => result.classList.remove('show');
+    window.__runInit = () => { initFlag.style.display = 'block'; };
+  </script>
+</body></html>
+"""
+
+
+class FakeCtx:
+    def __init__(self):
+        self.msgs: list[str] = []
+        self.save_popup_seen = False
+        self.server_save_ok = False
+        self.row_deadline = time.time() + 120
+
+    def info(self, msg: str) -> None:
+        self.msgs.append(msg)
+        print("[CTX]", msg)
+
+    def check_budget(self, where: str = "") -> None:
+        if time.time() > self.row_deadline:
+            raise C.RowBudgetExceeded("budget")
+
+    def shot(self, page, tag: str, rn: int = 0) -> None:
+        self.msgs.append(f"[SHOT] {tag}")
+
+
+@pytest.fixture(scope="module")
+def browser():
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        yield b
+        b.close()
+
+
+def _open(browser, mode: str):
+    page = browser.new_page()
+    page.set_content(MODAL_HTML.replace("mode') || 'popup'", f"mode') || '{mode}'"))
+    # ensure mode via evaluate
+    page.evaluate(f"() => {{ window.__MODE = '{mode}'; }}")
+    # patch save handler mode by re-binding
+    page.evaluate(
+        """(mode) => {
+          const settings = document.getElementById('settings');
+          const result = document.getElementById('resultLayer');
+          document.getElementById('saveBtn').onclick = (e) => {
+            e.preventDefault();
+            settings.classList.remove('open');
+            if (mode === 'popup') {
+              setTimeout(() => result.classList.add('show'), 150);
+            }
+          };
+        }""",
+        mode,
+    )
+    return page
+
+
+def test_buttons_are_distinct(browser):
+    """버튼1 모두저장 vs 버튼2 저장하기 구분."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    assert C.save_modal_visible(page)
+    btn1 = C.save_all_button(page).first
+    assert "모두저장" in (btn1.inner_text() or btn1.get_attribute("value") or "")
+    btn2 = C.resolve_save_submit_control(page)
+    label = (btn2.get_attribute("value") or btn2.inner_text() or "").strip()
+    assert label == "저장하기"
+    assert "모두" not in label
+    page.close()
+
+
+def test_modal_close_alone_is_not_reacted(browser):
+    """버그 회귀: 설정 모달만 닫히면 save_submit_reacted == False."""
+    page = _open(browser, "nopopup")
+    page.click("#allSave")
+    assert C.save_modal_visible(page)
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    page.wait_for_timeout(400)
+    assert not C.save_modal_visible(page), "설정 모달은 닫혀야 함"
+    # 팝업 없음
+    assert not C.save_execution_layer_visible(page)
+    reacted = C.save_submit_reacted(
+        page, [], before_popup_ids=before, timeout_sec=2.0
+    )
+    assert reacted is False, "모달 닫힘만으로 True면 안 됨"
+    page.close()
+
+
+def test_wait_popup_raises_without_popup_no_init(browser):
+    """팝업 없으면 wait_save_execution_popup 이 오류 — 초기화 호출 금지."""
+    page = _open(browser, "nopopup")
+    page.click("#allSave")
+    page.fill("#filter", "테스트필터")
+    page.fill("#count", "3")
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    page.wait_for_timeout(300)
+
+    ctx = FakeCtx()
+    # 타임아웃을 짧게
+    old = C.MODAL_WAIT_SEC
+    C.MODAL_WAIT_SEC = 3
+    try:
+        with pytest.raises((TimeoutError, RuntimeError)) as ei:
+            C.wait_save_execution_popup(
+                page,
+                ctx,  # type: ignore[arg-type]
+                1,
+                dialog_msgs=[],
+                before_popup_ids=before,
+                timeout_sec=3.0,
+            )
+        assert "팝업" in str(ei.value)
+        assert ctx.save_popup_seen is False
+        # 초기화 플래그가 켜지지 않았어야 함
+        assert page.is_hidden("#initFlag") or page.locator("#initFlag").evaluate(
+            "e => getComputedStyle(e).display"
+        ) == "none"
+    finally:
+        C.MODAL_WAIT_SEC = old
+    page.close()
+
+
+def test_wait_popup_ok_when_layer_appears(browser):
+    """저장하기 후 결과 팝업(레이어)이 뜨면 통과."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    page.fill("#filter", "테스트필터")
+    page.fill("#count", "3")
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+
+    ctx = FakeCtx()
+    C.wait_save_execution_popup(
+        page,
+        ctx,  # type: ignore[arg-type]
+        1,
+        dialog_msgs=[],
+        before_popup_ids=before,
+        timeout_sec=10.0,
+    )
+    assert ctx.save_popup_seen is True
+    assert C.save_execution_layer_visible(page) or "수집되었" in C._page_visible_text(
+        page
+    )
+    page.close()
+
+
+def test_save_result_signal_ignores_settings_modal_close(browser):
+    page = _open(browser, "nopopup")
+    page.click("#allSave")
+    before = set()
+    page.click("#saveBtn")
+    page.wait_for_timeout(300)
+    has, detail, _ = C.save_result_signal_present(page, [], before_popup_ids=before)
+    assert has is False, f"모달 닫힘만으로 signal이면 안 됨: {detail}"
+    page.close()
+
+
+def test_full_gate_blocks_server_save_ok_without_popup(browser):
+    """run_save 경로 핵심: 팝업 없으면 save_popup_seen/server_save_ok False."""
+    page = _open(browser, "nopopup")
+    page.click("#allSave")
+    page.fill("#filter", "필터A")
+    page.fill("#count", "3")
+    ctx = FakeCtx()
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    page.wait_for_timeout(200)
+    old = C.MODAL_WAIT_SEC
+    C.MODAL_WAIT_SEC = 3
+    try:
+        with pytest.raises((TimeoutError, RuntimeError)):
+            C.wait_save_overlays_settle(
+                page,
+                ctx,  # type: ignore[arg-type]
+                1,
+                dialog_msgs=[],
+                before_popup_ids=before,
+            )
+    finally:
+        C.MODAL_WAIT_SEC = old
+    assert ctx.save_popup_seen is False
+    assert ctx.server_save_ok is False
+    page.close()
+
+
+if __name__ == "__main__":
+    # pytest 없이도 직접 실행 가능
+    failed = 0
+    with sync_playwright() as p:
+        b = p.chromium.launch(headless=True)
+        for name, fn in [
+            ("distinct", test_buttons_are_distinct),
+            ("modal_close_not_reacted", test_modal_close_alone_is_not_reacted),
+            ("raise_no_popup", test_wait_popup_raises_without_popup_no_init),
+            ("popup_ok", test_wait_popup_ok_when_layer_appears),
+            ("signal_ignore_close", test_save_result_signal_ignores_settings_modal_close),
+            ("full_gate", test_full_gate_blocks_server_save_ok_without_popup),
+        ]:
+            try:
+                fn(b)
+                print(f"PASS {name}")
+            except Exception as e:
+                failed += 1
+                print(f"FAIL {name}: {type(e).__name__}: {e}")
+        b.close()
+    raise SystemExit(failed)
