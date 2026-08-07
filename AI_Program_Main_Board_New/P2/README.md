@@ -1,17 +1,23 @@
 # P2 — 더망고 상품데이터 대량수집 (Python)
 
-`AI_Program_Main_Board_New`의 **P2** 입니다.  
-(이전 이름: P3_Python_Item_Collector)
+목표: **카테고리 URL 1행 → 상품 3건**을 오류 없이 가져오기.
 
-P1이 만든 카테고리 URL 엑셀을 입력으로 사용합니다.
+## 1행 검증 (추천)
 
-## 실행
-
-- **보드:** `..\run.bat` → P2 → 목록에서 선택 후 수집
-- **단독:** 엑셀을 `run.bat`에 드래그
-
+```bat
+run-verify.bat 엑셀.xlsx
 ```
-python collect.py 엑셀파일.xlsx
+
+보드: **「1행 검증 모드」** 체크 후 실행.
+
+- 첫 행만 · 단계 스크린샷(`run-logs/`) · 같은 행 재시도 3회
+- 저장수 3 입력 확인 · 저장 후 오류 문구 검사
+
+## 일반
+
+```bat
+run.bat 엑셀.xlsx
+python collect.py 엑셀.xlsx 3 --retries 3 --yes
 ```
 
 엑셀 헤더: `상위 최종 카테고리명` | `최종 카테고리 URL주소`
