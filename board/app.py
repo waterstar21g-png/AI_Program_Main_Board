@@ -31,7 +31,7 @@ from library import (  # noqa: E402
     set_selected,
 )
 
-VERSION = "2.0.12"
+VERSION = "2.0.13"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -547,18 +547,22 @@ class BoardApp(tk.Tk):
 
         try:
             # 보드 하단 로그로 stdout 수신 (별도 콘솔 창 없음)
+            # Windows 기본 콘솔 코드페이지(CP949)와 UTF-8 혼용 대비:
+            # 자식 Python은 UTF-8 강제 + 수신 시 utf-8/cp949 폴백 디코딩
             creationflags = 0
             if os.name == "nt":
                 creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
             self._p2_proc = subprocess.Popen(
                 args,
                 cwd=str(ROOT / "P2"),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                bufsize=1,
+                text=False,
+                bufsize=0,
+                env=env,
                 creationflags=creationflags,
             )
         except Exception as e:
@@ -572,11 +576,37 @@ class BoardApp(tk.Tk):
             daemon=True,
         ).start()
 
+    @staticmethod
+    def _decode_log_bytes(raw: bytes) -> str:
+        """Windows CP949 / UTF-8 혼용 stdout을 깨지지 않게 디코딩."""
+        if not raw:
+            return ""
+        data = raw.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        for enc in ("utf-8", "cp949", "mbcs"):
+            try:
+                return data.decode(enc)
+            except UnicodeDecodeError:
+                continue
+        return data.decode("utf-8", errors="replace")
+
     def _watch_p2_proc(self, proc: subprocess.Popen, path: str) -> None:
         try:
             assert proc.stdout is not None
-            for line in proc.stdout:
-                self._p2_log_ui(line.rstrip("\n"))
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self._p2_log_ui(text)
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self._p2_log_ui(text)
         except Exception as e:  # noqa: BLE001
             self._p2_log_ui(f"로그 수신 오류: {e}", "오류")
         code = proc.wait()
