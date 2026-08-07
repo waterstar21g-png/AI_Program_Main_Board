@@ -96,7 +96,7 @@ POPUP_WAIT_SEC = 40  # 검색 팝업 닫힘 대기(초) — 초과 시 닫고 �
 MODAL_WAIT_SEC = 60
 # 저장하기 클릭 후 서버 처리·팝업 생성에 주는 최소 시간(초)
 # (이 전에 화면에 있던 '00건 수집' 문구로 즉시 통과·초기화 금지)
-SAVE_POPUP_GRACE_SEC = 4.0
+SAVE_POPUP_GRACE_SEC = 5.0
 DEFAULT_SAVE_COUNT = 3
 DEFAULT_ROW_RETRIES = 2
 SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
@@ -295,6 +295,10 @@ class RunCtx:
         # 저장하기 후 최종 팝업: 열림 확인 + 닫힘 확인 (둘 다 필수)
         self.save_popup_seen: bool = False
         self.save_popup_closed: bool = False
+        # 저장하기 클릭 후 ~ 팝업 열림·닫힘 완료 전: 초기화 진입 금지
+        self.save_awaiting_popup: bool = False
+        self.save_popup_kind: str = ""
+        self.save_popup_ui_latched: bool = False
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
@@ -320,6 +324,9 @@ class RunCtx:
         self.server_save_ok = False
         self.save_popup_seen = False
         self.save_popup_closed = False
+        self.save_awaiting_popup = False
+        self.save_popup_kind = ""
+        self.save_popup_ui_latched = False
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
@@ -2015,10 +2022,18 @@ def wait_mango_search_settle(
 
 
 def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
+    rn = row["row"]
+    # ★저장하기 클릭 후 팝업모달 대기 중이면 초기화 절대 금지 (맨 앞 게이트)
+    if getattr(ctx, "save_awaiting_popup", False):
+        raise RuntimeError(
+            f"#{rn} 저장하기 후 팝업모달 대기 미완료 — "
+            "초기화로 진행할 수 없습니다. "
+            "팝업창 모달이 열리고 닫힐 때까지 기다리세요."
+        )
+
     label = row["label"]
     url = normalize_url(row["url"])
     save_count = ctx.save_count
-    rn = row["row"]
     ctx.info(
         f"처리 시작 | 상위 최종 카테고리명={label} | "
         f"최종 카테고리 URL주소={row['url']} | 목표 저장수={save_count}"
@@ -2274,6 +2289,10 @@ def run_save_submit_and_verify(
     """
     ctx.server_save_ok = False
     ctx.save_popup_seen = False
+    ctx.save_popup_closed = False
+    ctx.save_awaiting_popup = False
+    ctx.save_popup_kind = ""
+    ctx.save_popup_ui_latched = False
     dialog_msgs: list[str] = []
 
     def _on_save_dialog(dialog) -> None:
@@ -2352,10 +2371,14 @@ def run_save_submit_and_verify(
             dialog_from = len(dialog_msgs)
             before_popup_ids = {_popup_id(p) for p in popups(page)}
             last_click_ok = trusted_click_save_submit(page, btn)
+            # 클릭 성공 순간부터 팝업 닫힘까지 초기화 진입 금지
+            if last_click_ok:
+                ctx.save_awaiting_popup = True
             ctx.info(
                 f"  하단 저장하기 클릭 전송 "
                 f"(ok={last_click_ok}, attempt={attempt}) "
-                f"— 이후 최소 {SAVE_POPUP_GRACE_SEC:.0f}초 저장시간"
+                f"— 이후 팝업모달 열림·닫힘까지 대기 "
+                f"(최소 {SAVE_POPUP_GRACE_SEC:.0f}초, 초기화 금지)"
             )
             page.wait_for_timeout(500)
             ctx.shot(page, "02_save_clicked", rn)
@@ -2464,6 +2487,7 @@ def run_save_submit_and_verify(
                 "팝업이 닫힐 때까지 기다린 뒤에만 초기화 가능"
             )
         ctx.server_save_ok = True
+        ctx.save_awaiting_popup = False  # 팝업 열림·닫힘 완료 → 이후 초기화 허용
         ctx.info(
             f"4. -> 서버 최종 갱신 완료 "
             f"(저장하기 OK + 팝업 열림→닫힘 OK / 저장수 {save_count})"
@@ -2568,22 +2592,24 @@ def find_mango_collect_alert(
     return None, "", "", None
 
 
+def _is_settings_modal_text(txt: str) -> bool:
+    return bool(
+        re.search(r"상품\s*저장\s*설정", txt or "")
+        and re.search(r"검색\s*필터\s*명|취소하기", txt or "")
+    )
+
+
 def save_execution_layer_visible(
     page: Page,
     *,
     baseline: set[str] | None = None,
 ) -> bool:
-    """저장하기 직후 뜨는 '저장 실행' 팝업/레이어.
+    """저장하기 직후 뜨는 '저장 실행' 팝업/레이어 UI.
 
-    클릭 전 문구·상품저장설정 본문·'확인' 단독은 인정하지 않음.
+    ★ 본문에 남은 'N건이 수집' 텍스트만으로는 True 금지.
+    실제 dialog/layer/modal 또는 확인버튼 UI 가 보여야 함.
     """
     base = baseline or set()
-    try:
-        n, hit, src, _ = find_mango_collect_alert(page, None, baseline=base)
-        if n is not None and src:
-            return True
-    except Exception:  # noqa: BLE001
-        pass
     try:
         layer = page.locator(
             '[role="dialog"], .ui-dialog, .modal, '
@@ -2603,9 +2629,7 @@ def save_execution_layer_visible(
                 txt = layer.first.inner_text(timeout=500) or ""
             except Exception:  # noqa: BLE001
                 txt = ""
-            if re.search(r"상품\s*저장\s*설정", txt) and re.search(
-                r"검색\s*필터\s*명|취소하기", txt
-            ):
+            if _is_settings_modal_text(txt):
                 return False
             n, hit = parse_mango_collect_count(txt)
             if n is not None and f"page:{n}:{hit}" in base:
@@ -2614,6 +2638,42 @@ def save_execution_layer_visible(
                 r"수집\s*완료|저장\s*완료|처리\s*완료", txt or ""
             ):
                 return True
+    except Exception:  # noqa: BLE001
+        pass
+    return _save_result_confirm_ui_visible(page, baseline=base)
+
+
+def _save_result_confirm_ui_visible(
+    page: Page,
+    *,
+    baseline: set[str] | None = None,
+) -> bool:
+    """수집결과 팝업의 확인/닫기 버튼 UI가 보이는지 (본문 잔여문구 단독 X)."""
+    base = baseline or set()
+    try:
+        btn = (
+            page.locator("button, a, input[type='button'], input[type='submit']")
+            .filter(has_text=re.compile(r"^(확인|닫기|OK|Yes)$", re.I))
+            .first
+        )
+        if btn.count() == 0 or not btn.is_visible():
+            return False
+        try:
+            root = btn.locator(
+                "xpath=ancestor::*[self::div or self::td or self::form][1]"
+            )
+            txt = root.inner_text(timeout=400) if root.count() else ""
+        except Exception:  # noqa: BLE001
+            txt = ""
+        if _is_settings_modal_text(txt):
+            return False
+        n, hit = parse_mango_collect_count(txt or "")
+        if n is not None and f"page:{n}:{hit}" in base:
+            return False
+        if n is not None or re.search(
+            r"수집\s*완료|저장\s*완료|처리\s*완료", txt or ""
+        ):
+            return True
     except Exception:  # noqa: BLE001
         pass
     return False
@@ -2636,22 +2696,23 @@ def save_result_signal_present(
 ) -> tuple[bool, str, Page | None]:
     """저장하기 후 '저장 실행' 팝업/알림 모달 출현 여부.
 
-    - 클릭 이후 새 브라우저 팝업
-    - 클릭 전에 없던 수집건수 문구/레이어 (검색단계 '00건' 오인 금지)
-    - 새 JS dialog
-    ★ 상품저장설정 모달 닫힘만으로는 True 가 되지 않음
+    인정:
+    - 클릭 이후 새 JS dialog
+    - 클릭 이후 새 브라우저 팝업 창
+    - 인페이지 팝업/레이어/확인 UI
+    금지:
+    - 상품저장설정 모달 닫힘만
+    - 본문에 남은 'N건이 수집' 텍스트만 (모달 UI 없음)
     """
     base = baseline or set()
 
-    n, msg, src, hit_page = find_mango_collect_alert(
-        page,
-        dialog_msgs,
-        baseline=base,
-        dialog_from=dialog_from,
-    )
-    if n is not None:
-        return True, f"{src}:{msg}", hit_page or page
+    # 1) JS dialog (클릭 이후 도착분만)
+    for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
+        n, hit = parse_mango_collect_count(msg)
+        if n is not None:
+            return True, f"dialog:{hit or msg}", page
 
+    # 2) 새 브라우저 창
     prev = before_popup_ids or set()
     for p in popups(page):
         if _popup_id(p) in prev:
@@ -2665,6 +2726,7 @@ def save_result_signal_present(
             return True, f"new_popup:{hit2}", p
         return True, "new_popup_window", p
 
+    # 3) 실제 인페이지 팝업/레이어/확인 UI (본문 잔여문구 단독 금지)
     if save_execution_layer_visible(page, baseline=base):
         return True, "inpage_save_layer", page
 
@@ -2763,6 +2825,30 @@ def wait_save_execution_popup(
         pass
     ctx.shot(shot_page, "03_result_popup", rn)
     ctx.save_popup_seen = True
+    ctx.save_popup_kind = (detail or "").split(":", 1)[0] or "inpage_save_layer"
+    # dialog 는 accept 로 이미 닫힌 경우가 많음. UI 팝업은 열림을 래치.
+    if ctx.save_popup_kind == "dialog":
+        ctx.save_popup_ui_latched = False
+    else:
+        ctx.save_popup_ui_latched = bool(
+            final_save_popup_still_open(
+                page, before_popup_ids=before_popup_ids, baseline=base
+            )
+            or save_execution_layer_visible(page, baseline=base)
+        )
+        if not ctx.save_popup_ui_latched:
+            # 신호는 왔는데 아직 안 보이면 잠깐 더 보고 래치
+            page.wait_for_timeout(500)
+            ctx.save_popup_ui_latched = bool(
+                final_save_popup_still_open(
+                    page, before_popup_ids=before_popup_ids, baseline=base
+                )
+                or save_execution_layer_visible(page, baseline=base)
+            )
+    ctx.info(
+        f"  [팝업] kind={ctx.save_popup_kind} "
+        f"ui_open={ctx.save_popup_ui_latched} — 닫힐 때까지 초기화 금지"
+    )
 
 
 def final_save_popup_still_open(
@@ -2825,44 +2911,65 @@ def wait_save_popup_closed(
     """★최종 팝업화면이 뜰 때까지가 아니라 — 뜬 뒤 '닫힐 때까지' 대기.
 
     최초 요건: 팝업창 열고, 닫힘까지 처리. 열린 채로 초기화/다음단계 금지.
+    UI 팝업을 한 번도 못 본 채 '이미 닫힘'으로 통과하지 않는다.
     """
     wait_sec = float(timeout_sec or MODAL_WAIT_SEC)
     base = baseline or set()
+    kind = getattr(ctx, "save_popup_kind", "") or ""
     ctx.info(
         "3. ★★★ 최종 팝업화면이 닫힐 때까지 대기 "
-        f"(최대 {int(wait_sec)}초) — 닫히기 전 초기화 금지"
+        f"(최대 {int(wait_sec)}초, kind={kind}) — 닫히기 전 초기화 금지"
     )
+
+    # JS dialog 는 accept 로 이미 닫힘 — 짧은 정착 후 닫힘 인정
+    if kind == "dialog":
+        page.wait_for_timeout(800)
+        ctx.save_popup_closed = True
+        ctx.info("3. ★ 최종 팝업(dialog) 닫힘 확인 완료")
+        ctx.shot(page, "03_modal_closed", rn)
+        return
+
     end = time.time() + wait_sec
     closed_stable = 0
     helped = False
+    saw_open = bool(getattr(ctx, "save_popup_ui_latched", False))
 
     while time.time() < end:
         ctx.check_budget("최종 팝업 닫힘 대기")
         open_now = final_save_popup_still_open(
             page, before_popup_ids=before_popup_ids, baseline=base
         )
-        if not open_now:
-            closed_stable += 1
-            if closed_stable >= 3:  # ~1초 이상 닫힌 상태 유지
-                ctx.save_popup_closed = True
-                ctx.info("3. ★ 최종 팝업화면 닫힘 확인 완료")
-                ctx.shot(page, "03_modal_closed", rn)
-                return
+        if open_now:
+            saw_open = True
+            closed_stable = 0
+            if not helped:
+                dismiss_mango_alert_ui(page)
+                helped = True
+            else:
+                dismiss_mango_alert_ui(page)
+            page.wait_for_timeout(400)
+            continue
+
+        # 아직 UI 열림을 한 번도 못 봄 → '닫힘'으로 오인 금지, 계속 대기
+        if not saw_open:
             page.wait_for_timeout(350)
             continue
 
-        closed_stable = 0
-        # 열려 있으면 확인 버튼으로 닫기 보조 (한두 번)
-        if not helped:
-            dismiss_mango_alert_ui(page)
-            helped = True
-            page.wait_for_timeout(400)
-            continue
-        # 주기적으로 확인 재시도
-        dismiss_mango_alert_ui(page)
-        page.wait_for_timeout(400)
+        closed_stable += 1
+        if closed_stable >= 3:  # ~1초 이상 닫힌 상태 유지
+            ctx.save_popup_closed = True
+            ctx.info("3. ★ 최종 팝업화면 닫힘 확인 완료")
+            ctx.shot(page, "03_modal_closed", rn)
+            return
+        page.wait_for_timeout(350)
 
     ctx.shot(page, "03_modal_stuck", rn)
+    if not saw_open:
+        raise TimeoutError(
+            f"#{rn} 저장하기 후 팝업모달 UI를 확인하지 못함. "
+            "본문 잔여문구만으로 통과·초기화 불가. "
+            "저장하기 → 팝업모달 열림 → 닫힘 필수."
+        )
     raise TimeoutError(
         f"#{rn} 최종 팝업화면이 닫히지 않음. "
         "팝업이 열린 채로 초기화/다음 행 진행 불가. "
@@ -3153,10 +3260,12 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                     except Exception as re:  # noqa: BLE001
                         ctx.info(f"  재연결 경고: {re}")
                 if attempt < ctx.retries:
-                    # 팝업 없이 성공 처리된 게 아님 — 실패 후 재시도용 초기화만
+                    # 팝업 대기를 이미 끝낸 실패만 재시도 복귀 허용
+                    # (대기 중 초기화 금지 플래그 해제)
+                    ctx.save_awaiting_popup = False
                     ctx.info(
-                        "  같은 행 재시도 전 초기화 "
-                        "(저장 팝업 미확인/실패 후 복귀 — 성공 경로 아님)"
+                        "  같은 행 재시도 — 대량메뉴 복귀 "
+                        "(저장 팝업 대기 실패 후, 성공 경로 아님)"
                     )
                     try:
                         page = refresh_if_closed(page)

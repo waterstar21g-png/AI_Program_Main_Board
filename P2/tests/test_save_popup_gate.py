@@ -90,7 +90,11 @@ class FakeCtx:
     def __init__(self):
         self.msgs: list[str] = []
         self.save_popup_seen = False
+        self.save_popup_closed = False
         self.server_save_ok = False
+        self.save_awaiting_popup = False
+        self.save_popup_kind = ""
+        self.save_popup_ui_latched = False
         self.row_deadline = time.time() + 120
 
     def info(self, msg: str) -> None:
@@ -437,6 +441,44 @@ def test_open_plus_close_gate(browser):
     page.close()
 
 
+def test_bare_page_text_is_not_popup_modal(browser):
+    """본문 '3건이 수집' 텍스트만으로는 팝업모달로 인정·초기화 금지."""
+    page = _open(browser, "nopopup")
+    page.evaluate(
+        """() => {
+          const d = document.createElement('div');
+          d.id = 'orphanText';
+          d.textContent = '3건이 수집되었다';
+          document.body.appendChild(d);
+        }"""
+    )
+    page.click("#allSave")
+    base = set()  # 의도적으로 baseline 비움 — 그래도 UI 없으면 안 됨
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    page.wait_for_timeout(300)
+    has, detail, _ = C.save_result_signal_present(
+        page, [], before_popup_ids=before, baseline=base
+    )
+    assert has is False, f"본문 텍스트만으로 signal: {detail}"
+    assert C.save_execution_layer_visible(page, baseline=base) is False
+    page.close()
+
+
+def test_awaiting_popup_blocks_init_log_path(browser):
+    """save_awaiting_popup=True 이면 초기화(_process_row_once 진입) 거부."""
+    page = _open(browser, "nopopup")
+    ctx = FakeCtx()
+    ctx.save_awaiting_popup = True
+    row = {"row": 1, "label": "테스트", "url": "https://example.com/x"}
+    with pytest.raises(RuntimeError) as ei:
+        C._process_row_once(page, row, ctx)  # type: ignore[arg-type]
+    assert "팝업모달" in str(ei.value) or "초기화" in str(ei.value)
+    # 초기화 로그가 찍히면 안 됨
+    assert not any("0. 초기화" in m for m in ctx.msgs)
+    page.close()
+
+
 if __name__ == "__main__":
     # pytest 없이도 직접 실행 가능
     failed = 0
@@ -453,6 +495,8 @@ if __name__ == "__main__":
             ("stale_00_then_new", test_new_alert_after_click_accepted_despite_stale_00),
             ("wait_until_closed", test_must_wait_until_final_popup_closes),
             ("open_plus_close", test_open_plus_close_gate),
+            ("bare_text_not_modal", test_bare_page_text_is_not_popup_modal),
+            ("awaiting_blocks_init", test_awaiting_popup_blocks_init_log_path),
         ]:
             try:
                 fn(b)
