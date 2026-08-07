@@ -166,12 +166,15 @@ SAVE_FAIL_PATTERNS = [
     re.compile(r"다시\s*시도"),
 ]
 
-# 망고 자체 알림 — "3건이 수집되었다" / "00건이수집되었다" 등
+# 망고 자체 알림 — "3건이 수집되었다" / "00건이수집되었다" / 저장 건수 등
 MANGO_COLLECT_ALERT_PATTERNS = [
     re.compile(r"(\d+)\s*건\s*(이\s*)?수집\s*되었"),
     re.compile(r"(\d+)\s*건\s*(이\s*)?저장\s*되었"),
     re.compile(r"(\d+)\s*건\s*(이\s*)?등록\s*되었"),
     re.compile(r"(\d+)\s*건\s*(이\s*)?수집\s*완료"),
+    re.compile(r"(\d+)\s*건\s*(의\s*)?상품\s*(이\s*)?(수집|저장)"),
+    re.compile(r"저장\s*된\s*상품\s*(\d+)\s*건"),
+    re.compile(r"상품\s*(\d+)\s*건\s*(이\s*)?(수집|저장)"),
     re.compile(r"총\s*(\d+)\s*건\s*(이\s*)?(수집|저장)"),
 ]
 
@@ -218,8 +221,11 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "02_no_count_field": "2. 저장수 필드 없음(오류)",
     "02_count_mismatch": "2. 저장수 불일치(오류)",
     "02_modal_filled": "2. 필터명·저장수 입력",
+    "02_save_missing": "2. 저장하기 버튼 없음(오류)",
+    "02_save_clicked": "2. 저장하기 클릭 완료",
     "03_modal_stuck": "3. 저장 모달 미종료(오류)",
     "03_modal_closed": "3. 저장 모달 닫힘",
+    "03_result_popup": "3. 저장 후 결과 팝업",
     "03_collect_alert": "3. 망고 수집건수 알림 확인",
     "03_collect_alert_fail": "3. 망고 수집건수 알림 확인 실패",
     "04_row_done": "4. 행 완료",
@@ -1131,6 +1137,27 @@ def save_modal_visible(page: Page) -> bool:
         return False
 
 
+def save_submit_button(page: Page):
+    """상품저장설정 모달의 '저장하기' 버튼 (여러 셀렉터 폴백)."""
+    modal = save_modal(page)
+    return (
+        modal.locator(
+            'input[type="button"][value*="저장하기"], '
+            'input[type="submit"][value*="저장하기"]'
+        )
+        .or_(modal.locator('button:has-text("저장하기")'))
+        .or_(modal.locator('a:has-text("저장하기")'))
+        .or_(modal.get_by_text(re.compile(r"^저장하기$")))
+        .or_(
+            page.locator(
+                'input[type="button"][value*="저장하기"], '
+                'input[type="submit"][value*="저장하기"]'
+            )
+        )
+        .or_(page.get_by_text(re.compile(r"^저장하기$")))
+    )
+
+
 def try_dismiss_save_modal(page: Page) -> None:
     """저장 설정 모달이 남아 있으면 닫기/취소/Esc 로 해제 시도."""
     if not save_modal_visible(page):
@@ -1824,6 +1851,22 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     ctx.info(f"2. 모두저장 모달 (하단 상품이미지 약 {modal_imgs}개)")
     ctx.shot(page, "02_save_modal", rn)
 
+    # 저장 단계 시간 확보 (검색 대기 후 예산이 거의 소진된 경우 대비)
+    ctx.row_deadline = time.time() + max(120.0, float(MODAL_WAIT_SEC) + 60.0)
+
+    # 순서 고정: 검색필터명 → 저장상품수 → 저장하기
+    fill_save_modal_fields(page, ctx, rn, label, save_count)
+    run_save_submit_and_verify(page, ctx, rn, save_count)
+
+
+def fill_save_modal_fields(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    label: str,
+    save_count: int,
+) -> None:
+    """상품저장설정 모달에 검색필터명·저장상품수를 입력하고 샷 보관."""
     ctx.info(f"2. 검색필터명 입력: {label}")
     type_into(page, modal_field(page, FILTER_NAME_LABEL), label)
 
@@ -1831,10 +1874,11 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     if count_field.count() == 0:
         ctx.shot(page, "02_no_count_field", rn)
         raise RuntimeError(f"#{rn} 저장상품수 입력칸을 찾지 못함")
+    ctx.info(f"2. 저장상품수 입력: {save_count}")
     type_into(page, count_field, str(save_count))
+    # 필터명이 지워지는 UI 대비 — 저장 직전 한 번 더
     type_into(page, modal_field(page, FILTER_NAME_LABEL), label)
 
-    # 저장수 확인
     got_count = ""
     try:
         got_count = count_field.input_value()
@@ -1842,21 +1886,33 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
         pass
     ctx.info(f"  저장상품수 입력값: {got_count!r} (목표 {save_count})")
     if str(save_count) not in (got_count or "").replace(" ", ""):
-        # 숫자만 비교
         digits = re.sub(r"\D", "", got_count or "")
         if digits != str(save_count):
             ctx.shot(page, "02_count_mismatch", rn)
             raise RuntimeError(
                 f"#{rn} 저장상품수 불일치 — 기대 {save_count} / 실제 {got_count!r}"
             )
+    ctx.info("2. 검색필터명·저장상품수 입력 완료 → 저장하기 진행")
     ctx.shot(page, "02_modal_filled", rn)
 
-    # 저장 중·직후 망고 alert("N건이 수집되었다") 캡처
+
+def run_save_submit_and_verify(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    save_count: int,
+) -> None:
+    """저장하기 클릭 → 팝업/모달 열림·닫힘 → 망고 'N건 수집' 알림 확인.
+
+    이 단계는 빠지면 안 된다 (필터·건수 입력만 하고 끝내면 저장 안 됨).
+    """
     dialog_msgs: list[str] = []
 
     def _on_save_dialog(dialog) -> None:
         try:
-            dialog_msgs.append(str(dialog.message or ""))
+            msg = str(dialog.message or "")
+            dialog_msgs.append(msg)
+            ctx.info(f"  [dialog] {msg!r}")
             dialog.accept()
         except Exception:  # noqa: BLE001
             try:
@@ -1866,38 +1922,32 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
 
     page.on("dialog", _on_save_dialog)
     try:
-        ctx.info("2. 저장하기 버튼 클릭")
-        click_it(
-            save_modal(page)
-            .locator('input[value*="저장하기"]')
-            .or_(save_modal(page).locator('button:has-text("저장하기")'))
-            .or_(save_modal(page).get_by_text(re.compile("^저장하기$")))
+        ctx.check_budget("저장하기 클릭 전")
+        btn = save_submit_button(page)
+        try:
+            btn.first.wait_for(state="visible", timeout=15_000)
+        except Exception as e:  # noqa: BLE001
+            ctx.shot(page, "02_save_missing", rn)
+            raise RuntimeError(
+                f"#{rn} 저장하기 버튼을 찾지 못함 — "
+                "검색필터명·저장상품수 입력 후 저장하기가 필수입니다. "
+                f"원인: {e}"
+            ) from e
+
+        ctx.info(
+            "2. ★ 저장하기 버튼 클릭 "
+            "(검색필터명·저장상품수 최종 저장 — 필수 단계)"
         )
+        trusted = click_it(btn)
+        ctx.info(f"  저장하기 클릭 완료 (trusted_click={trusted})")
+        page.wait_for_timeout(400)
+        ctx.shot(page, "02_save_clicked", rn)
 
-        ctx.info("3. 팝업창이 없어질 때까지 대기")
-        end = time.time() + MODAL_WAIT_SEC
-        closed = False
-        while time.time() < end:
-            ctx.check_budget("저장모달 닫힘 대기")
-            if not save_modal_visible(page):
-                wait_popups_gone(page, grace_sec=0.5)
-                closed = True
-                break
-            page.wait_for_timeout(500)
-        if not closed:
-            # 강제 닫기 후 여전히 열려 있으면 실패 → 다음 행으로
-            try_dismiss_save_modal(page)
-            close_search_popups(page)
-            page.wait_for_timeout(500)
-            if not save_modal_visible(page) and not popups(page):
-                closed = True
-            else:
-                ctx.shot(page, "03_modal_stuck", rn)
-                raise TimeoutError(f"#{rn} 저장 팝업창이 닫히지 않음")
-        ctx.info("3. 팝업창 닫힘")
-        ctx.shot(page, "03_modal_closed", rn)
+        # 저장 직후: 모달 닫힘 + (있으면) 결과 팝업 열림→닫힘
+        ctx.info("3. 저장 후 팝업/모달 종료 대기")
+        wait_save_overlays_settle(page, ctx, rn)
 
-        # 모달 완전 종료 후 — 망고 자체 알림 "N건이 수집되었다" 확인 (필수)
+        # 최종: 망고 자체 메세지 — 저장된 상품 건수 알림
         verify_mango_collect_alert(
             page,
             ctx,
@@ -1906,7 +1956,6 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
             dialog_msgs=dialog_msgs,
         )
 
-        # 부가: 오류 문구·로그인 튕김 등
         verify_row_save_done(page, ctx, rn, save_count)
         ctx.info(f"4. -> 행 완료 확인 (저장수 {save_count})")
         ctx.shot(page, "04_row_done", rn)
@@ -1915,6 +1964,57 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
             page.remove_listener("dialog", _on_save_dialog)
         except Exception:  # noqa: BLE001
             pass
+
+
+def wait_save_overlays_settle(page: Page, ctx: RunCtx, rn: int) -> None:
+    """저장하기 클릭 후 저장모달·결과팝업이 모두 정리될 때까지 대기."""
+    end = time.time() + MODAL_WAIT_SEC
+    saw_result_popup = False
+    modal_closed = False
+
+    while time.time() < end:
+        ctx.check_budget("저장 후 팝업/모달 대기")
+        modal_open = save_modal_visible(page)
+        cur_pops = popups(page)
+
+        if cur_pops and not saw_result_popup:
+            saw_result_popup = True
+            ctx.info(f"3. 저장 후 결과 팝업 열림 ({len(cur_pops)}개)")
+            try:
+                cur_pops[0].bring_to_front()
+            except Exception:  # noqa: BLE001
+                pass
+            ctx.shot(cur_pops[0], "03_result_popup", rn)
+
+        if not modal_open and not modal_closed:
+            modal_closed = True
+            ctx.info("3. 저장 모달 닫힘")
+            try:
+                page.bring_to_front()
+            except Exception:  # noqa: BLE001
+                pass
+            ctx.shot(page, "03_modal_closed", rn)
+
+        # 모달·검색팝업 모두 없으면 안정화 후 종료
+        if not modal_open and not cur_pops:
+            page.wait_for_timeout(500)
+            if not save_modal_visible(page) and not popups(page):
+                ctx.info("3. 저장 후 팝업/모달 모두 종료 확인")
+                return
+
+        page.wait_for_timeout(400)
+
+    # 시간 초과 — 강제 정리 후 상태 재확인
+    ctx.info("  [경고] 저장 후 오버레이 대기 초과 — 강제 정리")
+    close_search_popups(page)
+    if save_modal_visible(page):
+        try_dismiss_save_modal(page)
+    page.wait_for_timeout(500)
+    if save_modal_visible(page) or popups(page):
+        ctx.shot(page, "03_modal_stuck", rn)
+        raise TimeoutError(f"#{rn} 저장 후 팝업/모달이 닫히지 않음")
+    ctx.info("3. 강제 정리 후 팝업/모달 종료")
+    ctx.shot(page, "03_modal_closed", rn)
 
 
 def _page_visible_text(page: Page) -> str:
