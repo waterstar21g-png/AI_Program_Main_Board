@@ -1,2 +1,2 @@
-버전 2.0.25 (Python B안)
-업데이트: remote VERSION을 git+HTTP 둘 다 확인(최신 선택) · 콘솔 ASCII
+버전 2.0.37 (Python B안)
+업데이트: 저장하기후 팝업모달UI필수·닫힘전 초기화금지 강화

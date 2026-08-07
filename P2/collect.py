@@ -5,9 +5,10 @@ P2 — 더망고(tmg1898) 상품데이터 대량수집
 
 0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭
 1. URL상품검색하기 : 필드값 입력 후 클릭 -> 팝업창이 없어질 때까지 대기
-2. 검색된 상품 모두저장 클릭 -> 검색필터명·저장수 입력 -> 저장하기
-3. 팝업창이 없어질 때까지 대기 + 저장 결과 확인
-4. 다음 행 (실패 시 같은 행 재시도)
+2. [버튼1] 검색된 상품 모두저장 클릭 → 검색필터명·저장수 입력
+   → [버튼2] 모달 하단 저장하기 클릭 (모두저장과 다른 버튼, 서버 최종 갱신)
+3. 저장 실행 팝업/알림 확인(수집건수) — 서버 반영 증거
+4. 다음 행 (버튼2 성공 전에 진행 금지 / 실패 시 1회 재시도 후 다음 행)
 
 사용법:
     python collect.py 엑셀.xlsx              # 저장수 3
@@ -93,6 +94,9 @@ CHROME_CANDIDATES = [
 
 POPUP_WAIT_SEC = 40  # 검색 팝업 닫힘 대기(초) — 초과 시 닫고 다음 단계로
 MODAL_WAIT_SEC = 60
+# 저장하기 클릭 후 서버 처리·팝업 생성에 주는 최소 시간(초)
+# (이 전에 화면에 있던 '00건 수집' 문구로 즉시 통과·초기화 금지)
+SAVE_POPUP_GRACE_SEC = 5.0
 DEFAULT_SAVE_COUNT = 3
 DEFAULT_ROW_RETRIES = 2
 SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
@@ -114,6 +118,13 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "0건이 수집",
     "수집건수 알림",
     "수집 알림",
+    "저장하기 서버",
+    "서버에 반영되지",
+    "서버 최종 갱신",
+    "팝업창 모달이 나타나지",
+    "팝업 없이 초기화",
+    "최종 팝업이 닫히지",
+    "팝업화면이 닫히지",
 )
 
 
@@ -152,7 +163,10 @@ def check_stop(where: str = "") -> None:
         raise CollectStopped(f"사용자 수집 종료 요청{detail}")
 
 FILTER_NAME_LABEL = re.compile(r"검색\s*필터\s*명")
-SAVE_COUNT_LABEL = re.compile(r"저장\s*상품\s*수|검색결과\s*상위")
+# 화면 표기: 저장상품수 / 검색결과상위 / (사용자 호칭) 수집상품수
+SAVE_COUNT_LABEL = re.compile(
+    r"저장\s*상품\s*수|검색결과\s*상위|수집\s*상품\s*수"
+)
 # 저장 완료로 볼 수 있는 화면 문구 (망고 버전에 따라 다를 수 있음)
 SAVE_OK_PATTERNS = [
     re.compile(r"저장\s*(이\s*)?(완료|성공)"),
@@ -222,10 +236,13 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "02_count_mismatch": "2. 저장수 불일치(오류)",
     "02_modal_filled": "2. 필터명·저장수 입력",
     "02_save_missing": "2. 저장하기 버튼 없음(오류)",
-    "02_save_clicked": "2. 저장하기 클릭 완료",
+    "02_save_clicked": "2. 저장하기(서버제출) 클릭",
+    "02_save_no_react": "2. 저장하기 클릭 무반응(재시도)",
+    "02_save_failed": "2. 저장하기 서버제출 실패",
     "03_modal_stuck": "3. 저장 모달 미종료(오류)",
     "03_modal_closed": "3. 저장 모달 닫힘",
     "03_result_popup": "3. 저장 후 결과 팝업",
+    "03_result_missing": "3. 저장 후 결과 팝업 없음(오류)",
     "03_collect_alert": "3. 망고 수집건수 알림 확인",
     "03_collect_alert_fail": "3. 망고 수집건수 알림 확인 실패",
     "04_row_done": "4. 행 완료",
@@ -273,6 +290,15 @@ class RunCtx:
         self.current_label = ""
         self.current_url = ""
         self.row_deadline: float | None = None  # 행당 제한시간(epoch)
+        # 저장하기(서버 최종 갱신) 성공 여부 — True 되기 전 행 완료 금지
+        self.server_save_ok: bool = False
+        # 저장하기 후 최종 팝업: 열림 확인 + 닫힘 확인 (둘 다 필수)
+        self.save_popup_seen: bool = False
+        self.save_popup_closed: bool = False
+        # 저장하기 클릭 후 ~ 팝업 열림·닫힘 완료 전: 초기화 진입 금지
+        self.save_awaiting_popup: bool = False
+        self.save_popup_kind: str = ""
+        self.save_popup_ui_latched: bool = False
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
@@ -295,6 +321,12 @@ class RunCtx:
         self.current_label = str(row.get("label") or "").strip()
         self.current_url = str(row.get("url") or "").strip()
         self.row_deadline = time.time() + ROW_BUDGET_SEC
+        self.server_save_ok = False
+        self.save_popup_seen = False
+        self.save_popup_closed = False
+        self.save_awaiting_popup = False
+        self.save_popup_kind = ""
+        self.save_popup_ui_latched = False
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
@@ -1043,11 +1075,18 @@ def url_search_button(page: Page):
 
 
 def save_all_button(page: Page):
+    """[버튼1] 검색결과 상단 — '검색된 상품 모두저장' (모달 하단 저장하기와 별개)."""
     return (
         page.locator('input[type="button"][value*="모두저장"]')
         .or_(page.locator('input[type="submit"][value*="모두저장"]'))
         .or_(page.get_by_text(re.compile(r"검색된\s*상품\s*모두\s*저장")))
     )
+
+
+# 모달 하단 '저장하기'와 혼동하면 안 되는 결과목록 버튼 문구
+_RESULT_LIST_SAVE_BTN = re.compile(
+    r"모두\s*저장|선택상품\s*저장|검색된\s*상품"
+)
 
 
 def _describe(loc) -> str:
@@ -1122,40 +1161,348 @@ def _url_input_once(page: Page):
 
 
 def save_modal(page: Page):
+    """상품저장설정 팝업 전체 — 하단 '저장하기'·'취소하기' 포함.
+
+    안쪽 작은 div만 잡으면 하단 버튼이 범위 밖이 되어 클릭이 누락된다.
+    '검색된 상품 모두저장' 결과목록 영역과 혼동하지 않는다.
+    """
+    full = (
+        page.locator("div, form, table")
+        .filter(has_text=re.compile(r"상품\s*저장\s*설정|검색\s*필터\s*명|적용\s*정책"))
+        .filter(has_text=re.compile(r"저장하기"))
+        .filter(has_text=re.compile(r"취소하기"))
+    )
+    try:
+        if full.count() > 0:
+            return full.last
+    except Exception:  # noqa: BLE001
+        pass
     return (
         page.locator("div, form, table")
         .filter(has_text=re.compile(r"상품\s*저장\s*설정|검색\s*필터\s*명"))
-        .filter(has_text=re.compile("저장하기"))
+        .filter(has_text=re.compile(r"^[\s\S]*저장하기[\s\S]*$"))
+        .filter(has_text=re.compile(r"취소하기"))
         .last
     )
 
 
 def save_modal_visible(page: Page) -> bool:
+    """상품저장설정 모달 열림 — 제목 또는 (저장하기+취소하기) 푸터."""
     try:
-        return page.get_by_text(re.compile(r"상품\s*저장\s*설정")).first.is_visible()
-    except Exception:
-        return False
+        if page.get_by_text(re.compile(r"상품\s*저장\s*설정")).first.is_visible():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        # 스크린샷: 하단 파란 '저장하기' + '취소하기' 쌍
+        has_save = page.get_by_text(re.compile(r"^저장하기$")).first.is_visible()
+        has_cancel = page.get_by_text(re.compile(r"^취소하기$")).first.is_visible()
+        if has_save and has_cancel:
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def save_submit_button(page: Page):
-    """상품저장설정 모달의 '저장하기' 버튼 (여러 셀렉터 폴백)."""
+    """하위 호환: 상품저장설정 모달 하단 '저장하기' locator."""
+    return resolve_save_submit_control(page)
+
+
+def _first_visible(locator):
+    """locator 후보 중 보이는 '저장하기'만. 모두저장/선택상품저장 제외."""
+    try:
+        n = locator.count()
+    except Exception:  # noqa: BLE001
+        return None
+    for i in range(n):
+        el = locator.nth(i)
+        try:
+            if not el.is_visible():
+                continue
+            val = (el.get_attribute("value") or "").strip()
+            try:
+                txt = re.sub(
+                    r"\s+", " ", (el.inner_text(timeout=400) or "")
+                ).strip()
+            except Exception:  # noqa: BLE001
+                txt = ""
+            blob = f"{val} {txt}".strip()
+            if _RESULT_LIST_SAVE_BTN.search(blob):
+                continue
+            # 버튼 라벨이 정확히 '저장하기' 인 경우만 (스크린샷 하단 파란 버튼)
+            if val == "저장하기" or txt == "저장하기":
+                return el
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def scroll_save_modal_to_footer(page: Page) -> None:
+    """상품저장설정 모달 하단(저장하기·취소하기)이 보이도록 스크롤."""
+    try:
+        modal = save_modal(page)
+        modal.evaluate(
+            """(node) => {
+                node.scrollTop = node.scrollHeight;
+                let p = node.parentElement;
+                for (let i = 0; i < 6 && p; i++) {
+                    if (p.scrollHeight > p.clientHeight + 8) {
+                        p.scrollTop = p.scrollHeight;
+                    }
+                    p = p.parentElement;
+                }
+                window.scrollTo(0, document.body.scrollHeight);
+            }"""
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    # 취소하기(푸터)가 보이면 그쪽을 기준으로 맞춤
+    try:
+        page.get_by_text(re.compile(r"^취소하기$")).last.scroll_into_view_if_needed(
+            timeout=3_000
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
+    except Exception:  # noqa: BLE001
+        pass
+    page.wait_for_timeout(250)
+
+
+def dump_save_button_candidates(page: Page, ctx: "RunCtx | None" = None) -> str:
+    """디버그: '저장하기' vs '모두저장' 후보 구분 나열."""
+    try:
+        info = page.evaluate(
+            """() => {
+                const out = [];
+                const nodes = document.querySelectorAll(
+                    'input, button, a, span, div, td, li'
+                );
+                for (const el of nodes) {
+                    const val = (el.value || '').trim();
+                    const txt = (el.innerText || el.textContent || '')
+                        .replace(/\\s+/g, ' ').trim();
+                    const blob = val + ' ' + txt;
+                    if (!/저장/.test(blob)) continue;
+                    const r = el.getBoundingClientRect();
+                    if (r.width < 2 || r.height < 2) continue;
+                    const kind =
+                        (val === '저장하기' || txt === '저장하기')
+                            ? 'MODAL_SAVE'
+                            : /모두\\s*저장|선택상품/.test(blob)
+                              ? 'LIST_SAVE'
+                              : 'OTHER';
+                    out.push({
+                        kind,
+                        tag: el.tagName,
+                        type: el.getAttribute('type') || '',
+                        value: val.slice(0, 40),
+                        text: txt.slice(0, 40),
+                        y: Math.round(r.top),
+                    });
+                    if (out.length >= 16) break;
+                }
+                return out;
+            }"""
+        )
+    except Exception as e:  # noqa: BLE001
+        info = [{"error": str(e)}]
+    line = f"저장버튼구분={info!r}"
+    if ctx is not None:
+        ctx.info(f"  [진단] {line}")
+    else:
+        log(f"  [진단] {line}")
+    return line
+
+
+def _find_footer_save_by_cancel_pair(page: Page):
+    """스크린샷 기준: 하단 [저장하기][취소하기] 쌍에서 저장하기만 반환.
+
+    '검색된 상품 모두저장'과는 완전히 다른 버튼이다.
+    """
+    try:
+        handle = page.evaluate_handle(
+            """() => {
+                const labelOf = (el) => {
+                    const v = (el.value || '').trim();
+                    const t = (el.innerText || el.textContent || '')
+                        .replace(/\\s+/g, ' ').trim();
+                    return { v, t, blob: (v + ' ' + t).trim() };
+                };
+                const visible = (el) => {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 2 && r.height > 2;
+                };
+                const nodes = Array.from(document.querySelectorAll(
+                    'input, button, a, span, div, td'
+                ));
+                // 1) 취소하기 기준 — 같은 부모 안의 저장하기 (푸터 쌍)
+                const cancels = nodes.filter((el) => {
+                    const { v, t } = labelOf(el);
+                    return (v === '취소하기' || t === '취소하기') && visible(el);
+                });
+                for (const cancel of cancels) {
+                    let root = cancel.parentElement;
+                    for (let depth = 0; depth < 6 && root; depth++) {
+                        const kids = Array.from(root.querySelectorAll(
+                            'input, button, a, span, div'
+                        ));
+                        const save = kids.find((el) => {
+                            if (el === cancel) return false;
+                            const { v, t, blob } = labelOf(el);
+                            if (v !== '저장하기' && t !== '저장하기') return false;
+                            if (/모두\\s*저장|선택상품\\s*저장/.test(blob)) return false;
+                            return visible(el);
+                        });
+                        if (save) return save;
+                        root = root.parentElement;
+                    }
+                }
+                // 2) 전역 exact 저장하기 (모두저장 제외)
+                return nodes.find((el) => {
+                    const { v, t, blob } = labelOf(el);
+                    if (v !== '저장하기' && t !== '저장하기') return false;
+                    if (/모두\\s*저장|선택상품\\s*저장/.test(blob)) return false;
+                    return visible(el);
+                }) || null;
+            }"""
+        )
+        el = handle.as_element()
+        if el is not None:
+            return el
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+def resolve_save_submit_control(page: Page):
+    """[버튼2] 상품저장설정 하단 '저장하기' — [버튼1] 모두저장과 절대 혼동 금지.
+
+    실화면: 파란 '저장하기' 옆에 '취소하기'. (밑줄 a/버튼/input)
+    """
+    scroll_save_modal_to_footer(page)
+
+    # 0) 최우선: 취소하기 옆 푸터 쌍의 저장하기 (스크린샷 그대로)
+    el = _find_footer_save_by_cancel_pair(page)
+    if el is not None:
+        return el
+
     modal = save_modal(page)
-    return (
+
+    # 1) 모달 안 — exact '저장하기' only
+    modal_candidates = [
         modal.locator(
-            'input[type="button"][value*="저장하기"], '
-            'input[type="submit"][value*="저장하기"]'
-        )
-        .or_(modal.locator('button:has-text("저장하기")'))
-        .or_(modal.locator('a:has-text("저장하기")'))
-        .or_(modal.get_by_text(re.compile(r"^저장하기$")))
-        .or_(
-            page.locator(
-                'input[type="button"][value*="저장하기"], '
-                'input[type="submit"][value*="저장하기"]'
-            )
-        )
-        .or_(page.get_by_text(re.compile(r"^저장하기$")))
+            'input[type="button"][value="저장하기"], '
+            'input[type="submit"][value="저장하기"]'
+        ),
+        modal.locator("a, button").filter(has_text=re.compile(r"^저장하기$")),
+        modal.locator("span, div, td").filter(has_text=re.compile(r"^저장하기$")),
+        modal.get_by_text(re.compile(r"^저장하기$")),
+    ]
+    for loc in modal_candidates:
+        found = _first_visible(loc)
+        if found is not None:
+            return found
+
+    # 2) 페이지 — exact only, 모두저장 제외는 _first_visible에서 처리
+    page_candidates = [
+        page.locator(
+            'input[type="button"][value="저장하기"], '
+            'input[type="submit"][value="저장하기"]'
+        ),
+        page.locator("a, button").filter(has_text=re.compile(r"^저장하기$")),
+        page.get_by_text(re.compile(r"^저장하기$")),
+    ]
+    for loc in page_candidates:
+        found = _first_visible(loc)
+        if found is not None:
+            return found
+
+    dump_save_button_candidates(page)
+    raise RuntimeError(
+        "상품저장설정 하단 '저장하기' 버튼을 찾지 못함 "
+        "('검색된 상품 모두저장'과 다른 버튼). "
+        "서버 최종 갱신을 할 수 없음"
     )
+
+
+def trusted_click_save_submit(page: Page, el) -> bool:
+    """하단 저장하기 클릭 — 마우스/Playwright 우선, 실패 시 force·JS.
+
+    저장 실행 팝업이 window.open 이면 신뢰 클릭이 필요하지만,
+    클릭 자체가 안 되면 서버 제출이 영원히 누락되므로 최후 JS도 허용.
+    """
+    try:
+        el.scroll_into_view_if_needed(timeout=5_000)
+    except Exception:  # noqa: BLE001
+        pass
+    page.wait_for_timeout(150)
+
+    # 1) 일반 클릭
+    try:
+        el.click(timeout=15_000)
+        return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) 좌표 마우스 클릭
+    try:
+        box = el.bounding_box()
+        if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+            page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2,
+            )
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 3) force 클릭
+    try:
+        el.click(timeout=8_000, force=True)
+        return True
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 4) 최후 JS (미클릭으로 서버 미반영되는 것보다는 나음)
+    try:
+        el.evaluate("(node) => node.click()")
+        log("  [경고] 저장하기 JS click 사용 — 팝업이 안 뜨면 재시도")
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def save_submit_reacted(
+    page: Page,
+    dialog_msgs: list[str] | None = None,
+    *,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+    timeout_sec: float = 15.0,
+) -> bool:
+    """저장하기 클릭 후 '저장 실행 팝업/알림'이 실제로 떴는지.
+
+    ★ 상품저장설정 모달만 닫힌 것은 성공이 아님.
+    ★ 클릭 전 화면의 '00건 수집' 등 잔여 문구는 성공이 아님.
+    """
+    end = time.time() + max(5.0, float(timeout_sec))
+    while time.time() < end:
+        has_signal, detail, _ = save_result_signal_present(
+            page,
+            dialog_msgs,
+            before_popup_ids=before_popup_ids,
+            baseline=baseline,
+            dialog_from=dialog_from,
+        )
+        if has_signal:
+            log(f"  [저장반응] {detail}")
+            return True
+        page.wait_for_timeout(350)
+    return False
 
 
 def try_dismiss_save_modal(page: Page) -> None:
@@ -1675,10 +2022,18 @@ def wait_mango_search_settle(
 
 
 def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
+    rn = row["row"]
+    # ★저장하기 클릭 후 팝업모달 대기 중이면 초기화 절대 금지 (맨 앞 게이트)
+    if getattr(ctx, "save_awaiting_popup", False):
+        raise RuntimeError(
+            f"#{rn} 저장하기 후 팝업모달 대기 미완료 — "
+            "초기화로 진행할 수 없습니다. "
+            "팝업창 모달이 열리고 닫힐 때까지 기다리세요."
+        )
+
     label = row["label"]
     url = normalize_url(row["url"])
     save_count = ctx.save_count
-    rn = row["row"]
     ctx.info(
         f"처리 시작 | 상위 최종 카테고리명={label} | "
         f"최종 카테고리 URL주소={row['url']} | 목표 저장수={save_count}"
@@ -1837,26 +2192,48 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
         ctx.info("  [경고] 검색 결과 상품이미지가 거의 보이지 않음 — 그대로 샷")
     ctx.shot(page, "01_results_ready", rn)
 
-    ctx.info("2. 검색된 상품 모두저장 클릭")
+    # ── [버튼1] 검색결과 상단: 검색된 상품 모두저장 (모달 열기) ──
+    ctx.info(
+        "2-A. ★ [버튼1] '검색된 상품 모두저장' 클릭 "
+        "(결과목록 상단 — 모달 하단 '저장하기'와 다른 버튼)"
+    )
     scroll_to_product_strip(page)
     click_it(save_all_button(page))
-    save_modal(page).wait_for(state="visible", timeout=MODAL_WAIT_SEC * 1000)
-    # 09: 모달과 함께 하단 상품 이미지가 보이도록 스크롤·대기 후 샷
+    # 모달 열림: 제목 또는 하단 저장하기+취소하기
+    end_modal = time.time() + MODAL_WAIT_SEC
+    while time.time() < end_modal:
+        if save_modal_visible(page):
+            break
+        page.wait_for_timeout(300)
+    else:
+        ctx.shot(page, "02_save_missing", rn)
+        raise RuntimeError(
+            f"#{rn} [버튼1] 모두저장 클릭 후 상품저장설정 모달이 열리지 않음"
+        )
     try:
         modal_imgs = prepare_product_view_for_shot(page, min_images=2)
     except Exception as e:  # noqa: BLE001
         ctx.info(f"  [경고] 모달 화면 상품이미지 대기 실패: {e}")
         modal_imgs = 0
     page.wait_for_timeout(300)
-    ctx.info(f"2. 모두저장 모달 (하단 상품이미지 약 {modal_imgs}개)")
+    ctx.info(f"2-A. 상품저장설정 모달 열림 (상품이미지 약 {modal_imgs}개)")
     ctx.shot(page, "02_save_modal", rn)
 
     # 저장 단계 시간 확보 (검색 대기 후 예산이 거의 소진된 경우 대비)
     ctx.row_deadline = time.time() + max(120.0, float(MODAL_WAIT_SEC) + 60.0)
 
-    # 순서 고정: 검색필터명 → 저장상품수 → 저장하기
+    # 검색필터명 → 저장상품수 → [버튼2] 하단 저장하기 (서버 최종 갱신)
     fill_save_modal_fields(page, ctx, rn, label, save_count)
+    ctx.info(
+        "2-B. ★ [버튼2] 모달 하단 '저장하기' 클릭 시작 "
+        "([버튼1] 모두저장과 구분 — 서버 최종 갱신)"
+    )
     run_save_submit_and_verify(page, ctx, rn, save_count)
+    if not ctx.server_save_ok:
+        raise RuntimeError(
+            f"#{rn} [버튼2] 하단 저장하기 서버 최종 갱신 미확인 — "
+            "필터정보·수집갯수·수집상품이 서버에 반영되지 않음"
+        )
 
 
 def fill_save_modal_fields(
@@ -1902,10 +2279,20 @@ def run_save_submit_and_verify(
     rn: int,
     save_count: int,
 ) -> None:
-    """저장하기 클릭 → 팝업/모달 열림·닫힘 → 망고 'N건 수집' 알림 확인.
+    """★저장하기 = 서버 최종 갱신 (필터정보·수집갯수·수집상품).
 
-    이 단계는 빠지면 안 된다 (필터·건수 입력만 하고 끝내면 저장 안 됨).
+    입력만 하고 이 버튼을 빼먹으면 서버에 아무것도 반영되지 않는다.
+    클릭 → 서버 제출 반응 확인(최대 1회 재시도)
+    → 최종 팝업화면 열림 → (열린 상태에서 건수 검증)
+    → 최종 팝업화면 닫힘까지 대기 → 그 다음에만 초기화/다음행.
+    재시도 후에도 동일 실패면 다음 행으로 진행한다.
     """
+    ctx.server_save_ok = False
+    ctx.save_popup_seen = False
+    ctx.save_popup_closed = False
+    ctx.save_awaiting_popup = False
+    ctx.save_popup_kind = ""
+    ctx.save_popup_ui_latched = False
     dialog_msgs: list[str] = []
 
     def _on_save_dialog(dialog) -> None:
@@ -1922,99 +2309,195 @@ def run_save_submit_and_verify(
 
     page.on("dialog", _on_save_dialog)
     try:
-        ctx.check_budget("저장하기 클릭 전")
-        btn = save_submit_button(page)
-        try:
-            btn.first.wait_for(state="visible", timeout=15_000)
-        except Exception as e:  # noqa: BLE001
+        ctx.check_budget("저장하기(서버 최종 갱신) 전")
+        if not save_modal_visible(page):
             ctx.shot(page, "02_save_missing", rn)
             raise RuntimeError(
-                f"#{rn} 저장하기 버튼을 찾지 못함 — "
-                "검색필터명·저장상품수 입력 후 저장하기가 필수입니다. "
-                f"원인: {e}"
-            ) from e
+                f"#{rn} 저장하기 서버 최종 갱신 실패 — "
+                "상품저장설정 모달이 열려 있지 않음 "
+                "(필터정보·수집갯수·수집상품이 서버에 반영되지 않음)"
+            )
 
         ctx.info(
-            "2. ★ 저장하기 버튼 클릭 "
-            "(검색필터명·저장상품수 최종 저장 — 필수 단계)"
+            "2-B. ★★★ [버튼2] 하단 파란 '저장하기' "
+            "(옆=취소하기) = 서버 최종 갱신 — "
+            "[버튼1] '검색된 상품 모두저장' 과 다름"
         )
-        trusted = click_it(btn)
-        ctx.info(f"  저장하기 클릭 완료 (trusted_click={trusted})")
-        page.wait_for_timeout(400)
-        ctx.shot(page, "02_save_clicked", rn)
+        scroll_save_modal_to_footer(page)
+        dump_save_button_candidates(page, ctx)
+        ctx.shot(page, "02_modal_filled", rn)
 
-        # 저장 직후: 모달 닫힘 + (있으면) 결과 팝업 열림→닫힘
-        ctx.info("3. 저장 후 팝업/모달 종료 대기")
-        wait_save_overlays_settle(page, ctx, rn)
+        # 클릭 전 잔여 '00건 수집' 등 — 저장 팝업으로 오인 금지
+        alert_baseline = collect_alert_baseline(page)
+        dialog_from = len(dialog_msgs)
+        if alert_baseline:
+            ctx.info(
+                "2-B. [주의] 저장하기 전 화면에 수집문구 잔여 "
+                f"{sorted(alert_baseline)} — 저장 팝업으로 쓰지 않음"
+            )
 
-        # 최종: 망고 자체 메세지 — 저장된 상품 건수 알림
+        before_popup_ids = {_popup_id(p) for p in popups(page)}
+        clicked_ok = False
+        # 최대 1회 재시도(총 2회). 동일 실패면 다음 행으로 진행.
+        for attempt in range(1, 3):
+            ctx.check_budget(f"[버튼2] 저장하기 서버제출 시도 {attempt}")
+            if not save_modal_visible(page) and attempt > 1:
+                ctx.info(
+                    "  [경고] 재시도 시 상품저장설정 모달 없음 — "
+                    "팝업 대기로 넘어감"
+                )
+                break
+            scroll_save_modal_to_footer(page)
+            try:
+                btn = resolve_save_submit_control(page)
+            except Exception as e:  # noqa: BLE001
+                dump_save_button_candidates(page, ctx)
+                ctx.shot(page, "02_save_missing", rn)
+                raise RuntimeError(
+                    f"#{rn} [버튼2] 하단 '저장하기' 없음 "
+                    f"(모두저장과 다른 버튼). 다음 입력으로. 원인: {e}"
+                ) from e
+
+            try:
+                desc = _describe(btn)
+            except Exception:  # noqa: BLE001
+                desc = "저장하기"
+            ctx.info(
+                f"2-B. ★ [버튼2] 하단 '저장하기' 클릭 "
+                f"({attempt}/2, 재시도 최대 1회) | {desc}"
+            )
+            # 매 클릭 직전 기준 갱신
+            alert_baseline = collect_alert_baseline(page)
+            dialog_from = len(dialog_msgs)
+            before_popup_ids = {_popup_id(p) for p in popups(page)}
+            last_click_ok = trusted_click_save_submit(page, btn)
+            # 클릭 성공 순간부터 팝업 닫힘까지 초기화 진입 금지
+            if last_click_ok:
+                ctx.save_awaiting_popup = True
+            ctx.info(
+                f"  하단 저장하기 클릭 전송 "
+                f"(ok={last_click_ok}, attempt={attempt}) "
+                f"— 이후 팝업모달 열림·닫힘까지 대기 "
+                f"(최소 {SAVE_POPUP_GRACE_SEC:.0f}초, 초기화 금지)"
+            )
+            page.wait_for_timeout(500)
+            ctx.shot(page, "02_save_clicked", rn)
+
+            if not last_click_ok:
+                ctx.info("  [경고] 하단 저장하기 클릭 실패 — 재시도")
+                dump_save_button_candidates(page, ctx)
+                ctx.shot(page, "02_save_no_react", rn)
+                page.wait_for_timeout(500)
+                continue
+
+            clicked_ok = True
+            # 클릭 직후: 잔여문구 무시 + 유예시간 포함 반응 확인
+            if save_submit_reacted(
+                page,
+                dialog_msgs,
+                before_popup_ids=before_popup_ids,
+                baseline=alert_baseline,
+                dialog_from=dialog_from,
+                timeout_sec=max(8.0, SAVE_POPUP_GRACE_SEC + 2.0),
+            ):
+                ctx.info(
+                    "2-B. ★ 저장하기 클릭 → 신규 저장 실행 팝업/알림 감지"
+                )
+                break
+
+            ctx.info(
+                "  [경고] 클릭 직후 신규 팝업 미감지 — "
+                "잔여 '00건'/설정모달 닫힘만으로는 부족"
+            )
+            ctx.shot(page, "02_save_no_react", rn)
+            if save_modal_visible(page) and attempt < 2:
+                page.wait_for_timeout(600)
+                continue
+            break
+
+        if not clicked_ok:
+            dump_save_button_candidates(page, ctx)
+            ctx.shot(page, "02_save_failed", rn)
+            raise RuntimeError(
+                f"#{rn} 하단 '저장하기' 클릭 실패 — "
+                "팝업창 모달 없이 초기화할 수 없습니다. "
+                "1회 재시도 후에도 동일. 다음 입력으로 진행."
+            )
+
+        # ★필수 순서: 팝업 열림 → 건수확인 → 팝업 닫힘 → 다음단계
+        # (최초 요건: 팝업창 열고, 닫힘까지 처리)
+        ctx.info(
+            "3. ★★★ 저장하기 후 최종 팝업: 열림 대기 "
+            "(잔여 00건·설정모달 닫힘만으로 통과 금지)"
+        )
+        wait_save_execution_popup(
+            page,
+            ctx,
+            rn,
+            dialog_msgs=dialog_msgs,
+            before_popup_ids=before_popup_ids,
+            baseline=alert_baseline,
+            dialog_from=dialog_from,
+        )
+        if not getattr(ctx, "save_popup_seen", False):
+            ctx.shot(page, "03_result_missing", rn)
+            raise RuntimeError(
+                f"#{rn} 최종 팝업화면이 열리지 않음 — "
+                "팝업 없이 초기화할 수 없습니다."
+            )
+
+        # 팝업이 열린 상태에서 망고 저장건수 메세지 확인
         verify_mango_collect_alert(
             page,
             ctx,
             rn,
             save_count,
             dialog_msgs=dialog_msgs,
+            baseline=alert_baseline,
+            dialog_from=dialog_from,
         )
 
+        # ★최종 팝업화면이 닫힐 때까지 대기 — 닫히기 전 초기화 금지
+        ctx.info(
+            "3. ★★★ 최종 팝업화면이 닫힐 때까지 기다림 "
+            "(열린 채로 초기화/다음행 금지)"
+        )
+        wait_save_popup_closed(
+            page,
+            ctx,
+            rn,
+            before_popup_ids=before_popup_ids,
+            baseline=alert_baseline,
+        )
+        if not getattr(ctx, "save_popup_closed", False):
+            ctx.shot(page, "03_modal_stuck", rn)
+            raise RuntimeError(
+                f"#{rn} 최종 팝업화면이 닫히지 않음 — "
+                "닫힐 때까지 초기화할 수 없습니다."
+            )
+
         verify_row_save_done(page, ctx, rn, save_count)
-        ctx.info(f"4. -> 행 완료 확인 (저장수 {save_count})")
+        # 열림+닫힘 둘 다 확인된 경우에만 서버 저장 성공
+        if not (
+            getattr(ctx, "save_popup_seen", False)
+            and getattr(ctx, "save_popup_closed", False)
+        ):
+            raise RuntimeError(
+                f"#{rn} 최종 팝업 열림/닫힘 미완료 — "
+                "팝업이 닫힐 때까지 기다린 뒤에만 초기화 가능"
+            )
+        ctx.server_save_ok = True
+        ctx.save_awaiting_popup = False  # 팝업 열림·닫힘 완료 → 이후 초기화 허용
+        ctx.info(
+            f"4. -> 서버 최종 갱신 완료 "
+            f"(저장하기 OK + 팝업 열림→닫힘 OK / 저장수 {save_count})"
+        )
         ctx.shot(page, "04_row_done", rn)
     finally:
         try:
             page.remove_listener("dialog", _on_save_dialog)
         except Exception:  # noqa: BLE001
             pass
-
-
-def wait_save_overlays_settle(page: Page, ctx: RunCtx, rn: int) -> None:
-    """저장하기 클릭 후 저장모달·결과팝업이 모두 정리될 때까지 대기."""
-    end = time.time() + MODAL_WAIT_SEC
-    saw_result_popup = False
-    modal_closed = False
-
-    while time.time() < end:
-        ctx.check_budget("저장 후 팝업/모달 대기")
-        modal_open = save_modal_visible(page)
-        cur_pops = popups(page)
-
-        if cur_pops and not saw_result_popup:
-            saw_result_popup = True
-            ctx.info(f"3. 저장 후 결과 팝업 열림 ({len(cur_pops)}개)")
-            try:
-                cur_pops[0].bring_to_front()
-            except Exception:  # noqa: BLE001
-                pass
-            ctx.shot(cur_pops[0], "03_result_popup", rn)
-
-        if not modal_open and not modal_closed:
-            modal_closed = True
-            ctx.info("3. 저장 모달 닫힘")
-            try:
-                page.bring_to_front()
-            except Exception:  # noqa: BLE001
-                pass
-            ctx.shot(page, "03_modal_closed", rn)
-
-        # 모달·검색팝업 모두 없으면 안정화 후 종료
-        if not modal_open and not cur_pops:
-            page.wait_for_timeout(500)
-            if not save_modal_visible(page) and not popups(page):
-                ctx.info("3. 저장 후 팝업/모달 모두 종료 확인")
-                return
-
-        page.wait_for_timeout(400)
-
-    # 시간 초과 — 강제 정리 후 상태 재확인
-    ctx.info("  [경고] 저장 후 오버레이 대기 초과 — 강제 정리")
-    close_search_popups(page)
-    if save_modal_visible(page):
-        try_dismiss_save_modal(page)
-    page.wait_for_timeout(500)
-    if save_modal_visible(page) or popups(page):
-        ctx.shot(page, "03_modal_stuck", rn)
-        raise TimeoutError(f"#{rn} 저장 후 팝업/모달이 닫히지 않음")
-    ctx.info("3. 강제 정리 후 팝업/모달 종료")
-    ctx.shot(page, "03_modal_closed", rn)
 
 
 def _page_visible_text(page: Page) -> str:
@@ -2045,6 +2528,502 @@ def parse_mango_collect_count(text: str) -> tuple[int | None, str]:
     return None, ""
 
 
+def collect_alert_baseline(page: Page) -> set[str]:
+    """저장하기 클릭 전 — 이미 화면에 있던 수집건수 문구 지문.
+
+    검색 단계의 '00건이 수집되었다' 등이 저장 팝업으로 오인되는 것을 막는다.
+    """
+    fps: set[str] = set()
+    try:
+        text = _page_visible_text(page)
+        n, hit = parse_mango_collect_count(text)
+        if n is not None:
+            fps.add(f"page:{n}:{hit}")
+    except Exception:  # noqa: BLE001
+        pass
+    for p in popups(page):
+        try:
+            ptext = _page_visible_text(p)
+            n, hit = parse_mango_collect_count(ptext)
+            if n is not None:
+                fps.add(f"popup:{n}:{hit}")
+        except Exception:  # noqa: BLE001
+            continue
+    return fps
+
+
+def find_mango_collect_alert(
+    page: Page,
+    dialog_msgs: list[str] | None = None,
+    *,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+) -> tuple[int | None, str, str, Page | None]:
+    """메인·팝업·JS dialog에서 수집건수 알림을 찾는다.
+
+    baseline 이 있으면 클릭 전에 있던 문구(예: 00건 수집)는 무시한다.
+    반환: (건수|None, 매칭문구, source, 해당 Page|None)
+    """
+    base = baseline or set()
+
+    # 클릭 이후 새로 도착한 dialog 만
+    for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
+        n, hit = parse_mango_collect_count(msg)
+        if n is not None:
+            fp = f"dialog:{n}:{hit or msg}"
+            if fp not in base:
+                return n, hit or msg, "dialog", page
+
+    text = _page_visible_text(page)
+    n, hit = parse_mango_collect_count(text)
+    if n is not None:
+        fp = f"page:{n}:{hit}"
+        if fp not in base:
+            return n, hit, "page", page
+
+    for p in popups(page):
+        ptext = _page_visible_text(p)
+        n, hit = parse_mango_collect_count(ptext)
+        if n is not None:
+            fp = f"popup:{n}:{hit}"
+            if fp not in base:
+                return n, hit, "popup", p
+
+    return None, "", "", None
+
+
+def _is_settings_modal_text(txt: str) -> bool:
+    return bool(
+        re.search(r"상품\s*저장\s*설정", txt or "")
+        and re.search(r"검색\s*필터\s*명|취소하기", txt or "")
+    )
+
+
+def save_execution_layer_visible(
+    page: Page,
+    *,
+    baseline: set[str] | None = None,
+) -> bool:
+    """저장하기 직후 뜨는 '저장 실행' 팝업/레이어 UI.
+
+    ★ 본문에 남은 'N건이 수집' 텍스트만으로는 True 금지.
+    실제 dialog/layer/modal 또는 확인버튼 UI 가 보여야 함.
+    """
+    base = baseline or set()
+    try:
+        layer = page.locator(
+            '[role="dialog"], .ui-dialog, .modal, '
+            'div[id*="layer"], div[id*="popup"], '
+            'div[class*="layer"], div[class*="popup"], '
+            'div[class*="alert"], div[class*="msg"]'
+        ).filter(
+            has_text=re.compile(
+                r"(\d+)\s*건\s*(이\s*)?(수집|저장)\s*되었|"
+                r"수집\s*완료|저장\s*완료|처리\s*완료|"
+                r"상품\s*(이\s*)?(수집|저장)\s*되었"
+            )
+        )
+        if layer.count() > 0 and layer.first.is_visible():
+            txt = ""
+            try:
+                txt = layer.first.inner_text(timeout=500) or ""
+            except Exception:  # noqa: BLE001
+                txt = ""
+            if _is_settings_modal_text(txt):
+                return False
+            n, hit = parse_mango_collect_count(txt)
+            if n is not None and f"page:{n}:{hit}" in base:
+                return False  # 검색 단계 잔여 '00건 수집' 등
+            if n is not None or re.search(
+                r"수집\s*완료|저장\s*완료|처리\s*완료", txt or ""
+            ):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return _save_result_confirm_ui_visible(page, baseline=base)
+
+
+def _save_result_confirm_ui_visible(
+    page: Page,
+    *,
+    baseline: set[str] | None = None,
+) -> bool:
+    """수집결과 팝업의 확인/닫기 버튼 UI가 보이는지 (본문 잔여문구 단독 X)."""
+    base = baseline or set()
+    try:
+        btn = (
+            page.locator("button, a, input[type='button'], input[type='submit']")
+            .filter(has_text=re.compile(r"^(확인|닫기|OK|Yes)$", re.I))
+            .first
+        )
+        if btn.count() == 0 or not btn.is_visible():
+            return False
+        try:
+            root = btn.locator(
+                "xpath=ancestor::*[self::div or self::td or self::form][1]"
+            )
+            txt = root.inner_text(timeout=400) if root.count() else ""
+        except Exception:  # noqa: BLE001
+            txt = ""
+        if _is_settings_modal_text(txt):
+            return False
+        n, hit = parse_mango_collect_count(txt or "")
+        if n is not None and f"page:{n}:{hit}" in base:
+            return False
+        if n is not None or re.search(
+            r"수집\s*완료|저장\s*완료|처리\s*완료", txt or ""
+        ):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def _popup_id(p) -> int:
+    try:
+        return id(p)
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+def save_result_signal_present(
+    page: Page,
+    dialog_msgs: list[str] | None = None,
+    *,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+) -> tuple[bool, str, Page | None]:
+    """저장하기 후 '저장 실행' 팝업/알림 모달 출현 여부.
+
+    인정:
+    - 클릭 이후 새 JS dialog
+    - 클릭 이후 새 브라우저 팝업 창
+    - 인페이지 팝업/레이어/확인 UI
+    금지:
+    - 상품저장설정 모달 닫힘만
+    - 본문에 남은 'N건이 수집' 텍스트만 (모달 UI 없음)
+    """
+    base = baseline or set()
+
+    # 1) JS dialog (클릭 이후 도착분만)
+    for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
+        n, hit = parse_mango_collect_count(msg)
+        if n is not None:
+            return True, f"dialog:{hit or msg}", page
+
+    # 2) 새 브라우저 창
+    prev = before_popup_ids or set()
+    for p in popups(page):
+        if _popup_id(p) in prev:
+            continue
+        ptext = _page_visible_text(p)
+        n2, hit2 = parse_mango_collect_count(ptext)
+        if n2 is not None:
+            fp = f"popup:{n2}:{hit2}"
+            if fp in base:
+                continue
+            return True, f"new_popup:{hit2}", p
+        return True, "new_popup_window", p
+
+    # 3) 실제 인페이지 팝업/레이어/확인 UI (본문 잔여문구 단독 금지)
+    if save_execution_layer_visible(page, baseline=base):
+        return True, "inpage_save_layer", page
+
+    return False, "", None
+
+
+def wait_save_execution_popup(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    *,
+    dialog_msgs: list[str] | None = None,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+    timeout_sec: float | None = None,
+    grace_sec: float | None = None,
+) -> None:
+    """★저장하기 클릭 후 — 저장 실행 팝업창 모달이 뜰 때까지 필수 대기.
+
+    - 최소 grace_sec 동안은 서버 저장 시간을 줌 (즉시 초기화 금지)
+    - 클릭 전 '00건 수집' 잔여 문구는 팝업으로 보지 않음
+    - 팝업이 안 보이면 초기화/다음 단계로 절대 넘어가지 않음
+    """
+    wait_sec = float(timeout_sec or MODAL_WAIT_SEC)
+    grace = max(2.0, float(grace_sec if grace_sec is not None else SAVE_POPUP_GRACE_SEC))
+    base = baseline if baseline is not None else set()
+    ctx.info(
+        "3. ★★★ 저장하기 후 '팝업창 모달' 대기 중 "
+        f"(최소 {grace:.0f}초 저장시간 + 최대 {int(wait_sec)}초) "
+        "— 잔여 '00건' 문구로 통과·초기화 금지"
+    )
+    if base:
+        ctx.info(f"  [기준] 클릭 전 무시할 수집문구={sorted(base)}")
+
+    end = time.time() + wait_sec
+    grace_until = time.time() + grace
+    saw = False
+    detail = ""
+    target: Page | None = None
+    logged_settings_closed = False
+    logged_stale = False
+
+    while time.time() < end:
+        ctx.check_budget("저장하기 후 팝업창 모달 대기")
+        if not save_modal_visible(page) and not logged_settings_closed:
+            logged_settings_closed = True
+            ctx.info(
+                "  [대기] 상품저장설정 모달 닫힘 — "
+                f"저장 처리·팝업을 최소 {grace:.0f}초 기다림"
+            )
+
+        # 유예 시간 중에도 '새 창 팝업'은 즉시 인정. 페이지 잔여문구는 무시.
+        has_signal, detail, target = save_result_signal_present(
+            page,
+            dialog_msgs,
+            before_popup_ids=before_popup_ids,
+            baseline=base,
+            dialog_from=dialog_from,
+        )
+        if has_signal:
+            # 유예 전이라도 진짜 새 신호면 OK
+            saw = True
+            break
+
+        # 잔여 00건이 화면에 있으면 안내 (오인 방지)
+        if not logged_stale and base:
+            stale_n, stale_hit = parse_mango_collect_count(_page_visible_text(page))
+            if stale_n is not None and f"page:{stale_n}:{stale_hit}" in base:
+                logged_stale = True
+                ctx.info(
+                    f"  [무시] 검색단계 잔여 문구 {stale_hit!r} "
+                    "— 저장 팝업으로 보지 않음, 계속 대기"
+                )
+
+        if time.time() < grace_until:
+            page.wait_for_timeout(350)
+            continue
+
+        page.wait_for_timeout(400)
+
+    if not saw:
+        ctx.shot(page, "03_result_missing", rn)
+        raise TimeoutError(
+            f"#{rn} 저장하기 후 팝업창 모달이 나타나지 않음. "
+            "검색단계 '00건 수집' 잔여문구·설정모달 닫힘만으로 "
+            "초기화/다음 행 진행 불가. "
+            "저장하기 → (저장시간) → 팝업창 모달 열림 → 닫힘 → 건수확인 필수."
+        )
+
+    ctx.info(f"3. ★ 저장 실행 팝업창 모달 확인 — {detail}")
+    shot_page = target or page
+    try:
+        shot_page.bring_to_front()
+    except Exception:  # noqa: BLE001
+        pass
+    ctx.shot(shot_page, "03_result_popup", rn)
+    ctx.save_popup_seen = True
+    ctx.save_popup_kind = (detail or "").split(":", 1)[0] or "inpage_save_layer"
+    # dialog 는 accept 로 이미 닫힌 경우가 많음. UI 팝업은 열림을 래치.
+    if ctx.save_popup_kind == "dialog":
+        ctx.save_popup_ui_latched = False
+    else:
+        ctx.save_popup_ui_latched = bool(
+            final_save_popup_still_open(
+                page, before_popup_ids=before_popup_ids, baseline=base
+            )
+            or save_execution_layer_visible(page, baseline=base)
+        )
+        if not ctx.save_popup_ui_latched:
+            # 신호는 왔는데 아직 안 보이면 잠깐 더 보고 래치
+            page.wait_for_timeout(500)
+            ctx.save_popup_ui_latched = bool(
+                final_save_popup_still_open(
+                    page, before_popup_ids=before_popup_ids, baseline=base
+                )
+                or save_execution_layer_visible(page, baseline=base)
+            )
+    ctx.info(
+        f"  [팝업] kind={ctx.save_popup_kind} "
+        f"ui_open={ctx.save_popup_ui_latched} — 닫힐 때까지 초기화 금지"
+    )
+
+
+def final_save_popup_still_open(
+    page: Page,
+    *,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+) -> bool:
+    """최종 저장 팝업/레이어가 아직 화면에 열려 있는지.
+
+    - 저장하기 이후 새로 뜬 브라우저 창
+    - 저장 실행 인페이지 레이어(확인 버튼 포함)
+    본문에 남은 잔여 텍스트만으로는 '열림'으로 보지 않음.
+    """
+    prev = before_popup_ids or set()
+    for p in popups(page):
+        try:
+            if _popup_id(p) in prev:
+                continue
+            if not p.is_closed():
+                return True
+        except Exception:  # noqa: BLE001
+            continue
+
+    if save_execution_layer_visible(page, baseline=baseline or set()):
+        return True
+
+    # 수집 결과 레이어의 확인/닫기 버튼이 보이면 아직 열린 것
+    try:
+        btn = (
+            page.locator("button, a, input[type='button'], input[type='submit']")
+            .filter(has_text=re.compile(r"^(확인|닫기|OK|Yes)$", re.I))
+            .first
+        )
+        if btn.count() > 0 and btn.is_visible():
+            # 상품저장설정 푸터의 취소하기와 구분 — 확인 근처 수집문구
+            try:
+                root = btn.locator("xpath=ancestor::*[self::div or self::td or self::form][1]")
+                txt = root.inner_text(timeout=400) if root.count() else ""
+            except Exception:  # noqa: BLE001
+                txt = ""
+            if parse_mango_collect_count(txt or "")[0] is not None:
+                return True
+            if re.search(r"수집\s*완료|저장\s*완료|처리\s*완료", txt or ""):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def wait_save_popup_closed(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    *,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+    timeout_sec: float | None = None,
+) -> None:
+    """★최종 팝업화면이 뜰 때까지가 아니라 — 뜬 뒤 '닫힐 때까지' 대기.
+
+    최초 요건: 팝업창 열고, 닫힘까지 처리. 열린 채로 초기화/다음단계 금지.
+    UI 팝업을 한 번도 못 본 채 '이미 닫힘'으로 통과하지 않는다.
+    """
+    wait_sec = float(timeout_sec or MODAL_WAIT_SEC)
+    base = baseline or set()
+    kind = getattr(ctx, "save_popup_kind", "") or ""
+    ctx.info(
+        "3. ★★★ 최종 팝업화면이 닫힐 때까지 대기 "
+        f"(최대 {int(wait_sec)}초, kind={kind}) — 닫히기 전 초기화 금지"
+    )
+
+    # JS dialog 는 accept 로 이미 닫힘 — 짧은 정착 후 닫힘 인정
+    if kind == "dialog":
+        page.wait_for_timeout(800)
+        ctx.save_popup_closed = True
+        ctx.info("3. ★ 최종 팝업(dialog) 닫힘 확인 완료")
+        ctx.shot(page, "03_modal_closed", rn)
+        return
+
+    end = time.time() + wait_sec
+    closed_stable = 0
+    helped = False
+    saw_open = bool(getattr(ctx, "save_popup_ui_latched", False))
+
+    while time.time() < end:
+        ctx.check_budget("최종 팝업 닫힘 대기")
+        open_now = final_save_popup_still_open(
+            page, before_popup_ids=before_popup_ids, baseline=base
+        )
+        if open_now:
+            saw_open = True
+            closed_stable = 0
+            if not helped:
+                dismiss_mango_alert_ui(page)
+                helped = True
+            else:
+                dismiss_mango_alert_ui(page)
+            page.wait_for_timeout(400)
+            continue
+
+        # 아직 UI 열림을 한 번도 못 봄 → '닫힘'으로 오인 금지, 계속 대기
+        if not saw_open:
+            page.wait_for_timeout(350)
+            continue
+
+        closed_stable += 1
+        if closed_stable >= 3:  # ~1초 이상 닫힌 상태 유지
+            ctx.save_popup_closed = True
+            ctx.info("3. ★ 최종 팝업화면 닫힘 확인 완료")
+            ctx.shot(page, "03_modal_closed", rn)
+            return
+        page.wait_for_timeout(350)
+
+    ctx.shot(page, "03_modal_stuck", rn)
+    if not saw_open:
+        raise TimeoutError(
+            f"#{rn} 저장하기 후 팝업모달 UI를 확인하지 못함. "
+            "본문 잔여문구만으로 통과·초기화 불가. "
+            "저장하기 → 팝업모달 열림 → 닫힘 필수."
+        )
+    raise TimeoutError(
+        f"#{rn} 최종 팝업화면이 닫히지 않음. "
+        "팝업이 열린 채로 초기화/다음 행 진행 불가. "
+        "저장하기 → 팝업 열림 → 팝업 닫힘 → 다음 단계 순서 필수."
+    )
+
+
+def wait_save_overlays_settle(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    *,
+    dialog_msgs: list[str] | None = None,
+    before_popup_ids: set[int] | None = None,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+) -> None:
+    """저장 실행 팝업: 열림(필수) → 닫힘(필수).
+
+    요건 원문: 팝업창 열고, 닫힘 등 후속 과정 처리.
+    열림만 보고 다음으로 가면 안 된다.
+    """
+    base = baseline if baseline is not None else set()
+    ctx.save_popup_closed = False
+
+    # 1) 열림
+    wait_save_execution_popup(
+        page,
+        ctx,
+        rn,
+        dialog_msgs=dialog_msgs,
+        before_popup_ids=before_popup_ids,
+        baseline=base,
+        dialog_from=dialog_from,
+    )
+    if not getattr(ctx, "save_popup_seen", False):
+        raise RuntimeError(
+            f"#{rn} 최종 팝업 열림 미확인 — 닫힘 대기/초기화 불가"
+        )
+
+    # 2) 닫힘 — 여기 통과 전에 초기화·다음단계 금지
+    wait_save_popup_closed(
+        page,
+        ctx,
+        rn,
+        before_popup_ids=before_popup_ids,
+        baseline=base,
+    )
+    if not getattr(ctx, "save_popup_closed", False):
+        raise RuntimeError(
+            f"#{rn} 최종 팝업화면이 닫히지 않음 — 초기화 진행 불가"
+        )
+
+
 def dismiss_mango_alert_ui(page: Page) -> None:
     """화면 알림/레이어의 확인 버튼이 있으면 닫기."""
     try:
@@ -2058,6 +3037,19 @@ def dismiss_mango_alert_ui(page: Page) -> None:
             page.wait_for_timeout(300)
     except Exception:  # noqa: BLE001
         pass
+    # 팝업 창에도 확인 버튼이 있을 수 있음
+    for p in list(popups(page)):
+        try:
+            btn = (
+                p.locator("button, a, input[type='button'], input[type='submit']")
+                .filter(has_text=re.compile(r"^(확인|닫기|OK|Yes)$", re.I))
+                .first
+            )
+            if btn.count() > 0 and btn.is_visible():
+                click_it(btn)
+                p.wait_for_timeout(300)
+        except Exception:  # noqa: BLE001
+            pass
     try:
         page.keyboard.press("Escape")
         page.wait_for_timeout(200)
@@ -2072,41 +3064,46 @@ def verify_mango_collect_alert(
     expect_count: int,
     *,
     dialog_msgs: list[str] | None = None,
-    timeout_sec: float = 20.0,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+    timeout_sec: float = 25.0,
 ) -> int:
-    """모달 닫힘 후 망고 자체 알림('N건이 수집되었다')을 파악·검증.
+    """결과 팝업/알림에서 망고 자체 'N건이 수집되었다'를 파악·검증.
 
+    - 저장하기 클릭 이후 새로 뜬 알림만 사용 (검색단계 00건 잔여 무시)
     - 기대 건수(저장수)와 일치해야 통과
     - 0건이면 실패(다음 행으로 진행 가능하도록 확정 실패 문구 포함)
     """
     expect = max(0, int(expect_count))
+    base = baseline or set()
     ctx.info(
-        f"3. 망고 자체 알림 확인 — 'N건이 수집되었다' (기대 {expect}건)"
+        f"3. 망고 자체 알림 확인 — 'N건이 수집되었다' (기대 {expect}건) "
+        f"| 잔여무시={len(base)}건"
     )
     end = time.time() + max(5.0, float(timeout_sec))
     found_n: int | None = None
     found_msg = ""
     source = ""
+    shot_page: Page | None = page
 
     while time.time() < end:
         ctx.check_budget("망고 수집알림 대기")
-        # 1) JS alert/confirm 캡처
-        for msg in list(dialog_msgs or []):
-            n, hit = parse_mango_collect_count(msg)
-            if n is not None:
-                found_n, found_msg, source = n, hit or msg, "dialog"
-                break
+        found_n, found_msg, source, hit_page = find_mango_collect_alert(
+            page,
+            dialog_msgs,
+            baseline=base,
+            dialog_from=dialog_from,
+        )
         if found_n is not None:
+            shot_page = hit_page or page
             break
-        # 2) 화면 본문/레이어 문구
-        text = _page_visible_text(page)
-        n, hit = parse_mango_collect_count(text)
-        if n is not None:
-            found_n, found_msg, source = n, hit, "page"
-            break
-        # 실패 문구가 먼저 보이면 즉시 중단
+
+        texts = [_page_visible_text(page)]
+        for p in popups(page):
+            texts.append(_page_visible_text(p))
+        blob = "\n".join(texts)
         for pat in SAVE_FAIL_PATTERNS:
-            if pat.search(text or ""):
+            if pat.search(blob or ""):
                 ctx.shot(page, "03_collect_alert_fail", row_no)
                 raise RuntimeError(
                     f"#{row_no} 망고 수집 알림 대신 오류 문구 감지: {pat.pattern}"
@@ -2114,24 +3111,32 @@ def verify_mango_collect_alert(
         page.wait_for_timeout(400)
 
     if found_n is None:
-        # 마지막 한 번 더 합쳐 검사
-        blob = "\n".join(dialog_msgs or []) + "\n" + _page_visible_text(page)
-        found_n, found_msg = parse_mango_collect_count(blob)
-        source = "final" if found_n is not None else ""
+        found_n, found_msg, source, hit_page = find_mango_collect_alert(
+            page,
+            dialog_msgs,
+            baseline=base,
+            dialog_from=dialog_from,
+        )
+        shot_page = hit_page or page
+        if found_n is not None and not source:
+            source = "final"
 
     if found_n is None:
         ctx.shot(page, "03_collect_alert_fail", row_no)
         raise RuntimeError(
             f"#{row_no} 망고 수집 알림을 찾지 못함 "
             f"(기대 문구 예: '{expect}건이 수집되었다'). "
-            "모달 종료 후 알림 메세지를 확인하세요."
+            "저장하기 후 결과 팝업/알림 메세지를 확인하세요."
         )
 
     ctx.info(
         f"  [망고알림] source={source} | 문구={found_msg!r} | "
         f"수집건수={found_n} | 기대={expect}"
     )
-    ctx.shot(page, "03_collect_alert", row_no)
+    try:
+        ctx.shot(shot_page or page, "03_collect_alert", row_no)
+    except Exception:  # noqa: BLE001
+        ctx.shot(page, "03_collect_alert", row_no)
     dismiss_mango_alert_ui(page)
 
     if found_n == 0:
@@ -2202,8 +3207,16 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                 )
                 page = refresh_if_closed(page)
                 _process_row_once(page, row, ctx)
+                if not ctx.server_save_ok or not getattr(
+                    ctx, "save_popup_closed", False
+                ):
+                    raise RuntimeError(
+                        f"#{row['row']} 저장하기 서버 최종 갱신 미확인 — "
+                        "최종 팝업 열림→닫힘 완료 전 행을 끝낼 수 없습니다. "
+                        "팝업이 닫힐 때까지 기다린 뒤 초기화하세요."
+                    )
                 ctx.info(
-                    f"[OK] 엑셀{row['row']}행 성공 (시도 {attempt}) | "
+                    f"[OK] 엑셀{row['row']}행 성공 (저장하기 서버갱신 OK, 시도 {attempt}) | "
                     f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
                 )
                 success = True
@@ -2247,7 +3260,13 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                     except Exception as re:  # noqa: BLE001
                         ctx.info(f"  재연결 경고: {re}")
                 if attempt < ctx.retries:
-                    ctx.info("  같은 행 재시도 전 대량수집 화면 복귀...")
+                    # 팝업 대기를 이미 끝낸 실패만 재시도 복귀 허용
+                    # (대기 중 초기화 금지 플래그 해제)
+                    ctx.save_awaiting_popup = False
+                    ctx.info(
+                        "  같은 행 재시도 — 대량메뉴 복귀 "
+                        "(저장 팝업 대기 실패 후, 성공 경로 아님)"
+                    )
                     try:
                         page = refresh_if_closed(page)
                         reset_to_bulk_menu(page)

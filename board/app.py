@@ -30,9 +30,10 @@ from library import (  # noqa: E402
     search_xlsx,
     set_selected,
 )
+from log_format import format_log_display  # noqa: E402
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.25"
+VERSION = "2.0.37"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -347,7 +348,7 @@ class BoardApp(tk.Tk):
         ).pack(side="left", padx=6)
         tk.Label(
             actions,
-            text="실행로그: 전행 카테고리명·URL 기록 · 1·2행은 단계별 스크린샷 · [스크린샷 보기]",
+            text="실행로그: ①~⑤단 전각들여쓰기·색상 · 전행 카테고리·URL · 1·2행 스크린샷",
             bg="#ffffff",
             fg="#0f766e",
             anchor="w",
@@ -381,23 +382,44 @@ class BoardApp(tk.Tk):
         self.p2_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
         self.p2_sel.pack(fill="x", pady=(2, 0))
 
-        # 3. 실행 로그 그리드 (하단 · 진행 상황)
-        log_frame = tk.LabelFrame(parent, text="3. 실행 로그", bg="#ffffff", padx=6, pady=4)
+        # 3. 실행 로그 그리드 (1~5단 들여쓰기 + 색상)
+        log_frame = tk.LabelFrame(
+            parent,
+            text="3. 실행 로그 (①~⑤단 전각들여쓰기 · 색상)",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
+        )
         log_frame.pack(fill="both", expand=True, pady=(8, 0))
 
         cols = ("time", "stage", "message")
+        style = ttk.Style(self)
+        try:
+            style.configure(
+                "P2Log.Treeview",
+                rowheight=22,
+                font=("Malgun Gothic", 9),
+            )
+            style.configure(
+                "P2Log.Treeview.Heading",
+                font=("Malgun Gothic", 9, "bold"),
+            )
+        except tk.TclError:
+            pass
         self.p2_log = ttk.Treeview(
             log_frame,
             columns=cols,
             show="headings",
             height=12,
+            style="P2Log.Treeview",
         )
         self.p2_log.heading("time", text="시각")
-        self.p2_log.heading("stage", text="단계")
-        self.p2_log.heading("message", text="내용")
+        self.p2_log.heading("stage", text="단")
+        self.p2_log.heading("message", text="내용 (①~⑤ 들여쓰기)")
         self.p2_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
-        self.p2_log.column("stage", width=90, minwidth=70, stretch=False, anchor="center")
-        self.p2_log.column("message", width=560, minwidth=200, stretch=True, anchor="w")
+        self.p2_log.column("stage", width=44, minwidth=40, stretch=False, anchor="center")
+        self.p2_log.column("message", width=620, minwidth=220, stretch=True, anchor="w")
+        self._setup_p2_log_tags()
         log_sb = tk.Scrollbar(log_frame, orient="vertical", command=self.p2_log.yview)
         self.p2_log.configure(yscrollcommand=log_sb.set)
         self.p2_log.pack(side="left", fill="both", expand=True)
@@ -486,8 +508,28 @@ class BoardApp(tk.Tk):
             for item in self.p2_log.get_children():
                 self.p2_log.delete(item)
 
+    def _setup_p2_log_tags(self) -> None:
+        """실행로그 1~5단·상태별 색상 태그."""
+        tv = self.p2_log
+        tv.tag_configure("d1", foreground="#0f172a", background="#e2e8f0")
+        tv.tag_configure("d2", foreground="#0f766e", background="#f0fdfa")
+        tv.tag_configure("d3", foreground="#1d4ed8", background="#eff6ff")
+        tv.tag_configure("d4", foreground="#475569", background="#ffffff")
+        tv.tag_configure("d5", foreground="#94a3b8", background="#ffffff")
+        tv.tag_configure("ok", foreground="#166534", background="#dcfce7")
+        tv.tag_configure("err", foreground="#991b1b", background="#fee2e2")
+        tv.tag_configure("warn", foreground="#9a3412", background="#ffedd5")
+        tv.tag_configure("save", foreground="#5b21b6", background="#f3e8ff")
+        tv.tag_configure("btn", foreground="#1e3a8a", background="#dbeafe")
+        tv.tag_configure("stop", foreground="#7f1d1d", background="#fecaca")
+
+    @staticmethod
+    def _format_log_display(text: str) -> tuple[int, str, str, str]:
+        """(depth, stage_label, display_message, color_tag)."""
+        return format_log_display(text)
+
     def _p2_log_line(self, message: str, stage: str = "") -> None:
-        """메인 스레드에서 실행로그 그리드에 한 줄 추가."""
+        """메인 스레드에서 실행로그 그리드에 한 줄 추가 (1~5단·색상·전각들여쓰기)."""
         if not hasattr(self, "p2_log"):
             return
         text = (message or "").rstrip()
@@ -499,9 +541,13 @@ class BoardApp(tk.Tk):
             t = m.group(1)
             text = m.group(2)
         self._capture_shot_dir_from_log(text)
-        if not stage:
-            stage = self._guess_log_stage(text)
-        self.p2_log.insert("", "end", values=(t, stage, text))
+        depth, stage_lbl, display, tag = format_log_display(text)
+        # stage 인자는 하위호환용 — 표시는 항상 1단~5단
+        _ = stage
+        stage_lbl = f"{depth}단"
+        self.p2_log.insert(
+            "", "end", values=(t, stage_lbl, display), tags=(tag,)
+        )
         children = self.p2_log.get_children()
         if children:
             self.p2_log.see(children[-1])
@@ -527,41 +573,9 @@ class BoardApp(tk.Tk):
 
     @staticmethod
     def _guess_log_stage(text: str) -> str:
-        low = text.lower()
-        if "[샷]" in text or "샷폴더" in text or "갤러리" in text:
-            return "샷"
-        if "망고 자체" in text or "검색결과가 없습니다" in text or "무결과" in text:
-            return "무결과"
-        if (
-            "망고알림" in text
-            or "수집되었" in text
-            or "수집건수" in text
-            or "저장하기" in text
-        ):
-            return "저장" if "저장하기" in text else "알림"
-        if "중단" in text or "수집 종료" in text:
-            return "중단"
-        if "다음행" in text or "오버레이" in text or "모달/창 닫힘" in text or "팝업/모달" in text:
-            return "다음행"
-        if "입력목록" in text or "상위 최종 카테고리명" in text or "최종 카테고리 URL" in text:
-            return "입력"
-        if "로그인" in text:
-            return "로그인"
-        if "초기화" in text or "대량" in text:
-            return "초기화"
-        if "검색" in text or "url" in low:
-            return "검색"
-        if "저장" in text:
-            return "저장"
-        if "실패" in text or "error" in low or "오류" in text:
-            return "오류"
-        if "성공" in text or "완료" in text or "done" in low:
-            return "완료"
-        if "대기" in text:
-            return "대기"
-        if "행" in text or "row" in low:
-            return "행처리"
-        return "진행"
+        """하위 호환 — 단 분류는 format_log_display 사용."""
+        _d, label, _m, _t = format_log_display(text)
+        return label
 
     def _show_shot_viewer(self) -> None:
         folder = self._last_shot_dir
