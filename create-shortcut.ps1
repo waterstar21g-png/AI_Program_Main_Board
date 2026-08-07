@@ -1,20 +1,26 @@
 #Requires -Version 5.1
-# Desktop shortcut -> run.bat (ASCII-only, PS 5.1 safe)
+# Desktop shortcut -> start.bat (version-aware update + board)
+# ASCII-only, PS 5.1 safe
 $ErrorActionPreference = "Stop"
 
 $PreferredRoot = "D:\My_Project\AI_Program_Main_Board"
 
-if (Test-Path -LiteralPath (Join-Path $PreferredRoot "run.bat")) {
+if (Test-Path -LiteralPath (Join-Path $PreferredRoot "start.bat")) {
+  $projectRoot = $PreferredRoot
+} elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "start.bat"))) {
+  $projectRoot = $PSScriptRoot
+} elseif (Test-Path -LiteralPath (Join-Path $PreferredRoot "run.bat")) {
   $projectRoot = $PreferredRoot
 } elseif ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "run.bat"))) {
   $projectRoot = $PSScriptRoot
 } else {
-  Write-Host "[ERROR] run.bat not found." -ForegroundColor Red
+  Write-Host "[ERROR] start.bat / run.bat not found." -ForegroundColor Red
   Write-Host "  Expected: $PreferredRoot"
   exit 1
 }
 
-$target = Join-Path $projectRoot "run.bat"
+$targetName = if (Test-Path -LiteralPath (Join-Path $projectRoot "start.bat")) { "start.bat" } else { "run.bat" }
+$target = Join-Path $projectRoot $targetName
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnkPath = Join-Path $desktop "AI_Program_Main_Board.lnk"
 
@@ -23,7 +29,7 @@ $sc = $w.CreateShortcut($lnkPath)
 $sc.TargetPath = $target
 $sc.WorkingDirectory = $projectRoot
 $sc.WindowStyle = 1
-$sc.Description = "AI_Program_Main_Board start"
+$sc.Description = "AI_Program_Main_Board start (update if VERSION changed)"
 $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
 $sc.Save()
 

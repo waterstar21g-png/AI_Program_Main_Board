@@ -1,2 +1,3 @@
-버전 2.0.5 (Python B안)
-P2 수집 시작: Windows start 제목 오류 수정
+버전 2.0.8 (Python B안)
+실행 아이콘: start.bat — VERSION 변경 시에만 git pull 후 보드 실행
+P2: 더망고 실제 로그인창 + ID/PW 로컬 저장·재사용
