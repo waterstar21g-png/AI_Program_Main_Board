@@ -5,9 +5,10 @@ P2 — 더망고(tmg1898) 상품데이터 대량수집
 
 0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭
 1. URL상품검색하기 : 필드값 입력 후 클릭 -> 팝업창이 없어질 때까지 대기
-2. 검색된 상품 모두저장 클릭 -> 검색필터명·저장수 입력 -> 저장하기
-3. 팝업창이 없어질 때까지 대기 + 저장 결과 확인
-4. 다음 행 (실패 시 같은 행 재시도)
+2. 검색된 상품 모두저장 클릭 -> 검색필터명·저장수 입력
+   -> ★저장하기(서버 최종 갱신: 필터정보·수집갯수·수집상품) — 누락 금지
+3. 저장 후 결과 팝업/알림 확인(수집건수) — 서버 반영 증거
+4. 다음 행 (저장하기 성공 전에 절대 진행 금지 / 실패 시 같은 행 재시도)
 
 사용법:
     python collect.py 엑셀.xlsx              # 저장수 3
@@ -114,6 +115,9 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "0건이 수집",
     "수집건수 알림",
     "수집 알림",
+    "저장하기 서버",
+    "서버에 반영되지",
+    "서버 최종 갱신",
 )
 
 
@@ -222,7 +226,9 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "02_count_mismatch": "2. 저장수 불일치(오류)",
     "02_modal_filled": "2. 필터명·저장수 입력",
     "02_save_missing": "2. 저장하기 버튼 없음(오류)",
-    "02_save_clicked": "2. 저장하기 클릭 완료",
+    "02_save_clicked": "2. 저장하기(서버제출) 클릭",
+    "02_save_no_react": "2. 저장하기 클릭 무반응(재시도)",
+    "02_save_failed": "2. 저장하기 서버제출 실패",
     "03_modal_stuck": "3. 저장 모달 미종료(오류)",
     "03_modal_closed": "3. 저장 모달 닫힘",
     "03_result_popup": "3. 저장 후 결과 팝업",
@@ -274,6 +280,8 @@ class RunCtx:
         self.current_label = ""
         self.current_url = ""
         self.row_deadline: float | None = None  # 행당 제한시간(epoch)
+        # 저장하기(서버 최종 갱신) 성공 여부 — True 되기 전 행 완료 금지
+        self.server_save_ok: bool = False
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
@@ -296,6 +304,7 @@ class RunCtx:
         self.current_label = str(row.get("label") or "").strip()
         self.current_url = str(row.get("url") or "").strip()
         self.row_deadline = time.time() + ROW_BUDGET_SEC
+        self.server_save_ok = False
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
@@ -1139,24 +1148,122 @@ def save_modal_visible(page: Page) -> bool:
 
 
 def save_submit_button(page: Page):
-    """상품저장설정 모달의 '저장하기' 버튼 (여러 셀렉터 폴백)."""
+    """하위 호환: 상품저장설정 모달의 실제 '저장하기' 컨트롤 locator."""
+    return resolve_save_submit_control(page)
+
+
+def resolve_save_submit_control(page: Page):
+    """서버 최종 제출용 '저장하기' — 실제 버튼/input 만 (텍스트 노드 금지).
+
+    필터명·수집갯수·수집상품을 서버에 갱신하는 핵심 컨트롤이다.
+    보이지 않는 라벨/텍스트를 클릭하면 서버 제출이 누락된다.
+    """
     modal = save_modal(page)
-    return (
-        modal.locator(
-            'input[type="button"][value*="저장하기"], '
-            'input[type="submit"][value*="저장하기"]'
-        )
-        .or_(modal.locator('button:has-text("저장하기")'))
-        .or_(modal.locator('a:has-text("저장하기")'))
-        .or_(modal.get_by_text(re.compile(r"^저장하기$")))
-        .or_(
-            page.locator(
-                'input[type="button"][value*="저장하기"], '
-                'input[type="submit"][value*="저장하기"]'
-            )
-        )
-        .or_(page.get_by_text(re.compile(r"^저장하기$")))
+    # 모달 안 실제 제출 컨트롤 우선
+    scoped = [
+        'input[type="button"][value*="저장하기"]',
+        'input[type="submit"][value*="저장하기"]',
+        'button:has-text("저장하기")',
+        'a[href][onclick*="save"], a[href*="save"]:has-text("저장하기")',
+        'a:has-text("저장하기")',
+    ]
+    for sel in scoped:
+        loc = modal.locator(sel)
+        try:
+            n = loc.count()
+        except Exception:  # noqa: BLE001
+            n = 0
+        for i in range(n):
+            el = loc.nth(i)
+            try:
+                if el.is_visible():
+                    return el
+            except Exception:  # noqa: BLE001
+                continue
+
+    # 페이지 전역 — 그래도 input/button/a 만 (순수 텍스트 매칭 제외)
+    page_scoped = [
+        'input[type="button"][value*="저장하기"]',
+        'input[type="submit"][value*="저장하기"]',
+        'button:has-text("저장하기")',
+        'a:has-text("저장하기")',
+    ]
+    for sel in page_scoped:
+        loc = page.locator(sel)
+        try:
+            n = loc.count()
+        except Exception:  # noqa: BLE001
+            n = 0
+        for i in range(n):
+            el = loc.nth(i)
+            try:
+                if el.is_visible():
+                    return el
+            except Exception:  # noqa: BLE001
+                continue
+
+    raise RuntimeError(
+        "저장하기 버튼(input/button)을 모달에서 찾지 못함 — "
+        "서버 최종 갱신(필터정보·수집갯수·수집상품)을 할 수 없음"
     )
+
+
+def trusted_click_save_submit(page: Page, el) -> bool:
+    """저장하기는 반드시 신뢰 클릭(마우스/Playwright click). JS click 금지.
+
+    JS node.click()은 서버 제출/팝업이 조용히 막힐 수 있다.
+    """
+    el.wait_for(state="visible", timeout=15_000)
+    el.scroll_into_view_if_needed()
+    try:
+        el.click(timeout=20_000)
+        return True
+    except PWTimeout:
+        pass
+    try:
+        box = el.bounding_box()
+        if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+            page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2,
+            )
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    # 최후: force click (여전히 Playwright 경로 — evaluate JS click 쓰지 않음)
+    try:
+        el.click(timeout=10_000, force=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def save_submit_reacted(
+    page: Page,
+    dialog_msgs: list[str] | None = None,
+    *,
+    timeout_sec: float = 8.0,
+) -> bool:
+    """저장하기 클릭 후 서버 제출 반응(모달 닫힘/로딩/결과알림/팝업) 여부."""
+    end = time.time() + max(2.0, float(timeout_sec))
+    while time.time() < end:
+        has_signal, _, _ = save_result_signal_present(page, dialog_msgs)
+        if has_signal:
+            return True
+        try:
+            if not save_modal_visible(page):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            if is_mango_loading(page):
+                return True
+        except Exception:  # noqa: BLE001
+            pass
+        if dialog_msgs:
+            return True
+        page.wait_for_timeout(300)
+    return False
 
 
 def try_dismiss_save_modal(page: Page) -> None:
@@ -1855,9 +1962,15 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     # 저장 단계 시간 확보 (검색 대기 후 예산이 거의 소진된 경우 대비)
     ctx.row_deadline = time.time() + max(120.0, float(MODAL_WAIT_SEC) + 60.0)
 
-    # 순서 고정: 검색필터명 → 저장상품수 → 저장하기
+    # 순서 고정: 검색필터명 → 저장상품수 → ★저장하기(서버 최종 갱신)
     fill_save_modal_fields(page, ctx, rn, label, save_count)
+    # 저장하기 누락 = 서버 미반영. 이 호출 없이 행을 끝내면 안 된다.
     run_save_submit_and_verify(page, ctx, rn, save_count)
+    if not ctx.server_save_ok:
+        raise RuntimeError(
+            f"#{rn} 저장하기 서버 최종 갱신 미확인 — "
+            "필터정보·수집갯수·수집상품이 서버에 반영되지 않음"
+        )
 
 
 def fill_save_modal_fields(
@@ -1903,10 +2016,13 @@ def run_save_submit_and_verify(
     rn: int,
     save_count: int,
 ) -> None:
-    """저장하기 클릭 → 팝업/모달 열림·닫힘 → 망고 'N건 수집' 알림 확인.
+    """★저장하기 = 서버 최종 갱신 (필터정보·수집갯수·수집상품).
 
-    이 단계는 빠지면 안 된다 (필터·건수 입력만 하고 끝내면 저장 안 됨).
+    입력만 하고 이 버튼을 빼먹으면 서버에 아무것도 반영되지 않는다.
+    클릭 → 서버 제출 반응 확인(재시도) → 결과 팝업/알림 → 수집건수 검증.
+    서버 반영이 확인되기 전에는 행 완료·다음 행 진행을 하지 않는다.
     """
+    ctx.server_save_ok = False
     dialog_msgs: list[str] = []
 
     def _on_save_dialog(dialog) -> None:
@@ -1923,34 +2039,85 @@ def run_save_submit_and_verify(
 
     page.on("dialog", _on_save_dialog)
     try:
-        ctx.check_budget("저장하기 클릭 전")
-        btn = save_submit_button(page)
-        try:
-            btn.first.wait_for(state="visible", timeout=15_000)
-        except Exception as e:  # noqa: BLE001
+        ctx.check_budget("저장하기(서버 최종 갱신) 전")
+        if not save_modal_visible(page):
             ctx.shot(page, "02_save_missing", rn)
             raise RuntimeError(
-                f"#{rn} 저장하기 버튼을 찾지 못함 — "
-                "검색필터명·저장상품수 입력 후 저장하기가 필수입니다. "
-                f"원인: {e}"
-            ) from e
+                f"#{rn} 저장하기 서버 최종 갱신 실패 — "
+                "상품저장설정 모달이 열려 있지 않음 "
+                "(필터정보·수집갯수·수집상품이 서버에 반영되지 않음)"
+            )
 
         ctx.info(
-            "2. ★ 저장하기 버튼 클릭 "
-            "(검색필터명·저장상품수 최종 저장 — 필수 단계)"
+            "2. ★★★ 저장하기 = 서버 최종 갱신 "
+            "(필터정보 + 수집갯수 + 수집상품 데이터) — 누락 금지"
         )
-        trusted = click_it(btn)
-        ctx.info(f"  저장하기 클릭 완료 (trusted_click={trusted})")
-        page.wait_for_timeout(400)
-        ctx.shot(page, "02_save_clicked", rn)
 
-        # 저장 직후: 결과 팝업/알림 모달 출현(필수) → 닫힘 → 건수 확인
-        ctx.info("3. 저장 후 결과 팝업/알림 모달 대기 (필수 — 스킵 금지)")
+        submitted = False
+        last_click_ok = False
+        for attempt in range(1, 4):
+            ctx.check_budget(f"저장하기 서버제출 시도 {attempt}")
+            try:
+                btn = resolve_save_submit_control(page)
+            except Exception as e:  # noqa: BLE001
+                ctx.shot(page, "02_save_missing", rn)
+                raise RuntimeError(
+                    f"#{rn} 저장하기 서버 최종 갱신 실패 — 버튼 없음. "
+                    f"필터정보·수집갯수·수집상품이 서버에 반영되지 않음. 원인: {e}"
+                ) from e
+
+            ctx.info(
+                f"2. ★ 저장하기 클릭 (서버 제출 시도 {attempt}/3) "
+                "— 입력값이 아닌 '저장하기'로만 서버 갱신됨"
+            )
+            last_click_ok = trusted_click_save_submit(page, btn)
+            ctx.info(
+                f"  저장하기 클릭 전송 "
+                f"(trusted={last_click_ok}, attempt={attempt})"
+            )
+            page.wait_for_timeout(350)
+            ctx.shot(page, "02_save_clicked", rn)
+
+            if not last_click_ok:
+                ctx.info("  [경고] 저장하기 신뢰 클릭 실패 — 재시도")
+                ctx.shot(page, "02_save_no_react", rn)
+                page.wait_for_timeout(500)
+                continue
+
+            if save_submit_reacted(page, dialog_msgs, timeout_sec=10.0):
+                submitted = True
+                ctx.info(
+                    "2. ★ 저장하기 서버 제출 반응 확인 "
+                    "(모달닫힘/로딩/결과팝업/알림)"
+                )
+                break
+
+            ctx.info(
+                "  [경고] 저장하기 클릭 후 서버 반응 없음 — "
+                "제출 누락 가능, 재시도"
+            )
+            ctx.shot(page, "02_save_no_react", rn)
+            # 모달이 닫혔으면 다시 열 수 없으므로 루프 종료 후 실패 처리
+            if not save_modal_visible(page):
+                break
+            page.wait_for_timeout(600)
+
+        if not submitted:
+            ctx.shot(page, "02_save_failed", rn)
+            raise RuntimeError(
+                f"#{rn} 저장하기 서버 최종 갱신 실패 — "
+                "필터정보·수집갯수·수집상품이 서버에 반영되지 않음. "
+                "저장하기 버튼 클릭/제출 반응이 없습니다. "
+                "입력만 하고 다음 행으로 넘어갈 수 없습니다."
+            )
+
+        # 저장 직후: 결과 팝업/알림 모달 출현(필수) → 건수 확인
+        ctx.info("3. 저장 후 결과 팝업/알림 모달 대기 (서버 반영 증거)")
         wait_save_overlays_settle(
             page, ctx, rn, dialog_msgs=dialog_msgs
         )
 
-        # 최종: 망고 자체 메세지 — 저장된 상품 건수 알림
+        # 최종: 망고 자체 메세지 — 저장된 상품 건수 = 서버 반영 확인
         verify_mango_collect_alert(
             page,
             ctx,
@@ -1960,7 +2127,11 @@ def run_save_submit_and_verify(
         )
 
         verify_row_save_done(page, ctx, rn, save_count)
-        ctx.info(f"4. -> 행 완료 확인 (저장수 {save_count})")
+        ctx.server_save_ok = True
+        ctx.info(
+            f"4. -> 서버 최종 갱신 완료 확인 "
+            f"(저장하기 OK / 저장수 {save_count})"
+        )
         ctx.shot(page, "04_row_done", rn)
     finally:
         try:
@@ -2314,8 +2485,14 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                 )
                 page = refresh_if_closed(page)
                 _process_row_once(page, row, ctx)
+                if not ctx.server_save_ok:
+                    raise RuntimeError(
+                        f"#{row['row']} 저장하기 서버 최종 갱신 미확인 — "
+                        "필터정보·수집갯수·수집상품이 서버에 반영되지 않음. "
+                        "저장하기 성공 전에 행을 완료할 수 없습니다."
+                    )
                 ctx.info(
-                    f"[OK] 엑셀{row['row']}행 성공 (시도 {attempt}) | "
+                    f"[OK] 엑셀{row['row']}행 성공 (저장하기 서버갱신 OK, 시도 {attempt}) | "
                     f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
                 )
                 success = True
