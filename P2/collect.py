@@ -5,10 +5,10 @@ P2 — 더망고(tmg1898) 상품데이터 대량수집
 
 0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭
 1. URL상품검색하기 : 필드값 입력 후 클릭 -> 팝업창이 없어질 때까지 대기
-2. 검색된 상품 모두저장 클릭 -> 검색필터명·저장수 입력
-   -> ★저장하기(서버 최종 갱신: 필터정보·수집갯수·수집상품) — 누락 금지
-3. 저장 후 결과 팝업/알림 확인(수집건수) — 서버 반영 증거
-4. 다음 행 (저장하기 성공 전에 절대 진행 금지 / 실패 시 같은 행 재시도)
+2. [버튼1] 검색된 상품 모두저장 클릭 → 검색필터명·저장수 입력
+   → [버튼2] 모달 하단 저장하기 클릭 (모두저장과 다른 버튼, 서버 최종 갱신)
+3. 저장 실행 팝업/알림 확인(수집건수) — 서버 반영 증거
+4. 다음 행 (버튼2 성공 전에 진행 금지 / 실패 시 1회 재시도 후 다음 행)
 
 사용법:
     python collect.py 엑셀.xlsx              # 저장수 3
@@ -1056,11 +1056,18 @@ def url_search_button(page: Page):
 
 
 def save_all_button(page: Page):
+    """[버튼1] 검색결과 상단 — '검색된 상품 모두저장' (모달 하단 저장하기와 별개)."""
     return (
         page.locator('input[type="button"][value*="모두저장"]')
         .or_(page.locator('input[type="submit"][value*="모두저장"]'))
         .or_(page.get_by_text(re.compile(r"검색된\s*상품\s*모두\s*저장")))
     )
+
+
+# 모달 하단 '저장하기'와 혼동하면 안 되는 결과목록 버튼 문구
+_RESULT_LIST_SAVE_BTN = re.compile(
+    r"모두\s*저장|선택상품\s*저장|검색된\s*상품"
+)
 
 
 def _describe(loc) -> str:
@@ -1138,11 +1145,11 @@ def save_modal(page: Page):
     """상품저장설정 팝업 전체 — 하단 '저장하기'·'취소하기' 포함.
 
     안쪽 작은 div만 잡으면 하단 버튼이 범위 밖이 되어 클릭이 누락된다.
-    (v2.0.7.3 실화면 수정과 동일: 상품저장설정+저장하기+취소하기)
+    '검색된 상품 모두저장' 결과목록 영역과 혼동하지 않는다.
     """
     full = (
         page.locator("div, form, table")
-        .filter(has_text=re.compile(r"상품\s*저장\s*설정"))
+        .filter(has_text=re.compile(r"상품\s*저장\s*설정|검색\s*필터\s*명|적용\s*정책"))
         .filter(has_text=re.compile(r"저장하기"))
         .filter(has_text=re.compile(r"취소하기"))
     )
@@ -1151,20 +1158,31 @@ def save_modal(page: Page):
             return full.last
     except Exception:  # noqa: BLE001
         pass
-    # 폴백: 취소하기 문구가 다른 화면
     return (
         page.locator("div, form, table")
         .filter(has_text=re.compile(r"상품\s*저장\s*설정|검색\s*필터\s*명"))
-        .filter(has_text=re.compile("저장하기"))
+        .filter(has_text=re.compile(r"^[\s\S]*저장하기[\s\S]*$"))
+        .filter(has_text=re.compile(r"취소하기"))
         .last
     )
 
 
 def save_modal_visible(page: Page) -> bool:
+    """상품저장설정 모달 열림 — 제목 또는 (저장하기+취소하기) 푸터."""
     try:
-        return page.get_by_text(re.compile(r"상품\s*저장\s*설정")).first.is_visible()
-    except Exception:
-        return False
+        if page.get_by_text(re.compile(r"상품\s*저장\s*설정")).first.is_visible():
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        # 스크린샷: 하단 파란 '저장하기' + '취소하기' 쌍
+        has_save = page.get_by_text(re.compile(r"^저장하기$")).first.is_visible()
+        has_cancel = page.get_by_text(re.compile(r"^취소하기$")).first.is_visible()
+        if has_save and has_cancel:
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 
 def save_submit_button(page: Page):
@@ -1173,7 +1191,7 @@ def save_submit_button(page: Page):
 
 
 def _first_visible(locator):
-    """locator 후보 중 보이는 첫 요소. 없으면 None."""
+    """locator 후보 중 보이는 '저장하기'만. 모두저장/선택상품저장 제외."""
     try:
         n = locator.count()
     except Exception:  # noqa: BLE001
@@ -1181,7 +1199,20 @@ def _first_visible(locator):
     for i in range(n):
         el = locator.nth(i)
         try:
-            if el.is_visible():
+            if not el.is_visible():
+                continue
+            val = (el.get_attribute("value") or "").strip()
+            try:
+                txt = re.sub(
+                    r"\s+", " ", (el.inner_text(timeout=400) or "")
+                ).strip()
+            except Exception:  # noqa: BLE001
+                txt = ""
+            blob = f"{val} {txt}".strip()
+            if _RESULT_LIST_SAVE_BTN.search(blob):
+                continue
+            # 버튼 라벨이 정확히 '저장하기' 인 경우만 (스크린샷 하단 파란 버튼)
+            if val == "저장하기" or txt == "저장하기":
                 return el
         except Exception:  # noqa: BLE001
             continue
@@ -1207,6 +1238,13 @@ def scroll_save_modal_to_footer(page: Page) -> None:
         )
     except Exception:  # noqa: BLE001
         pass
+    # 취소하기(푸터)가 보이면 그쪽을 기준으로 맞춤
+    try:
+        page.get_by_text(re.compile(r"^취소하기$")).last.scroll_into_view_if_needed(
+            timeout=3_000
+        )
+    except Exception:  # noqa: BLE001
+        pass
     try:
         page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
     except Exception:  # noqa: BLE001
@@ -1215,7 +1253,7 @@ def scroll_save_modal_to_footer(page: Page) -> None:
 
 
 def dump_save_button_candidates(page: Page, ctx: "RunCtx | None" = None) -> str:
-    """디버그: 화면에 보이는 '저장하기' 후보 나열."""
+    """디버그: '저장하기' vs '모두저장' 후보 구분 나열."""
     try:
         info = page.evaluate(
             """() => {
@@ -1227,31 +1265,32 @@ def dump_save_button_candidates(page: Page, ctx: "RunCtx | None" = None) -> str:
                     const val = (el.value || '').trim();
                     const txt = (el.innerText || el.textContent || '')
                         .replace(/\\s+/g, ' ').trim();
-                    const hit = val === '저장하기' || txt === '저장하기'
-                        || val.includes('저장하기')
-                        || /^저장하기$/.test(txt);
-                    if (!hit) continue;
+                    const blob = val + ' ' + txt;
+                    if (!/저장/.test(blob)) continue;
                     const r = el.getBoundingClientRect();
-                    const style = window.getComputedStyle(el);
+                    if (r.width < 2 || r.height < 2) continue;
+                    const kind =
+                        (val === '저장하기' || txt === '저장하기')
+                            ? 'MODAL_SAVE'
+                            : /모두\\s*저장|선택상품/.test(blob)
+                              ? 'LIST_SAVE'
+                              : 'OTHER';
                     out.push({
+                        kind,
                         tag: el.tagName,
                         type: el.getAttribute('type') || '',
                         value: val.slice(0, 40),
                         text: txt.slice(0, 40),
-                        w: Math.round(r.width),
-                        h: Math.round(r.height),
                         y: Math.round(r.top),
-                        display: style.display,
-                        vis: style.visibility,
                     });
-                    if (out.length >= 12) break;
+                    if (out.length >= 16) break;
                 }
                 return out;
             }"""
         )
     except Exception as e:  # noqa: BLE001
         info = [{"error": str(e)}]
-    line = f"저장하기 후보={info!r}"
+    line = f"저장버튼구분={info!r}"
     if ctx is not None:
         ctx.info(f"  [진단] {line}")
     else:
@@ -1259,71 +1298,56 @@ def dump_save_button_candidates(page: Page, ctx: "RunCtx | None" = None) -> str:
     return line
 
 
-def resolve_save_submit_control(page: Page):
-    """모달 하단 버튼명 '저장하기' — 서버 최종 제출 컨트롤.
+def _find_footer_save_by_cancel_pair(page: Page):
+    """스크린샷 기준: 하단 [저장하기][취소하기] 쌍에서 저장하기만 반환.
 
-    Cafe24 실화면: input[value=저장하기] 또는 a/button/span/div 텍스트.
-    모달 전체를(하단 푸터 포함) 잡은 뒤 그 안의 버튼을 클릭해야 한다.
+    '검색된 상품 모두저장'과는 완전히 다른 버튼이다.
     """
-    scroll_save_modal_to_footer(page)
-    modal = save_modal(page)
-
-    # 1) 모달 안 — 정확한 value / role / 텍스트 (하단 버튼)
-    modal_candidates = [
-        modal.locator(
-            'input[type="button"][value="저장하기"], '
-            'input[type="submit"][value="저장하기"]'
-        ),
-        modal.locator(
-            'input[type="button"][value*="저장하기"], '
-            'input[type="submit"][value*="저장하기"]'
-        ),
-        modal.get_by_role("button", name=re.compile(r"^저장하기$")),
-        modal.locator("button, a, span, div, td").filter(
-            has_text=re.compile(r"^저장하기$")
-        ),
-        modal.get_by_text(re.compile(r"^저장하기$")),
-    ]
-    for loc in modal_candidates:
-        el = _first_visible(loc)
-        if el is not None:
-            return el
-
-    # 2) 페이지 전역 (모달 스코프 실패 시)
-    page_candidates = [
-        page.locator(
-            'input[type="button"][value="저장하기"], '
-            'input[type="submit"][value="저장하기"]'
-        ),
-        page.locator(
-            'input[type="button"][value*="저장하기"], '
-            'input[type="submit"][value*="저장하기"]'
-        ),
-        page.get_by_role("button", name=re.compile(r"^저장하기$")),
-        page.locator("button, a").filter(has_text=re.compile(r"^저장하기$")),
-        page.get_by_text(re.compile(r"^저장하기$")),
-    ]
-    for loc in page_candidates:
-        el = _first_visible(loc)
-        if el is not None:
-            return el
-
-    # 3) DOM 직접 탐색 → Playwright 핸들로 재연결
     try:
         handle = page.evaluate_handle(
             """() => {
-                const nodes = Array.from(document.querySelectorAll(
-                    'input[type="button"], input[type="submit"], button, a, span, div'
-                ));
-                const exact = nodes.find((el) => {
+                const labelOf = (el) => {
                     const v = (el.value || '').trim();
                     const t = (el.innerText || el.textContent || '')
                         .replace(/\\s+/g, ' ').trim();
-                    if (v !== '저장하기' && t !== '저장하기') return false;
+                    return { v, t, blob: (v + ' ' + t).trim() };
+                };
+                const visible = (el) => {
                     const r = el.getBoundingClientRect();
                     return r.width > 2 && r.height > 2;
+                };
+                const nodes = Array.from(document.querySelectorAll(
+                    'input, button, a, span, div, td'
+                ));
+                // 1) 취소하기 기준 — 같은 부모 안의 저장하기 (푸터 쌍)
+                const cancels = nodes.filter((el) => {
+                    const { v, t } = labelOf(el);
+                    return (v === '취소하기' || t === '취소하기') && visible(el);
                 });
-                return exact || null;
+                for (const cancel of cancels) {
+                    let root = cancel.parentElement;
+                    for (let depth = 0; depth < 6 && root; depth++) {
+                        const kids = Array.from(root.querySelectorAll(
+                            'input, button, a, span, div'
+                        ));
+                        const save = kids.find((el) => {
+                            if (el === cancel) return false;
+                            const { v, t, blob } = labelOf(el);
+                            if (v !== '저장하기' && t !== '저장하기') return false;
+                            if (/모두\\s*저장|선택상품\\s*저장/.test(blob)) return false;
+                            return visible(el);
+                        });
+                        if (save) return save;
+                        root = root.parentElement;
+                    }
+                }
+                // 2) 전역 exact 저장하기 (모두저장 제외)
+                return nodes.find((el) => {
+                    const { v, t, blob } = labelOf(el);
+                    if (v !== '저장하기' && t !== '저장하기') return false;
+                    if (/모두\\s*저장|선택상품\\s*저장/.test(blob)) return false;
+                    return visible(el);
+                }) || null;
             }"""
         )
         el = handle.as_element()
@@ -1331,11 +1355,57 @@ def resolve_save_submit_control(page: Page):
             return el
     except Exception:  # noqa: BLE001
         pass
+    return None
+
+
+def resolve_save_submit_control(page: Page):
+    """[버튼2] 상품저장설정 하단 '저장하기' — [버튼1] 모두저장과 절대 혼동 금지.
+
+    실화면: 파란 '저장하기' 옆에 '취소하기'. (밑줄 a/버튼/input)
+    """
+    scroll_save_modal_to_footer(page)
+
+    # 0) 최우선: 취소하기 옆 푸터 쌍의 저장하기 (스크린샷 그대로)
+    el = _find_footer_save_by_cancel_pair(page)
+    if el is not None:
+        return el
+
+    modal = save_modal(page)
+
+    # 1) 모달 안 — exact '저장하기' only
+    modal_candidates = [
+        modal.locator(
+            'input[type="button"][value="저장하기"], '
+            'input[type="submit"][value="저장하기"]'
+        ),
+        modal.locator("a, button").filter(has_text=re.compile(r"^저장하기$")),
+        modal.locator("span, div, td").filter(has_text=re.compile(r"^저장하기$")),
+        modal.get_by_text(re.compile(r"^저장하기$")),
+    ]
+    for loc in modal_candidates:
+        found = _first_visible(loc)
+        if found is not None:
+            return found
+
+    # 2) 페이지 — exact only, 모두저장 제외는 _first_visible에서 처리
+    page_candidates = [
+        page.locator(
+            'input[type="button"][value="저장하기"], '
+            'input[type="submit"][value="저장하기"]'
+        ),
+        page.locator("a, button").filter(has_text=re.compile(r"^저장하기$")),
+        page.get_by_text(re.compile(r"^저장하기$")),
+    ]
+    for loc in page_candidates:
+        found = _first_visible(loc)
+        if found is not None:
+            return found
 
     dump_save_button_candidates(page)
     raise RuntimeError(
-        "상품저장설정 하단 '저장하기' 버튼을 찾지 못함 — "
-        "서버 최종 갱신(필터정보·수집갯수·수집상품)을 할 수 없음"
+        "상품저장설정 하단 '저장하기' 버튼을 찾지 못함 "
+        "('검색된 상품 모두저장'과 다른 버튼). "
+        "서버 최종 갱신을 할 수 없음"
     )
 
 
@@ -2095,30 +2165,46 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
         ctx.info("  [경고] 검색 결과 상품이미지가 거의 보이지 않음 — 그대로 샷")
     ctx.shot(page, "01_results_ready", rn)
 
-    ctx.info("2. 검색된 상품 모두저장 클릭")
+    # ── [버튼1] 검색결과 상단: 검색된 상품 모두저장 (모달 열기) ──
+    ctx.info(
+        "2-A. ★ [버튼1] '검색된 상품 모두저장' 클릭 "
+        "(결과목록 상단 — 모달 하단 '저장하기'와 다른 버튼)"
+    )
     scroll_to_product_strip(page)
     click_it(save_all_button(page))
-    save_modal(page).wait_for(state="visible", timeout=MODAL_WAIT_SEC * 1000)
-    # 09: 모달과 함께 하단 상품 이미지가 보이도록 스크롤·대기 후 샷
+    # 모달 열림: 제목 또는 하단 저장하기+취소하기
+    end_modal = time.time() + MODAL_WAIT_SEC
+    while time.time() < end_modal:
+        if save_modal_visible(page):
+            break
+        page.wait_for_timeout(300)
+    else:
+        ctx.shot(page, "02_save_missing", rn)
+        raise RuntimeError(
+            f"#{rn} [버튼1] 모두저장 클릭 후 상품저장설정 모달이 열리지 않음"
+        )
     try:
         modal_imgs = prepare_product_view_for_shot(page, min_images=2)
     except Exception as e:  # noqa: BLE001
         ctx.info(f"  [경고] 모달 화면 상품이미지 대기 실패: {e}")
         modal_imgs = 0
     page.wait_for_timeout(300)
-    ctx.info(f"2. 모두저장 모달 (하단 상품이미지 약 {modal_imgs}개)")
+    ctx.info(f"2-A. 상품저장설정 모달 열림 (상품이미지 약 {modal_imgs}개)")
     ctx.shot(page, "02_save_modal", rn)
 
     # 저장 단계 시간 확보 (검색 대기 후 예산이 거의 소진된 경우 대비)
     ctx.row_deadline = time.time() + max(120.0, float(MODAL_WAIT_SEC) + 60.0)
 
-    # 순서 고정: 검색필터명 → 저장상품수 → ★저장하기(서버 최종 갱신)
+    # 검색필터명 → 저장상품수 → [버튼2] 하단 저장하기 (서버 최종 갱신)
     fill_save_modal_fields(page, ctx, rn, label, save_count)
-    # 저장하기 누락 = 서버 미반영. 이 호출 없이 행을 끝내면 안 된다.
+    ctx.info(
+        "2-B. ★ [버튼2] 모달 하단 '저장하기' 클릭 시작 "
+        "([버튼1] 모두저장과 구분 — 서버 최종 갱신)"
+    )
     run_save_submit_and_verify(page, ctx, rn, save_count)
     if not ctx.server_save_ok:
         raise RuntimeError(
-            f"#{rn} 저장하기 서버 최종 갱신 미확인 — "
+            f"#{rn} [버튼2] 하단 저장하기 서버 최종 갱신 미확인 — "
             "필터정보·수집갯수·수집상품이 서버에 반영되지 않음"
         )
 
@@ -2199,17 +2285,19 @@ def run_save_submit_and_verify(
             )
 
         ctx.info(
-            "2. ★★★ 상품저장설정 하단 버튼명 '저장하기' 클릭 "
-            "= 서버 최종 갱신(필터정보+수집상품수+수집상품) — 필수"
+            "2-B. ★★★ [버튼2] 하단 파란 '저장하기' "
+            "(옆=취소하기) = 서버 최종 갱신 — "
+            "[버튼1] '검색된 상품 모두저장' 과 다름"
         )
         scroll_save_modal_to_footer(page)
+        dump_save_button_candidates(page, ctx)
         ctx.shot(page, "02_modal_filled", rn)  # 하단 버튼 보이게 재샷
 
         submitted = False
         last_click_ok = False
         # 최대 1회 재시도(총 2회). 동일 실패면 다음 행으로 진행.
         for attempt in range(1, 3):
-            ctx.check_budget(f"저장하기 서버제출 시도 {attempt}")
+            ctx.check_budget(f"[버튼2] 저장하기 서버제출 시도 {attempt}")
             scroll_save_modal_to_footer(page)
             try:
                 btn = resolve_save_submit_control(page)
@@ -2217,9 +2305,8 @@ def run_save_submit_and_verify(
                 dump_save_button_candidates(page, ctx)
                 ctx.shot(page, "02_save_missing", rn)
                 raise RuntimeError(
-                    f"#{rn} 하단 '저장하기' 버튼 없음 — "
-                    f"필터·수집상품수가 서버에 반영되지 않음. "
-                    f"다음 입력으로 진행. 원인: {e}"
+                    f"#{rn} [버튼2] 하단 '저장하기' 없음 "
+                    f"(모두저장과 다른 버튼). 다음 입력으로. 원인: {e}"
                 ) from e
 
             try:
@@ -2227,7 +2314,7 @@ def run_save_submit_and_verify(
             except Exception:  # noqa: BLE001
                 desc = "저장하기"
             ctx.info(
-                f"2. ★ 하단 '저장하기' 클릭 "
+                f"2-B. ★ [버튼2] 하단 '저장하기' 클릭 "
                 f"({attempt}/2, 재시도 최대 1회) | {desc}"
             )
             last_click_ok = trusted_click_save_submit(page, btn)
