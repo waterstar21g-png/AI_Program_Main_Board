@@ -1,0 +1,119 @@
+import * as cheerio from 'cheerio';
+import { buildArtBrowseUrl } from './helpers.mjs';
+import { parseBrandNo, parseCtgrNo } from './fetch.mjs';
+
+export function isArtPlatform(html, url) {
+  return (
+    /a-rt\.com/i.test(url) ||
+    html.includes('gnb-menu-depth1') ||
+    html.includes('abcmart') ||
+    html.includes('abc.biz.category')
+  );
+}
+
+function cleanText(s) {
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+function dedupeLeaves(leaves) {
+  const seen = new Set();
+  return leaves.filter(l => {
+    const key = [l.top, l.mid, l.low, l.final, l.ctgrNo ?? l.brandNo ?? l.categoryUrl].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function parseBrandSection($, $brandLi, origin, leaves) {
+  $brandLi.find('.all-brand-list-wrap a[href*="brandNo"]').each((_, a) => {
+    const $a = $(a);
+    const href = $a.attr('href');
+    const name =
+      cleanText($a.find('.brand-name').text()) ||
+      cleanText($a.attr('title') ?? '') ||
+      cleanText($a.text());
+    if (!name || !href) return;
+    leaves.push({
+      top: 'BRAND',
+      mid: '',
+      low: '',
+      final: name,
+      categoryUrl: buildArtBrowseUrl(origin, href, 'brand'),
+      brandNo: parseBrandNo(href),
+      kind: 'brand',
+    });
+  });
+}
+
+/** A-RT(ABC마트 등) GNB에서 4단계 카테고리 + BRAND 추출 */
+export function parseArtPlatformGnb(html, baseUrl) {
+  const $ = cheerio.load(html);
+  const leaves = [];
+  const origin = new URL(baseUrl).origin;
+
+  $('ul.gnb-menu > li.gnb-menu-depth1').each((_, el) => {
+    const $el = $(el);
+    if ($el.hasClass('menu-brand')) {
+      parseBrandSection($, $el, origin, leaves);
+      return;
+    }
+
+    const top = cleanText($el.find('> button.menu-name, > a.menu-name').first().text());
+    if (!top) return;
+
+    $el.find('.sub-depth2').each((__, d2) => {
+      const $d2 = $(d2);
+      const mid = cleanText($d2.find('.depth2-title a').first().text());
+
+      $d2.find('.sub-depth3 > li.item').each((___, d3li) => {
+        const $d3 = $(d3li);
+        const lowLink = $d3.find('> a.depth3-title').first();
+        const low = cleanText(lowLink.text());
+        const lowHref = lowLink.attr('href');
+        const d4Links = $d3.find('.sub-depth4 > li.item > a.depth4-title');
+
+        if (d4Links.length > 0) {
+          d4Links.each((____, d4a) => {
+            const $d4 = $(d4a);
+            const href = $d4.attr('href');
+            leaves.push({
+              top,
+              mid,
+              low,
+              final: cleanText($d4.text()),
+              categoryUrl: buildArtBrowseUrl(origin, href ?? '', 'category'),
+              ctgrNo: parseCtgrNo(href),
+              kind: 'category',
+            });
+          });
+        } else if (low) {
+          leaves.push({
+            top,
+            mid,
+            low: '',
+            final: low,
+            categoryUrl: buildArtBrowseUrl(origin, lowHref ?? '', 'category'),
+            ctgrNo: parseCtgrNo(lowHref),
+            kind: 'category',
+          });
+        }
+      });
+
+      if (!$d2.find('.sub-depth3 > li.item').length && mid) {
+        const midHref = $d2.find('.depth2-title a').first().attr('href');
+        leaves.push({
+          top,
+          mid: '',
+          low: '',
+          final: mid,
+          categoryUrl: buildArtBrowseUrl(origin, midHref ?? '', 'category'),
+          ctgrNo: parseCtgrNo(midHref),
+          kind: 'category',
+        });
+      }
+    });
+  });
+
+  return dedupeLeaves(leaves);
+}

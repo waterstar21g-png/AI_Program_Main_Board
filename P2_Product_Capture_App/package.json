@@ -1,0 +1,18 @@
+{
+  "name": "p2-product-capture-app",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "P2_Product_Capture_App — 더망고 상품 대량수집 (Node + Playwright CDP)",
+  "scripts": {
+    "start": "tsx cli.ts",
+    "collect": "tsx cli.ts"
+  },
+  "dependencies": {
+    "@types/node": "^22",
+    "playwright": "^1.52.0",
+    "tsx": "^4.19.0",
+    "xlsx": "^0.18.5",
+    "typescript": "^5"
+  }
+}
