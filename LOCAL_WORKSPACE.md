@@ -6,8 +6,8 @@
 D:\My_Project\AI_Program_Main_Board
 ```
 
-컴팩트 보드(P1+P3): `D:\My_Project\AI_Program_Main_Board\AI_Program_Main_Board_New`  
-→ [`AI_Program_Main_Board_New/README.md`](./AI_Program_Main_Board_New/README.md) · 포트 3001
+컴팩트 보드(Python P1+P2): `D:\My_Project\AI_Program_Main_Board\AI_Program_Main_Board_New`  
+→ [`AI_Program_Main_Board_New/README.md`](./AI_Program_Main_Board_New/README.md) · **npm 없음** · `run.bat`
 
 배치 3개만 남기는 정리안(결정 전 · 미실행): [docs/BATCH_THREE_CLEANUP_PLAN.md](./docs/BATCH_THREE_CLEANUP_PLAN.md)
 

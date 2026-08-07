@@ -72,3 +72,4 @@ SR_doc_YYYYMMDD_HHMMSS_요건요약20자이내.md
 | [SR_doc_20260807_111800_배치3개정리검토.md](./SR_doc_20260807_111800_배치3개정리검토.md) | 배치 3개만 남기는 정리 검토(미실행) |
 | [SR_doc_20260807_134500_New보드P1P3.md](./SR_doc_20260807_134500_New보드P1P3.md) | AI_Program_Main_Board_New (P1+P3) |
 | [SR_doc_20260807_141200_P3엑셀목록선택.md](./SR_doc_20260807_141200_P3엑셀목록선택.md) | P3 로컬검색·리스트박스 입력 |
+| [SR_doc_20260807_155000_Python보드B안.md](./SR_doc_20260807_155000_Python보드B안.md) | Python B안 · P3→P2 심플보드 |

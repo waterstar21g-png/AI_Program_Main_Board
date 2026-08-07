@@ -3,7 +3,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo   Tmg Product Collector (Python)
+echo   P2 Tmg Product Collector (Python)
 echo ========================================
 
 where py >nul 2>nul

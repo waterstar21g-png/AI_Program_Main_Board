@@ -1,26 +1,26 @@
-# AI_Program_Main_Board_New — 로컬 실행 (포트 3001)
-# 기존 AI_Program_Main_Board(3000)와 별도
+# AI_Program_Main_Board_New — Python 보드 (npm 없음)
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-$ExpectedVersion = "1.0.1"
-$Port = if ($env:PORT) { [int]$env:PORT } else { 3001 }
+Write-Host "=== AI_Program_Main_Board_New v2.0.0 (Python) ===" -ForegroundColor Cyan
 
-Write-Host "=== AI_Program_Main_Board_New v$ExpectedVersion ===" -ForegroundColor Cyan
-Write-Host "포트: $Port (기존 보드는 3000)" -ForegroundColor DarkGray
-
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  Write-Host "[ERROR] Node.js 없음 — https://nodejs.org" -ForegroundColor Red
+$py = $null
+foreach ($c in @("py -3", "python", "python3")) {
+  $parts = $c.Split(" ")
+  try {
+    & $parts[0] @($parts[1..($parts.Length-1)]) --version 2>$null | Out-Null
+    if ($LASTEXITCODE -eq 0) { $py = $c; break }
+  } catch {}
+}
+if (-not $py) {
+  Write-Host "[ERROR] Python 없음 — https://www.python.org/downloads/" -ForegroundColor Red
   exit 1
 }
 
-if (-not (Test-Path "node_modules\next")) {
-  Write-Host "[npm] install..." -ForegroundColor Yellow
-  npm install
-  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-}
+Write-Host "[pip] install..."
+$parts = $py.Split(" ")
+& $parts[0] @($parts[1..($parts.Length-1)] + @("-m","pip","install","-q","--disable-pip-version-check","-r","requirements.txt"))
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$env:PORT = "$Port"
-$env:NEXT_TELEMETRY_DISABLED = "1"
-Write-Host "[dev] http://localhost:$Port" -ForegroundColor Green
-npm run dev
+Write-Host "[board] start"
+& $parts[0] @($parts[1..($parts.Length-1)] + @("board\app.py"))

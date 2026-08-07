@@ -1,68 +1,45 @@
-# AI_Program_Main_Board_New
+# AI_Program_Main_Board_New (v2.0.0 · Python)
 
-기존 **AI_Program_Main_Board** 는 그대로 두고,  
-정제된 **P1 + P3** 만 담은 컴팩트 보드입니다.
+**npm / Next.js 없음.** Python만 사용합니다.
 
-| 프로그램 | 설명 |
+| 프로그램 | 역할 |
 |----------|------|
-| **P1_Category_Url_Extract** | 카테고리별 상품 URL 리스트 추출 |
-| **P3_Python_Item_Collector** | 파이썬 독립 더망고 대량수집 (`python-collector/`) |
+| **P1** | 카테고리 URL 리스트 추출 → 엑셀 |
+| **P2** | 더망고 대량수집 (P1 엑셀 입력) — 구 P3 |
 
-P1 출력 엑셀을 P3 입력으로 씁니다. 보드 P3에서:
-
-1. 로컬 폴더 검색 → `.xlsx` 찾아 **보관 목록에 추가**
-2. 재실행 시 **리스트박스에서만** 선택 후 수집 시작
-
-- P2(웹 Playwright 수집)는 **포함하지 않음** (기존 보드에 유지)
-- 기본 포트: **3001** (기존 보드 3000과 분리)
-
-## 로컬 경로 (권장)
-
-```
-D:\My_Project\AI_Program_Main_Board\AI_Program_Main_Board_New
-```
-
-또는 이 폴더만 따로 복사해도 됩니다.
+기존 루트 `AI_Program_Main_Board`(Next P1/P2/P3)는 **그대로** 둡니다.
 
 ## 실행
 
-### Windows
-
 ```bat
+cd AI_Program_Main_Board_New
 run.bat
 ```
 
-또는:
+1. Python 설치 (PATH 포함)
+2. `run.bat` → 보드 창
+3. **P1** 수집 → 엑셀 저장 (자동으로 P2 목록에 추가)
+4. **P2** 목록에서 선택 → 수집 시작  
+   (또는 로컬 폴더 검색 후 목록에 추가)
 
-```powershell
-.\run.ps1
-```
-
-브라우저: http://localhost:3001
-
-### Mac / Linux
-
-```bash
-cd AI_Program_Main_Board_New
-npm install
-npm run dev
-```
-
-## P3만 (웹 없이)
-
-```
-python-collector\run.bat
-```
-
-엑셀을 `run.bat`에 드래그 앤 드롭.
-
-## 구성 (최소)
+## 폴더
 
 ```
 AI_Program_Main_Board_New/
-  app/                 # Next 보드 UI + /api/crawl, /api/project-test
-  components/          # ProgramBoard · P1 · P3
-  lib/                 # site-crawler · smoke(p1/p3)
-  python-collector/    # P3 배치
-  run.bat / run.ps1
+  board/app.py      보드 UI (Tkinter)
+  P1/crawl.py       카테고리 URL 추출
+  P2/collect.py     더망고 수집
+  requirements.txt
+  run.bat
 ```
+
+## 의존성
+
+```
+pip install -r requirements.txt
+```
+
+- P1: requests, beautifulsoup4, lxml, openpyxl  
+- P2: playwright, openpyxl  
+
+`node_modules` 없음.
