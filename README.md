@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.0.9** (Python B안)
+# AI_Program_Main_Board **v2.0.10** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
@@ -48,8 +48,8 @@ git pull origin main
 
 ### P2 더망고 로그인
 
-1. 보드 P2에서 **[더망고 로그인 저장]** → ID/PW 1회 저장 (`P2/.tmg_credentials.json`, git 제외)
-2. **[선택 파일로 수집 시작]** → 더망고 **실제 로그인창**이 열리고 저장 ID/PW 자동 입력
+수집 시작 → 더망고 **로그인창이 열림** → **브라우저에서 직접 로그인**  
+(자동 ID/PW 입력·1초 딜레이 입력 없음. 로그인 확인 후 수집 계속)
 
 ## 예전 Next UI
 
