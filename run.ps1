@@ -18,7 +18,7 @@ if ($PSScriptRoot -match 'OneDrive') {
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.2.0"
+$ExpectedVersion = "3.3.0"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -104,8 +104,12 @@ if ($skipSync) {
     @("lib\product-data-collect\excel-import.ts", "lib/product-data-collect/excel-import.ts"),
     @("lib\excel-export.ts", "lib/excel-export.ts"),
     @("lib\top-final-label.ts", "lib/top-final-label.ts"),
+    @("lib\project-smoke\run.ts", "lib/project-smoke/run.ts"),
+    @("lib\board-actions\run.ts", "lib/board-actions/run.ts"),
     @("components\ProgramBoardApp.tsx", "components/ProgramBoardApp.tsx"),
+    @("components\BoardCommandPanel.tsx", "components/BoardCommandPanel.tsx"),
     @("components\ProductDataCollectApp.tsx", "components/ProductDataCollectApp.tsx"),
+    @("components\PythonItemCollectorApp.tsx", "components/PythonItemCollectorApp.tsx"),
     @("app\layout.tsx", "app/layout.tsx"),
     @("app\globals.css", "app/globals.css"),
     @("lib\programs\registry.tsx", "lib/programs/registry.tsx"),
@@ -113,11 +117,16 @@ if ($skipSync) {
     @("package.json", "package.json"),
     @("scripts\next-dev-safe.mjs", "scripts/next-dev-safe.mjs"),
     @("scripts\clean-next.mjs", "scripts/clean-next.mjs"),
+    @("scripts\verify-projects.mjs", "scripts/verify-projects.mjs"),
     @("next.config.ts", "next.config.ts"),
     @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
     @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
+    @("app\api\board-actions\route.ts", "app/api/board-actions/route.ts"),
+    @("app\api\project-test\route.ts", "app/api/project-test/route.ts"),
     @("run.ps1", "run.ps1"),
-    @("run.bat", "run.bat")
+    @("run.bat", "run.bat"),
+    @("verify.ps1", "verify.ps1"),
+    @("verify.bat", "verify.bat")
   )
 
   $failed = @()

@@ -34,11 +34,15 @@ GitHub 저장소 루트: **`AI_Program_Main_Board`** (모노레포 + 논리 분�
 - **실행:** `python-collector/run.bat` 더블클릭 (또는 엑셀 파일을 그 위에 드래그)
 - **P2와의 관계:** 같은 업무를 웹앱 없이 훨씬 가볍게 돌리고 싶을 때 사용. 웹앱 컴파일/캐시/인코딩 이슈에서 완전히 자유로움
 
-## 스모크 테스트
+## 실행·검증 순서 (P1 → P2 → P3)
 
-- 보드 UI: 좌측 하단 **프로젝트 스모크 테스트** (P1 / P2 / P3 / 전체)
-- API: `POST /api/project-test` body `{ "project": "all" | "p1" | "p2" | "p3" }`
-- CLI: `npm run test:projects` (서버 필요) · `npm run test:projects:local`
+1. **P1** 실행(카테고리 수집) → 데이터 검증(URL·라벨)
+2. **P2** 실행(엑셀 파서·워크플로) → 샘플 엑셀 필드 검증
+3. **P3** 실행(파이썬 환경·구문) → 샘플 엑셀 openpyxl 읽기 검증
+
+- 보드 UI: 좌측 **①②③ 실행·검증** + **①동기화 ②캐시정리 ③전체순서검증**
+- API: `POST /api/board-actions` `{ "action": "verify-p1"|"verify-p2"|"verify-p3"|"verify-all"|"sync"|"clean" }`
+- CLI: `verify.bat` / `npm run verify:all` (서버 필요) · `npm run test:projects:local`
 
 > P2(웹앱)와 P3(파이썬)는 같은 일을 하는 두 가지 실행 방식입니다.
 > 웹앱 UI(엑셀 업로드 화면·실행 로그 화면)가 필요하면 P2, 그냥 빠르고

@@ -1,6 +1,6 @@
 {
   "name": "ai-program-main-board",
-  "version": "3.2.0",
+  "version": "3.3.0",
   "private": true,
   "description": "AI_Program_Main_Board — P1_Category_Url_Extract / P2_Product_Capture_App / P3_Python_Item_Collector",
   "scripts": {
@@ -14,6 +14,10 @@
     "build": "next build",
     "start": "next start -p 3000",
     "lint": "next lint",
+    "verify:p1": "node scripts/verify-projects.mjs p1",
+    "verify:p2": "node scripts/verify-projects.mjs p2",
+    "verify:p3": "node scripts/verify-projects.mjs p3",
+    "verify:all": "node scripts/verify-projects.mjs all",
     "test:projects": "node scripts/smoke-projects.mjs",
     "test:projects:local": "node scripts/smoke-projects.mjs --local",
     "vercel:link": "vercel link --yes --scope nutrifarmer-front --project AI_Program_Main_Board",
