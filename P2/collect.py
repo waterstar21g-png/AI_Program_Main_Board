@@ -844,7 +844,14 @@ def _is_browser_internal_url(u: str) -> bool:
 
 
 def popups(page: Page) -> list:
-    """검색용 외부 팝업만 (확장/크롬 내부 탭 제외 — 무한대기 방지)."""
+    """검색(5·6항)용 외부 팝업만 — 같은 관리자사이트(ADMIN_HOST) 탭 제외.
+
+    URL상품검색 팝업은 수집 대상(외부 쇼핑몰) 사이트로 뜨므로
+    ADMIN_HOST 탭은 검색 팝업이 아니라고 보고 제외한다.
+    ★ 저장(9~11항) 팝업 탐지에는 이 함수를 쓰지 말 것 — save_popups() 사용.
+    (저장 처리중/완료 팝업은 ADMIN_HOST 자체 새 창으로 뜨는 경우가 많아
+    여기서 제외하면 "팝업이 전혀 안 뜬다"처럼 영원히 감지되지 않는다.)
+    """
     result = []
     for p in page.context.pages:
         if p is page or p.is_closed():
@@ -856,6 +863,29 @@ def popups(page: Page) -> list:
         if not u or _is_browser_internal_url(u):
             continue
         if ADMIN_HOST in u:
+            continue
+        result.append(p)
+    return result
+
+
+def save_popups(page: Page) -> list:
+    """저장(9~11항) 팝업 후보 — ADMIN_HOST(같은 관리자사이트) 새 창도 포함.
+
+    검색 팝업과 달리, 저장하기 클릭 후 뜨는 '처리중/완료' 팝업은
+    같은 관리자 사이트 자체 새 창(admin_*.php 등)으로 뜨는 경우가 많다.
+    popups() 처럼 ADMIN_HOST 라고 제외하면 실제로는 열려 있는데
+    코드에서는 "팝업이 전혀 안 뜬다"로 보이는 오탐이 생긴다.
+    브라우저 내부 탭(about:/chrome:/devtools: 등)만 제외한다.
+    """
+    result = []
+    for p in page.context.pages:
+        if p is page or p.is_closed():
+            continue
+        try:
+            u = p.url
+        except Exception:
+            continue
+        if not u or _is_browser_internal_url(u):
             continue
         result.append(p)
     return result
@@ -1526,6 +1556,16 @@ def diagnose_save_click_environment(
             info["frame_urls"] = urls[:5]
     except Exception as e:  # noqa: BLE001
         info["frames_error"] = str(e)
+    try:
+        others = [
+            p.url for p in page.context.pages
+            if p is not page and not p.is_closed() and p.url
+        ]
+        info["open_windows_total"] = len(others)
+        if others:
+            info["open_windows"] = others[:5]
+    except Exception as e:  # noqa: BLE001
+        info["open_windows_error"] = str(e)
 
     if el is not None:
         try:
@@ -1754,11 +1794,30 @@ def try_dismiss_save_modal(page: Page) -> None:
         pass
 
 
+def close_save_popups(page: Page) -> int:
+    """남은 저장(9~11항) 팝업 정리 — ADMIN_HOST 새 창 포함."""
+    closed = 0
+    for p in list(save_popups(page)):
+        try:
+            if not p.is_closed():
+                p.close()
+                closed += 1
+        except Exception:  # noqa: BLE001
+            pass
+    return closed
+
+
 def overlay_status(page: Page) -> dict:
-    """열린 검색팝업·저장모달·로딩 여부."""
+    """열린 검색팝업·저장팝업·저장모달·로딩 여부.
+
+    ★ 검색 팝업(popups)과 저장 팝업(save_popups, ADMIN_HOST 포함)을
+    모두 세야 leftover 저장팝업 때문에 다음행이 막히는 걸 놓치지 않는다.
+    """
     n_pop = 0
     try:
-        n_pop = len(popups(page))
+        # save_popups: ADMIN_HOST 포함 — popups(검색전용)의 상위집합이라
+        # 이것만 세면 검색·저장 팝업 leftover를 모두 놓치지 않는다.
+        n_pop = len(save_popups(page))
     except Exception:  # noqa: BLE001
         n_pop = 0
     modal = False
@@ -1781,6 +1840,9 @@ def finalize_row_overlays(page: Page, ctx: "RunCtx", row: dict) -> Page:
         n = close_search_popups(page)
         if n:
             ctx.info(f"  [행종료정리] 검색 팝업 {n}개 닫음")
+        n2 = close_save_popups(page)
+        if n2:
+            ctx.info(f"  [행종료정리] 저장 팝업(ADMIN_HOST 포함) {n2}개 닫음")
         if save_modal_visible(page):
             ctx.info("  [행종료정리] 저장 모달 닫기 시도")
             try_dismiss_save_modal(page)
@@ -1838,14 +1900,16 @@ def ensure_overlays_closed_before_next(
             )
         if st["popups"] > 0:
             n = close_search_popups(page)
+            n += close_save_popups(page)
             if n:
-                ctx.info(f"  남은 검색 팝업 {n}개 닫음")
+                ctx.info(f"  남은 검색/저장 팝업 {n}개 닫음")
         if st["save_modal"]:
             try_dismiss_save_modal(page)
         if now > end:
             # 제한시간 후에도 강제 닫기 반복 — 그래도 안 닫히면 샷 후 오류
             for _ in range(5):
                 close_search_popups(page)
+                close_save_popups(page)
                 try_dismiss_save_modal(page)
                 page.wait_for_timeout(500)
                 st = overlay_status(page)
@@ -2356,7 +2420,7 @@ def run_save_submit_and_verify(
                 f"{sorted(alert_baseline)} — 저장 팝업으로 쓰지 않음"
             )
 
-        before_popup_ids = {_popup_id(p) for p in popups(page)}
+        before_popup_ids = {_popup_id(p) for p in save_popups(page)}
         save_reacted = False
         # 최대 1회 재시도(총 2회). 팝업 반응 없으면 클릭 성공으로 치지 않음.
         for attempt in range(1, 3):
@@ -2388,7 +2452,7 @@ def run_save_submit_and_verify(
             )
             alert_baseline = collect_alert_baseline(page)
             dialog_from = len(dialog_msgs)
-            before_popup_ids = {_popup_id(p) for p in popups(page)}
+            before_popup_ids = {_popup_id(p) for p in save_popups(page)}
             last_click_ok = trusted_click_save_submit(page, btn, ctx)
             # 클릭 시도 순간부터 팝업 닫힘까지 초기화 진입 금지
             ctx.save_awaiting_popup = True
@@ -2437,6 +2501,17 @@ def run_save_submit_and_verify(
                 ctx.info(
                     "  [9항 원인추정] 다른 프레임 존재(iframe 가능) → "
                     f"{diag['frame_urls']}"
+                )
+            if diag.get("open_windows_total"):
+                ctx.info(
+                    "  [9항 원인추정] 새 창은 열렸으나 저장팝업으로 미인식 가능 "
+                    f"(open_windows={diag.get('open_windows')}) — "
+                    "ADMIN_HOST 창이면 save_popups()로 잡혀야 정상"
+                )
+            else:
+                ctx.info(
+                    "  [9항 원인추정] 클릭 후 새 창이 전혀 안 열림 — "
+                    "팝업이 실제로 안 뜨는 것(클릭 미도달/팝업차단) 쪽에 무게"
                 )
             if save_modal_visible(page) and attempt < 2:
                 page.wait_for_timeout(600)
@@ -2587,7 +2662,7 @@ def collect_alert_baseline(page: Page) -> set[str]:
             fps.add(f"page:{n}:{hit}")
     except Exception:  # noqa: BLE001
         pass
-    for p in popups(page):
+    for p in save_popups(page):
         try:
             ptext = _page_visible_text(p)
             n, hit = parse_mango_collect_count(ptext)
@@ -2627,7 +2702,7 @@ def find_mango_collect_alert(
         if fp not in base:
             return n, hit, "page", page
 
-    for p in popups(page):
+    for p in save_popups(page):
         ptext = _page_visible_text(p)
         n, hit = parse_mango_collect_count(ptext)
         if n is not None:
@@ -2758,9 +2833,9 @@ def save_result_signal_present(
         if n is not None:
             return True, f"dialog:{hit or msg}", page
 
-    # 2) 새 브라우저 창
+    # 2) 새 브라우저 창 (ADMIN_HOST 자체 새 창 포함 — save_popups)
     prev = before_popup_ids or set()
-    for p in popups(page):
+    for p in save_popups(page):
         if _popup_id(p) in prev:
             continue
         ptext = _page_visible_text(p)
@@ -2910,7 +2985,7 @@ def final_save_popup_still_open(
     본문에 남은 잔여 텍스트만으로는 '열림'으로 보지 않음.
     """
     prev = before_popup_ids or set()
-    for p in popups(page):
+    for p in save_popups(page):
         try:
             if _popup_id(p) in prev:
                 continue
@@ -3094,8 +3169,8 @@ def dismiss_mango_alert_ui(page: Page) -> None:
             page.wait_for_timeout(300)
     except Exception:  # noqa: BLE001
         pass
-    # 팝업 창에도 확인 버튼이 있을 수 있음
-    for p in list(popups(page)):
+    # 팝업 창에도 확인 버튼이 있을 수 있음 (ADMIN_HOST 저장팝업 포함)
+    for p in list(save_popups(page)):
         try:
             btn = (
                 p.locator("button, a, input[type='button'], input[type='submit']")
@@ -3166,7 +3241,7 @@ def verify_mango_collect_alert(
             break
 
         texts = [_page_visible_text(page)]
-        for p in popups(page):
+        for p in save_popups(page):
             texts.append(_page_visible_text(p))
         blob = "\n".join(texts)
         for pat in SAVE_FAIL_PATTERNS:
