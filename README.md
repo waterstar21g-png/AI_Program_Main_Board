@@ -16,7 +16,8 @@ GitHub 저장소: `waterstar21g-png/AI_Program_Main_Board`
 
 ## Windows — 웹앱 (P1, P2)
 
-**`run.bat`** 또는 `run.ps1` 더블클릭/실행 — 이 파일 하나로 전부 처리됩니다.
+**바탕화면 바로가기:** `바로가기만들기.bat` 더블클릭 → `AI_Program_Main_Board`  
+**실행:** **`run.bat`** 또는 `run.ps1` 더블클릭 — 이 파일 하나로 전부 처리됩니다.
 
 ```powershell
 .\run.ps1          # 평소: 동기화 생략, 바로 실행
