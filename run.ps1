@@ -18,7 +18,7 @@ if ($PSScriptRoot -match 'OneDrive') {
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.3.0"
+$ExpectedVersion = "3.3.1"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 
@@ -118,6 +118,10 @@ if ($skipSync) {
     @("scripts\next-dev-safe.mjs", "scripts/next-dev-safe.mjs"),
     @("scripts\clean-next.mjs", "scripts/clean-next.mjs"),
     @("scripts\verify-projects.mjs", "scripts/verify-projects.mjs"),
+    @("scripts\run-p1.mjs", "scripts/run-p1.mjs"),
+    @("scripts\run-p2.mjs", "scripts/run-p2.mjs"),
+    @("scripts\run-p3.mjs", "scripts/run-p3.mjs"),
+    @("scripts\COMMANDS.txt", "scripts/COMMANDS.txt"),
     @("next.config.ts", "next.config.ts"),
     @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
     @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
@@ -126,7 +130,10 @@ if ($skipSync) {
     @("run.ps1", "run.ps1"),
     @("run.bat", "run.bat"),
     @("verify.ps1", "verify.ps1"),
-    @("verify.bat", "verify.bat")
+    @("verify.bat", "verify.bat"),
+    @("p1.bat", "p1.bat"),
+    @("p2.bat", "p2.bat"),
+    @("p3.bat", "p3.bat")
   )
 
   $failed = @()

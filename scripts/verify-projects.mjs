@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 /**
- * P1 → P2 → P3 실행·검증 순서 명령
+ * 프로젝트 독립 실행·검증 (P1 / P2 / P3 각각)
  *
- *   npm run verify:p1
- *   npm run verify:p2
- *   npm run verify:p3
- *   npm run verify:all
- *   node scripts/verify-projects.mjs all
+ *   npm run p1 | p2 | p3          ← 권장 (명령 순서 안내 포함)
+ *   npm run verify:p1|p2|p3
+ *   node scripts/verify-projects.mjs p1
+ *
+ *  'all' 은 연쇄 파이프라인이 아니라, 세 프로젝트를 각각 독립 실행한 뒤
+ *  결과만 모읍니다.
  *
  * 서버(http://127.0.0.1:3000)가 떠 있으면 보드 API와 동일 로직을 호출합니다.
- * 서버가 없으면 --local 로 파일/환경만 점검합니다.
  */
 const base = process.env.SMOKE_BASE || 'http://127.0.0.1:3000';
-const arg = (process.argv[2] || 'all').toLowerCase();
+const arg = (process.argv[2] || 'p1').toLowerCase();
 const localOnly = process.argv.includes('--local');
 
 const map = {
@@ -26,7 +26,7 @@ const map = {
   'verify-all': 'verify-all',
 };
 
-const action = map[arg] || 'verify-all';
+const action = map[arg] || 'verify-p1';
 
 async function viaApi() {
   console.log(`\n[VERIFY] POST ${base}/api/board-actions { action: "${action}" }\n`);
@@ -66,7 +66,7 @@ async function main() {
   } catch (e) {
     console.error('API 호출 실패 — 보드 서버가 켜져 있는지 확인하세요.');
     console.error('  .\\run.bat  또는  npm run dev');
-    console.error('또는: npm run verify:all -- --local  (파일 점검만)');
+    console.error('또는: npm run p1 -- --local');
     console.error(e.message || e);
     process.exit(1);
   }

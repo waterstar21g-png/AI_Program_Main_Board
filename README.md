@@ -40,30 +40,28 @@ npm run dev
 웹앱 없이 [`python-collector/`](./python-collector) 폴더만으로 실행됩니다 — 자세한 건 그 폴더의 README 참고.
 보드 좌측 목록에도 **P3_Python_Item_Collector** 가 표시되며, 환경 점검을 할 수 있습니다.
 
-## 실행·검증 (P1 → P2 → P3)
+## 프로젝트별 독립 실행
 
-보드 좌측 하단 버튼으로 PowerShell 없이 실행합니다.
+P1 / P2 / P3 는 **서로 독립**입니다. 골라서 하나씩 실행합니다.  
+각 프로젝트 안의 **명령 순서**는 [`scripts/COMMANDS.txt`](./scripts/COMMANDS.txt) 참고.
 
-| 구분 | 버튼 |
-|------|------|
-| 실행·검증 순서 | ① P1 실행·검증 · ② P2 실행·검증 · ③ P3 실행·검증 |
-| PowerShell 대체 | ① 동기화 · ② 캐시정리 · ③ 전체순서검증 |
-
-명령어(보드와 동일):
+| 구분 | 보드 버튼 |
+|------|-----------|
+| 독립 실행 | ① P1 · ② P2 · ③ P3 |
+| PowerShell 대체 | ① 동기화 · ② 캐시정리 · ③ 개별점검 묶음 |
 
 ```bat
-verify.bat              REM 전체 순서 검증 (서버 필요)
+p1.bat                 REM P1만 (독립)
+p2.bat
+p3.bat
 verify.bat p1
-verify.bat p2
-verify.bat p3
 ```
 
 ```bash
-npm run verify:all            # P1→P2→P3 순서 실행·데이터검증
-npm run verify:p1
-npm run verify:p2
-npm run verify:p3
-npm run test:projects:local   # 서버 없이 파일 점검만
+npm run p1                 # P1 독립 — 명령 순서 안내 포함
+npm run p2
+npm run p3
+npm run verify:all         # 세 개를 각각 독립 실행 후 결과만 모음 (연쇄 아님)
 ```
 
 ## run.ps1 없을 때 (최초 1회만)

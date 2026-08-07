@@ -329,15 +329,19 @@ print(f"{len(rows)-1}")
 
 export type SmokeTarget = 'p1' | 'p2' | 'p3' | 'all';
 
-/** 실행·검증 순서: P1 → P2 → P3 */
-export const VERIFY_ORDER: SmokeTarget[] = ['p1', 'p2', 'p3'];
+/**
+ * 개별점검 묶음용 목록 — 연쇄 파이프라인 아님.
+ * 각 항목은 서로 독립적으로 실행·검증한다.
+ */
+export const INDEPENDENT_PROJECTS: SmokeTarget[] = ['p1', 'p2', 'p3'];
 
 export async function runProjectSmoke(target: SmokeTarget = 'all'): Promise<SmokeRunResult> {
   const results: SmokeProjectResult[] = [];
   const order: string[] = [];
 
   if (target === 'all') {
-    for (const id of VERIFY_ORDER) {
+    // 각각 독립 실행 후 결과만 모음 (P1 결과가 P2 입력이 되지 않음)
+    for (const id of INDEPENDENT_PROJECTS) {
       order.push(id);
       if (id === 'p1') results.push(await smokeP1());
       if (id === 'p2') results.push(await smokeP2());

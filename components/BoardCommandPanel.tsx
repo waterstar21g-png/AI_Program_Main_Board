@@ -51,32 +51,37 @@ export function BoardCommandPanel() {
   return (
     <section className="board-cmd">
       <div className="board-cmd__block">
-        <strong className="board-cmd__title">실행·검증 순서</strong>
-        <p className="board-cmd__hint">P1 → P2 → P3 · 실행 후 데이터 검증</p>
+        <strong className="board-cmd__title">프로젝트별 독립 실행</strong>
+        <p className="board-cmd__hint">
+          P1·P2·P3 각각 따로 · 버튼마다 그 프로젝트의 명령 순서만 실행
+        </p>
         <div className="board-cmd__actions">
           <button
             type="button"
             className="btn btn--sm btn--primary"
             disabled={busy}
             onClick={() => void run('verify-p1')}
+            title="p1.bat / npm run p1"
           >
-            {running === 'verify-p1' ? '…' : '① P1 실행·검증'}
+            {running === 'verify-p1' ? '…' : '① P1 독립 실행'}
           </button>
           <button
             type="button"
             className="btn btn--sm btn--primary"
             disabled={busy}
             onClick={() => void run('verify-p2')}
+            title="p2.bat / npm run p2"
           >
-            {running === 'verify-p2' ? '…' : '② P2 실행·검증'}
+            {running === 'verify-p2' ? '…' : '② P2 독립 실행'}
           </button>
           <button
             type="button"
             className="btn btn--sm btn--primary"
             disabled={busy}
             onClick={() => void run('verify-p3')}
+            title="p3.bat / npm run p3"
           >
-            {running === 'verify-p3' ? '…' : '③ P3 실행·검증'}
+            {running === 'verify-p3' ? '…' : '③ P3 독립 실행'}
           </button>
         </div>
       </div>
@@ -108,9 +113,9 @@ export function BoardCommandPanel() {
             className="btn btn--sm btn--secondary"
             disabled={busy}
             onClick={() => void run('verify-all')}
-            title="npm run verify:all 대체"
+            title="P1·P2·P3 각각 독립 실행 후 결과만 모음 (연쇄 아님)"
           >
-            {running === 'verify-all' ? '…' : '③ 전체순서검증'}
+            {running === 'verify-all' ? '…' : '③ 개별점검 묶음'}
           </button>
         </div>
       </div>

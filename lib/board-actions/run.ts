@@ -38,6 +38,10 @@ const SYNC_FILES = [
   'app/api/project-test/route.ts',
   'app/api/board-actions/route.ts',
   'scripts/verify-projects.mjs',
+  'scripts/run-p1.mjs',
+  'scripts/run-p2.mjs',
+  'scripts/run-p3.mjs',
+  'scripts/COMMANDS.txt',
   'scripts/smoke-projects.mjs',
   'scripts/clean-next.mjs',
   'scripts/next-dev-safe.mjs',
@@ -46,6 +50,9 @@ const SYNC_FILES = [
   'run.bat',
   'verify.ps1',
   'verify.bat',
+  'p1.bat',
+  'p2.bat',
+  'p3.bat',
 ];
 
 function localOnlyGuard(): string | null {
@@ -146,7 +153,11 @@ export async function runBoardAction(action: BoardAction): Promise<BoardActionRe
   } as const;
 
   const target = map[action];
-  logs.push(`[VERIFY] 순서 실행·검증: ${target === 'all' ? 'P1 → P2 → P3' : target.toUpperCase()}`);
+  if (target === 'all') {
+    logs.push('[VERIFY] P1·P2·P3 각각 독립 실행 후 결과만 모음 (연쇄 아님)');
+  } else {
+    logs.push(`[VERIFY] ${target.toUpperCase()} 독립 실행 — 해당 프로젝트 명령 순서만`);
+  }
   const smoke = await runProjectSmoke(target);
   for (const r of smoke.results) {
     logs.push(`— ${r.name}: ${r.ok ? 'OK' : 'FAIL'}`);
