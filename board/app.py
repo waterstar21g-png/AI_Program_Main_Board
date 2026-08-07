@@ -30,9 +30,10 @@ from library import (  # noqa: E402
     search_xlsx,
     set_selected,
 )
+from log_format import format_log_display  # noqa: E402
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.35"
+VERSION = "2.0.36"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -347,7 +348,7 @@ class BoardApp(tk.Tk):
         ).pack(side="left", padx=6)
         tk.Label(
             actions,
-            text="실행로그: 1~5단 들여쓰기·색상 · 전행 카테고리·URL · 1·2행 스크린샷",
+            text="실행로그: ①~⑤단 전각들여쓰기·색상 · 전행 카테고리·URL · 1·2행 스크린샷",
             bg="#ffffff",
             fg="#0f766e",
             anchor="w",
@@ -384,7 +385,7 @@ class BoardApp(tk.Tk):
         # 3. 실행 로그 그리드 (1~5단 들여쓰기 + 색상)
         log_frame = tk.LabelFrame(
             parent,
-            text="3. 실행 로그 (1~5단 들여쓰기 · 색상)",
+            text="3. 실행 로그 (①~⑤단 전각들여쓰기 · 색상)",
             bg="#ffffff",
             padx=6,
             pady=4,
@@ -414,10 +415,10 @@ class BoardApp(tk.Tk):
         )
         self.p2_log.heading("time", text="시각")
         self.p2_log.heading("stage", text="단")
-        self.p2_log.heading("message", text="내용")
+        self.p2_log.heading("message", text="내용 (①~⑤ 들여쓰기)")
         self.p2_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
-        self.p2_log.column("stage", width=48, minwidth=40, stretch=False, anchor="center")
-        self.p2_log.column("message", width=600, minwidth=200, stretch=True, anchor="w")
+        self.p2_log.column("stage", width=44, minwidth=40, stretch=False, anchor="center")
+        self.p2_log.column("message", width=620, minwidth=220, stretch=True, anchor="w")
         self._setup_p2_log_tags()
         log_sb = tk.Scrollbar(log_frame, orient="vertical", command=self.p2_log.yview)
         self.p2_log.configure(yscrollcommand=log_sb.set)
@@ -522,116 +523,13 @@ class BoardApp(tk.Tk):
         tv.tag_configure("btn", foreground="#1e3a8a", background="#dbeafe")
         tv.tag_configure("stop", foreground="#7f1d1d", background="#fecaca")
 
-    # 단별 들여쓰기 접두 (1단=없음 … 5단=가장 깊음)
-    _LOG_INDENT = ("", "  ", "    ", "      ", "        ")
-
-    @classmethod
-    def _log_depth(cls, text: str) -> int:
-        """로그 한 줄의 계층 깊이 1~5."""
-        raw = text or ""
-        # 이미 들여쓴 줄
-        lead = len(raw) - len(raw.lstrip(" \t"))
-        s = raw.strip()
-        if not s:
-            return 5
-
-        # 1단: 입력 경계·전체 요약
-        if (
-            s.startswith("---")
-            or s.startswith("====")
-            or s.startswith("[입력목록]")
-            or s.startswith("처리대상")
-            or s.startswith("수집 시작")
-            or s.startswith("수집 종료")
-            or re.match(r"^\[OK\]|^\[FAIL\]|^\[중단", s)
-        ):
-            return 1
-
-        # 2단: 0~4 주요 단계 / 버튼 단계 헤더
-        if re.match(
-            r"^(0\.|1\.|2-A\.|2-B\.|2\.|3\.|4\.|"
-            r"2-A\b|2-B\b)",
-            s,
-        ):
-            return 2
-        if re.match(r"^> 시도\b", s):
-            return 2
-
-        # 3단: 핵심 액션(버튼·별표)
-        if "[버튼1]" in s or "[버튼2]" in s or "★★" in s or s.startswith("★"):
-            return 3
-        if "저장하기" in s and ("클릭" in s or "서버" in s):
-            return 3
-
-        # 5단: 진단·부가
-        if "[진단]" in s or s.startswith("· ") or lead >= 4:
-            return 5
-
-        # 4단: 경고·세부·기본 들여쓰기
-        if (
-            "[경고]" in s
-            or "[정보]" in s
-            or "[확인]" in s
-            or "[망고" in s
-            or "[dialog]" in s
-            or "[샷]" in s
-            or lead >= 2
-        ):
-            return 4
-
-        # 기본: 본문 상세
-        return 3
-
-    @classmethod
-    def _log_color_tag(cls, text: str, depth: int) -> str:
-        """상태 우선 색상 태그 (오류>중단>경고>성공>저장>버튼>단)."""
-        s = text or ""
-        low = s.lower()
-        if (
-            "[FAIL]" in s
-            or "오류" in s
-            or "실패" in s
-            or "error" in low
-            or "미확인" in s
-            or "찾지 못" in s
-        ):
-            return "err"
-        if "중단" in s or "수집 종료" in s:
-            return "stop"
-        if "[경고]" in s or "경고" in s:
-            return "warn"
-        if (
-            "[OK]" in s
-            or "성공" in s
-            or "완료 확인" in s
-            or "수집건수 OK" in s
-            or "서버 최종 갱신 완료" in s
-        ):
-            return "ok"
-        if "[버튼2]" in s or (
-            "저장하기" in s and ("하단" in s or "서버" in s or "클릭" in s)
-        ):
-            return "save"
-        if "[버튼1]" in s or "모두저장" in s:
-            return "btn"
-        return f"d{max(1, min(5, depth))}"
-
-    @classmethod
-    def _format_log_display(cls, text: str) -> tuple[int, str, str, str]:
+    @staticmethod
+    def _format_log_display(text: str) -> tuple[int, str, str, str]:
         """(depth, stage_label, display_message, color_tag)."""
-        stripped = (text or "").strip()
-        depth = cls._log_depth(stripped)
-        depth = max(1, min(5, depth))
-        indent = cls._LOG_INDENT[depth - 1]
-        # 트리 마커로 단 구분
-        markers = ("● ", "▶ ", "├ ", "│ ", "· ")
-        mark = markers[depth - 1]
-        display = f"{indent}{mark}{stripped}"
-        tag = cls._log_color_tag(stripped, depth)
-        return depth, f"{depth}단", display, tag
+        return format_log_display(text)
 
     def _p2_log_line(self, message: str, stage: str = "") -> None:
-        """메인 스레드에서 실행로그 그리드에 한 줄 추가 (1~5단·색상)."""
+        """메인 스레드에서 실행로그 그리드에 한 줄 추가 (1~5단·색상·전각들여쓰기)."""
         if not hasattr(self, "p2_log"):
             return
         text = (message or "").rstrip()
@@ -643,10 +541,10 @@ class BoardApp(tk.Tk):
             t = m.group(1)
             text = m.group(2)
         self._capture_shot_dir_from_log(text)
-        depth, stage_lbl, display, tag = self._format_log_display(text)
-        # 호출자가 stage를 넘기면 단 라벨 뒤에 보조 표기
-        if stage and stage not in stage_lbl:
-            stage_lbl = f"{depth}단"
+        depth, stage_lbl, display, tag = format_log_display(text)
+        # stage 인자는 하위호환용 — 표시는 항상 1단~5단
+        _ = stage
+        stage_lbl = f"{depth}단"
         self.p2_log.insert(
             "", "end", values=(t, stage_lbl, display), tags=(tag,)
         )
@@ -675,8 +573,8 @@ class BoardApp(tk.Tk):
 
     @staticmethod
     def _guess_log_stage(text: str) -> str:
-        """하위 호환 — 단 분류는 _format_log_display 사용."""
-        _d, label, _m, _t = BoardApp._format_log_display(text)
+        """하위 호환 — 단 분류는 format_log_display 사용."""
+        _d, label, _m, _t = format_log_display(text)
         return label
 
     def _show_shot_viewer(self) -> None:
