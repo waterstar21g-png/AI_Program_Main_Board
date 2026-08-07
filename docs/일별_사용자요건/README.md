@@ -75,3 +75,4 @@ SR_doc_YYYYMMDD_HHMMSS_요건요약20자이내.md
 | [SR_doc_20260807_155000_Python보드B안.md](./SR_doc_20260807_155000_Python보드B안.md) | Python B안 · P3→P2 심플보드 |
 | [SR_doc_20260807_164000_P2_1행3건검증.md](./SR_doc_20260807_164000_P2_1행3건검증.md) | P2 1행×3건 검증·재시도 |
 | [SR_doc_20260807_185400_New최종버전인도.md](./SR_doc_20260807_185400_New최종버전인도.md) | AI_Program_Main_Board_New 최종 v2.0.4 인도 |
+| [SR_doc_20260807_192500_PowerShell로컬받기명령.md](./SR_doc_20260807_192500_PowerShell로컬받기명령.md) | PowerShell 로컬 받기·경로 고정 |

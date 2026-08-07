@@ -1,50 +1,90 @@
 # 로컬 작업 경로 (고정)
 
-**앞으로 모든 로컬 작업은 아래 경로에서만 수행합니다.**
+**모든 프로그램은 아래 한 폴더에만 둡니다.**
 
 ```
 D:\My_Project\AI_Program_Main_Board
 ```
 
-컴팩트 보드(Python P1+P2): `D:\My_Project\AI_Program_Main_Board\AI_Program_Main_Board_New`  
-→ [`AI_Program_Main_Board_New/README.md`](./AI_Program_Main_Board_New/README.md) · **npm 없음** · `run.bat`
+| 항목 | 경로 |
+|------|------|
+| 루트(Next 보드) | `D:\My_Project\AI_Program_Main_Board\` |
+| New(Python P1+P2) | `D:\My_Project\AI_Program_Main_Board\AI_Program_Main_Board_New\` |
+| P3 | `D:\My_Project\AI_Program_Main_Board\python-collector\` |
 
-배치 3개만 남기는 정리안(결정 전 · 미실행): [docs/BATCH_THREE_CLEANUP_PLAN.md](./docs/BATCH_THREE_CLEANUP_PLAN.md)
+> PowerShell 에서는 `cd /d`, `2>nul`, `curl -L -o` (CMD 문법) 를 쓰지 마세요.
 
-- OneDrive / `C:\Users\...` 아래는 사용하지 않습니다.
-- GitHub `main` 동기화·`run.bat`·바로가기·P1/P2/P3 실행 모두 이 폴더 기준입니다.
-- 클라우드 에이전트는 GitHub에 반영하고, 로컬 PC는 이 경로에서 Sync/실행합니다.
+---
 
-## 폴더 옮길 때 (복사 항목이 3만 개+인 이유)
+## PowerShell — 전체 받기 (권장)
 
-소스 코드는 수백 개뿐입니다. **대부분이 `node_modules`(의존성)와 `.next`/`.next-dev`(빌드 캐시)** 입니다.
+아래를 **한 줄씩** 실행합니다. 저장소 전체가  
+`D:\My_Project\AI_Program_Main_Board` 안으로 들어갑니다.
 
-| 항목 | 대략 | 복사해야 하나? |
-|------|------|----------------|
-| 소스·스크립트·문서 | 수백 개 | 예 |
-| `node_modules/` | **2만~수만 개** | **아니오** — 대상에서 `npm install` |
-| `.next/`, `.next-dev/` | 수천 개+ | **아니오** — 실행 시 다시 생성 |
-| `.git/` | 수천 개 | git clone이면 예 / ZIP이면 보통 없음 |
+### A. Git 있을 때 (가장 깨끗)
 
-### 권장 복사 방법
-
-1. **복사 중이라면** `node_modules`, `.next`, `.next-dev` 는 건너뛰거나 복사 취소 후 제외하고 다시
-2. 대상: `D:\My_Project\AI_Program_Main_Board`
-3. 그 폴더에서:
-
-```cmd
-cd /d D:\My_Project\AI_Program_Main_Board
-npm install
-run.bat
+```powershell
+New-Item -ItemType Directory -Force -Path D:\My_Project | Out-Null
+Set-Location D:\My_Project
+if (Test-Path .\AI_Program_Main_Board\.git) {
+  Set-Location .\AI_Program_Main_Board
+  git pull origin main
+} else {
+  if (Test-Path .\AI_Program_Main_Board) { Remove-Item -Recurse -Force .\AI_Program_Main_Board }
+  git clone https://github.com/waterstar21g-png/AI_Program_Main_Board.git AI_Program_Main_Board
+  Set-Location .\AI_Program_Main_Board
+}
+Set-Location .\AI_Program_Main_Board_New
+.\run.bat
 ```
 
-또는 Git으로 깨끗이:
+### B. Git 없이 ZIP
+
+```powershell
+New-Item -ItemType Directory -Force -Path D:\My_Project\AI_Program_Main_Board | Out-Null
+Set-Location D:\My_Project\AI_Program_Main_Board
+Invoke-WebRequest -Uri "https://github.com/waterstar21g-png/AI_Program_Main_Board/archive/refs/heads/main.zip" -OutFile ".\main.zip"
+Expand-Archive -Path ".\main.zip" -DestinationPath ".\_tmp" -Force
+Copy-Item -Path ".\_tmp\AI_Program_Main_Board-main\*" -Destination ".\" -Recurse -Force
+Remove-Item -Recurse -Force ".\_tmp", ".\main.zip"
+Set-Location .\AI_Program_Main_Board_New
+.\run.bat
+```
+
+### 잘못 받은 경우 (지금처럼 `D:\My_Project\AI_Program_Main_Board_New` 만 생긴 경우)
+
+`D:\My_Project` 바로 아래의 `AI_Program_Main_Board_New` 는 지우고, 위 **A** 또는 **B** 로  
+`D:\My_Project\AI_Program_Main_Board` 안에 다시 받으세요.
+
+```powershell
+# 잘못된 위치 정리 (선택)
+Remove-Item -Recurse -Force D:\My_Project\AI_Program_Main_Board_New -ErrorAction SilentlyContinue
+```
+
+---
+
+## CMD (명령 프롬프트) — PowerShell 아닐 때만
 
 ```cmd
-mkdir D:\My_Project 2>nul
+mkdir D:\My_Project
 cd /d D:\My_Project
-git clone https://github.com/waterstar21g-png/AI_Program_Main_Board.git
-cd AI_Program_Main_Board
-npm install
+git clone https://github.com/waterstar21g-png/AI_Program_Main_Board.git AI_Program_Main_Board
+cd AI_Program_Main_Board\AI_Program_Main_Board_New
 run.bat
 ```
+
+---
+
+## 실행
+
+```powershell
+# New 보드 (Python · npm 없음)
+Set-Location D:\My_Project\AI_Program_Main_Board\AI_Program_Main_Board_New
+.\run.bat
+
+# 기존 Next 보드
+Set-Location D:\My_Project\AI_Program_Main_Board
+.\run.bat
+```
+
+`node_modules` / `.next` 는 복사하지 마세요. Next 보드를 쓸 때만 그 폴더에서 `npm install`.
