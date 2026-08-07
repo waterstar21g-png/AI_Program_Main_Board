@@ -1,4 +1,4 @@
-# AI_Program_Main_Board_New (v2.0.0 · Python)
+# AI_Program_Main_Board_New (v2.0.2 · Python)
 
 **npm / Next.js 없음.** Python만 사용합니다.
 
@@ -22,11 +22,13 @@ run.bat
 4. **P2** 목록에서 선택 → **1행 검증 모드** 체크 후 수집 시작  
    - URL 1행 × 상품 3건 · 단계 스크린샷 · 실패 시 같은 행 재시도  
    - 로그: `P2/run-logs/`
+   - 더망고 로그인: 보드/CLI에서 **아이디·비밀번호 요청** (또는 `--id` / `--pw`, 환경변수 `TMG_ID` / `TMG_PW`)
 
 또는:
 
 ```bat
 P2\run-verify.bat 엑셀.xlsx
+P2\run-verify.bat 엑셀.xlsx --id MYID --pw MYPW
 ```
 
 ## 폴더

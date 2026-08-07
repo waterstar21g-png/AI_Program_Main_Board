@@ -11,7 +11,7 @@ import sys
 import threading
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "P1"))
@@ -29,7 +29,7 @@ from library import (  # noqa: E402
     set_selected,
 )
 
-VERSION = "2.0.1"
+VERSION = "2.0.2"
 APP_TITLE = "AI_Program_Main_Board_New"
 
 
@@ -397,17 +397,42 @@ class BoardApp(tk.Tk):
             messagebox.showerror("오류", f"파일 없음:\n{path}")
             return
 
+        # CLI와 동일하게 실행 전 ID/PW 요청 (콘솔 창에서 입력)
+        tmg_id = simpledialog.askstring("더망고 로그인", "아이디:", parent=self)
+        if not tmg_id:
+            return
+        tmg_pw = simpledialog.askstring("더망고 로그인", "비밀번호:", show="*", parent=self)
+        if not tmg_pw:
+            return
+
         run_bat = ROOT / "P2" / "run.bat"
         collect_py = ROOT / "P2" / "collect.py"
         verify = bool(self.var_verify.get())
         try:
             if os.name == "nt" and run_bat.exists():
-                cmd = ["cmd", "/c", "start", "P2_수집", "cmd", "/k", str(run_bat), path]
+                # run.bat → collect.py 에 --id/--pw 전달
+                extra = f'--id "{tmg_id}" --pw "{tmg_pw}"'
                 if verify:
-                    cmd.append("--verify")
-                subprocess.Popen(cmd, cwd=str(ROOT / "P2"))
+                    extra += " --verify"
+                cmdline = f'call "{run_bat}" "{path}" {extra}'
+                subprocess.Popen(
+                    ["cmd", "/c", "start", "P2_수집", "cmd", "/k", cmdline],
+                    cwd=str(ROOT / "P2"),
+                )
             else:
-                args = [sys.executable, str(collect_py), path, "3", "--retries", "3", "--yes"]
+                args = [
+                    sys.executable,
+                    str(collect_py),
+                    path,
+                    "3",
+                    "--retries",
+                    "3",
+                    "--yes",
+                    "--id",
+                    tmg_id,
+                    "--pw",
+                    tmg_pw,
+                ]
                 if verify:
                     args.append("--verify")
                 subprocess.Popen(args, cwd=str(ROOT / "P2"))

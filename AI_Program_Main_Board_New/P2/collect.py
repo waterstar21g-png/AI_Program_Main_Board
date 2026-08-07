@@ -16,6 +16,8 @@ P2 — 더망고(tmg1898) 상품데이터 대량수집
     run-verify.bat 엑셀.xlsx
 """
 
+import getpass
+import os
 import re
 import socket
 import subprocess
@@ -75,6 +77,10 @@ SAVE_FAIL_PATTERNS = [
 ]
 
 SHOT_ROOT = Path(__file__).parent / "run-logs"
+
+# CLI/환경변수로 받은 더망고 로그인 (세션 없을 때 사용)
+_TMG_ID: str | None = None
+_TMG_PW: str | None = None
 
 
 def log(msg: str) -> None:
@@ -601,6 +607,122 @@ def with_nav_retry(page: Page, fn, retries: int = 3):
     return None
 
 
+def set_tmg_credentials(user_id: str | None, password: str | None) -> None:
+    global _TMG_ID, _TMG_PW
+    if user_id is not None:
+        _TMG_ID = user_id.strip()
+    if password is not None:
+        _TMG_PW = password
+
+
+def prompt_tmg_credentials() -> tuple[str, str]:
+    """CLI로 더망고 아이디/비밀번호 요청 (환경변수 TMG_ID / TMG_PW 우선)."""
+    global _TMG_ID, _TMG_PW
+    uid = (_TMG_ID or os.environ.get("TMG_ID") or "").strip()
+    pw = _TMG_PW or os.environ.get("TMG_PW") or ""
+
+    print("", flush=True)
+    print("=== 더망고 로그인 정보 (CLI) ===", flush=True)
+    if not uid:
+        try:
+            uid = input("아이디: ").strip()
+        except EOFError as e:
+            raise RuntimeError("아이디 입력이 필요합니다 (CLI).") from e
+    else:
+        print(f"아이디: {uid}  (환경변수/인자)", flush=True)
+
+    if not pw:
+        try:
+            if sys.stdin.isatty():
+                pw = getpass.getpass("비밀번호: ")
+            else:
+                # 비TTY: 비밀번호도 한 줄 입력 (로컬 파이프/테스트용)
+                print("비밀번호: ", end="", flush=True)
+                pw = input().strip()
+        except EOFError as e:
+            raise RuntimeError("비밀번호 입력이 필요합니다 (CLI).") from e
+    else:
+        print("비밀번호: ********  (환경변수/인자)", flush=True)
+
+    if not uid or not pw:
+        raise RuntimeError("아이디와 비밀번호를 모두 입력해야 합니다.")
+
+    _TMG_ID, _TMG_PW = uid, pw
+    return uid, pw
+
+
+def perform_tmg_login(page: Page, user_id: str | None = None, password: str | None = None) -> None:
+    """로그인 화면에서 CLI 자격증명으로 로그인 시도."""
+    if "admin_login" not in page.url:
+        return
+
+    uid = (user_id or _TMG_ID or "").strip()
+    pw = password or _TMG_PW or ""
+    if not uid or not pw:
+        uid, pw = prompt_tmg_credentials()
+
+    log(f"로그인 시도 (아이디={uid})")
+    try:
+        SHOT_ROOT.mkdir(parents=True, exist_ok=True)
+        page.screenshot(
+            path=str(SHOT_ROOT / f"login_before_{time.strftime('%Y%m%d_%H%M%S')}.png"),
+            full_page=True,
+        )
+    except Exception:
+        pass
+
+    id_box = page.locator('input[name="login_id"]').first
+    pw_box = page.locator('input[name="login_pass"]').first
+    id_box.wait_for(state="visible", timeout=30_000)
+    type_into(page, id_box, uid)
+    type_into(page, pw_box, pw)
+
+    # 로그인 버튼
+    clicked = False
+    for sel in (
+        'input[type="submit"][value*="로그인"]',
+        'input[value*="로그인"]',
+        'button:has-text("로그인")',
+    ):
+        loc = page.locator(sel)
+        if loc.count() > 0:
+            click_it(loc)
+            clicked = True
+            break
+    if not clicked:
+        pw_box.press("Enter")
+
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=30_000)
+    except Exception:  # noqa: BLE001
+        pass
+    page.wait_for_timeout(1500)
+
+    # 로그인 중계/리다이렉트
+    for _ in range(15):
+        page = refresh_if_closed(page)
+        if "admin_login" not in page.url and ADMIN_HOST in page.url:
+            break
+        if "m_login" in page.url or "login_ok" in page.url:
+            page.wait_for_timeout(800)
+            continue
+        page.wait_for_timeout(500)
+
+    try:
+        page.screenshot(
+            path=str(SHOT_ROOT / f"login_after_{time.strftime('%Y%m%d_%H%M%S')}.png"),
+            full_page=True,
+        )
+    except Exception:
+        pass
+
+    if "admin_login" in page.url:
+        raise RuntimeError(
+            "로그인 실패 — 아이디/비밀번호를 확인하거나, 화면에 캡차/추가인증이 있는지 확인하세요."
+        )
+    log("로그인 성공(로그인 화면 이탈 확인)")
+
+
 def _ask_human(prompt: str) -> None:
     """대화형 터미널에서만 대기. CI/비대화형이면 즉시 실패."""
     if not sys.stdin.isatty():
@@ -620,12 +742,11 @@ def _ask_human(prompt: str) -> None:
 def handle_possible_login_page(page: Page) -> None:
     """
     세션이 갑자기 만료돼(또는 애초에 로그인이 안 된 채) admin_login.php로
-    튕기는 경우가 있다. 이걸 놓치면 있지도 않은 화면 요소를 60초씩
-    기다리다 타임아웃만 나므로, 즉시 감지해서 로그인을 요청한다.
+    튕기는 경우가 있다. CLI로 ID/PW를 받아 자동 로그인한다.
     """
     if "admin_login" not in page.url:
         return
-    log("  [경고] 로그인 화면으로 이동됨 — 세션이 없거나 만료된 것 같습니다")
+    log("  [경고] 로그인 화면 — CLI 자격증명으로 로그인합니다")
     try:
         SHOT_ROOT.mkdir(parents=True, exist_ok=True)
         shot = SHOT_ROOT / f"login_required_{time.strftime('%Y%m%d_%H%M%S')}.png"
@@ -633,12 +754,8 @@ def handle_possible_login_page(page: Page) -> None:
         log(f"  [샷] 로그인 화면: {shot}")
     except Exception as e:  # noqa: BLE001
         log(f"  [샷 실패] {e}")
-    _ask_human("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
-    try:
-        page.wait_for_load_state("domcontentloaded", timeout=15_000)
-    except Exception:  # noqa: BLE001
-        pass
-    page.wait_for_timeout(1000)
+    perform_tmg_login(page)
+    page.wait_for_timeout(800)
     if "admin_login" in page.url:
         raise RuntimeError("로그인 후에도 여전히 로그인 화면입니다 — 다시 확인해 주세요")
 
@@ -942,7 +1059,7 @@ def ensure_ready_page(page: Page) -> Page:
             log(f"  [샷] 로그인 게이트: {shot}")
         except Exception as e:  # noqa: BLE001
             log(f"  [샷 실패] {e}")
-        _ask_human("로그인이 필요합니다 — 브라우저에서 로그인 후 이 창에서 Enter 를 누르세요...")
+        perform_tmg_login(page)
         page = refresh_if_closed(page)
         # 로그인 직후 사이트 자체가 리다이렉트 중일 수 있으므로(m_login_ok.php 등)
         # 안정될 때까지 잠깐 기다린 뒤에 필요하면 이동한다.
@@ -1006,6 +1123,8 @@ def main() -> None:
         action="store_true",
         help="실패해도 y/n 묻지 않고 다음 행으로 (또는 재시도만)",
     )
+    ap.add_argument("--id", dest="tmg_id", default=None, help="더망고 아이디 (없으면 CLI 요청)")
+    ap.add_argument("--pw", dest="tmg_pw", default=None, help="더망고 비밀번호 (없으면 CLI 요청)")
     args = ap.parse_args()
 
     excel_path = args.excel
@@ -1014,6 +1133,10 @@ def main() -> None:
     max_rows = args.max_rows
     if verify and max_rows is None:
         max_rows = 1
+
+    # 로그인 정보: 인자 → 환경변수 → CLI 입력
+    set_tmg_credentials(args.tmg_id, args.tmg_pw)
+    prompt_tmg_credentials()
 
     rows = read_excel(excel_path)
     if not rows:

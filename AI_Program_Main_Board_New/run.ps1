@@ -2,7 +2,7 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
-Write-Host "=== AI_Program_Main_Board_New v2.0.1 (Python) ===" -ForegroundColor Cyan
+Write-Host "=== AI_Program_Main_Board_New v2.0.2 (Python) ===" -ForegroundColor Cyan
 
 $py = $null
 foreach ($c in @("py -3", "python", "python3")) {
