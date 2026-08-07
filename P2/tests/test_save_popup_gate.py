@@ -159,6 +159,43 @@ def test_buttons_are_distinct(browser):
     page.close()
 
 
+def test_save_popup_on_admin_host_is_detected(browser):
+    """저장 팝업이 ADMIN_HOST(같은 관리자사이트) 새 창으로 떠도 감지해야 함.
+
+    회귀: popups()는 ADMIN_HOST 새 창을 제외해 저장 팝업을 영원히 못 봤다
+    ("저장하기 눌러도 팝업이 전혀 안 뜬다"로 보이던 원인).
+    save_popups()/save_result_signal_present 는 ADMIN_HOST 도 잡아야 한다.
+    """
+    ctx = browser.new_context()
+    ctx.route(
+        "**/tmg1898.cafe24.com/**",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/html; charset=utf-8",
+            body="<html><body>3건이 수집되었다</body></html>",
+        ),
+    )
+    page = ctx.new_page()
+    page.goto("data:text/html,<h1>main admin page</h1>")
+    before = {C._popup_id(p) for p in C.save_popups(page)}
+
+    admin_popup = ctx.new_page()
+    admin_popup.goto("https://tmg1898.cafe24.com/mall/admin/save_popup.php")
+
+    # 회귀 확인: 검색전용 popups() 는 ADMIN_HOST 를 제외하므로 못 봄
+    assert admin_popup not in C.popups(page), "popups()가 ADMIN_HOST를 잡으면 안 됨(검색전용)"
+    # save_popups() 는 ADMIN_HOST 포함해서 잡아야 함
+    assert any(
+        C._popup_id(p) == C._popup_id(admin_popup) for p in C.save_popups(page)
+    ), "save_popups()가 ADMIN_HOST 저장팝업을 못 봄"
+
+    has, detail, hit = C.save_result_signal_present(
+        page, [], before_popup_ids=before, baseline=set()
+    )
+    assert has is True, f"ADMIN_HOST 저장 팝업을 감지 못함: {detail}"
+    ctx.close()
+
+
 def test_diagnose_detects_overlay_interception(browser):
     """오버레이가 저장하기 클릭좌표를 가로채면 진단이 same=False로 잡아야 함."""
     ctx = browser.new_context()
@@ -642,6 +679,7 @@ if __name__ == "__main__":
         b = p.chromium.launch(headless=True)
         for name, fn in [
             ("distinct", test_buttons_are_distinct),
+            ("admin_host_popup_detected", test_save_popup_on_admin_host_is_detected),
             ("diag_overlay", test_diagnose_detects_overlay_interception),
             ("diag_required_radio", test_diagnose_detects_unselected_required_radio),
             ("clickable_not_wrapper", test_save_resolves_clickable_not_wrapper_div),
