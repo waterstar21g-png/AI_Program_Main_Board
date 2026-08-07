@@ -91,11 +91,16 @@ class FakeCtx:
         self.msgs: list[str] = []
         self.save_popup_seen = False
         self.save_popup_closed = False
+        self.search_popup_seen = False
+        self.search_popup_closed = False
+        self.save_count_logged = False
+        self.save_count_snapshot = None
         self.server_save_ok = False
         self.save_awaiting_popup = False
         self.save_popup_kind = ""
         self.save_popup_ui_latched = False
         self.row_deadline = time.time() + 120
+        self.save_count = 3
 
     def info(self, msg: str) -> None:
         self.msgs.append(msg)
@@ -479,6 +484,78 @@ def test_awaiting_popup_blocks_init_log_path(browser):
     page.close()
 
 
+def test_search_popup_close_timeout_raises_no_force_continue(browser):
+    """6항: 검색 팝업이 안 닫히면 TimeoutError — 강제닫고 다음단계 금지."""
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.goto("data:text/html,<h1>main</h1>")
+    popup = ctx.new_page()
+    # about:blank 는 popups() 필터에서 제외되므로 http(s)/data URL 사용
+    popup.goto("data:text/html,<h1>search popup stuck</h1>")
+    assert C.popups(page), "테스트용 검색 팝업이 열려 있어야 함"
+    with pytest.raises(TimeoutError) as ei:
+        C.wait_popups_close(page, timeout_sec=2)
+    assert "6항" in str(ei.value) or "닫히지" in str(ei.value)
+    # 강제 닫지 않았으므로 팝업이 남아 있어야 함
+    assert not popup.is_closed()
+    ctx.close()
+
+
+def test_order_is_open_close_then_count(browser):
+    """10 열림 → 11 닫힘 → 12 건수 순서 (닫힘 전 dismiss로 건수 소실 방지)."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    base = C.collect_alert_baseline(page)
+    before = {C._popup_id(p) for p in C.popups(page)}
+    page.click("#saveBtn")
+    ctx = FakeCtx()
+    import threading
+
+    def _close_later():
+        page.wait_for_timeout(900)
+        try:
+            page.click("#ok")
+        except Exception:
+            pass
+
+    threading.Thread(target=_close_later, daemon=True).start()
+    C.wait_save_execution_popup(
+        page,
+        ctx,  # type: ignore[arg-type]
+        1,
+        dialog_msgs=[],
+        before_popup_ids=before,
+        baseline=base,
+        timeout_sec=10.0,
+        grace_sec=1.0,
+    )
+    assert ctx.save_popup_seen is True
+    # 열린 중 스냅샷
+    sn, _, _, _ = C.find_mango_collect_alert(page, [], baseline=base)
+    if sn is not None:
+        ctx.save_count_snapshot = sn
+    C.wait_save_popup_closed(
+        page,
+        ctx,  # type: ignore[arg-type]
+        1,
+        before_popup_ids=before,
+        baseline=base,
+        timeout_sec=10.0,
+    )
+    assert ctx.save_popup_closed is True
+    n = C.verify_mango_collect_alert(
+        page,
+        ctx,  # type: ignore[arg-type]
+        1,
+        3,
+        baseline=base,
+        dismiss=False,
+    )
+    assert n == 3
+    ctx.save_count_logged = True
+    page.close()
+
+
 if __name__ == "__main__":
     # pytest 없이도 직접 실행 가능
     failed = 0
@@ -497,6 +574,8 @@ if __name__ == "__main__":
             ("open_plus_close", test_open_plus_close_gate),
             ("bare_text_not_modal", test_bare_page_text_is_not_popup_modal),
             ("awaiting_blocks_init", test_awaiting_popup_blocks_init_log_path),
+            ("step6_no_force", test_search_popup_close_timeout_raises_no_force_continue),
+            ("order_10_11_12", test_order_is_open_close_then_count),
         ]:
             try:
                 fn(b)
