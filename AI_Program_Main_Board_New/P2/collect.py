@@ -655,6 +655,32 @@ def prompt_tmg_credentials() -> tuple[str, str]:
 
 
 
+def type_into_slow(page: Page, locator, value: str, per_char_ms: int = 1000) -> None:
+    """로그인 등 — 글자마다 per_char_ms 간격으로 키보드 입력."""
+    el = locator.first
+    el.wait_for(state="visible", timeout=60_000)
+    el.scroll_into_view_if_needed()
+    try:
+        el.click(timeout=15_000)
+    except PWTimeout:
+        pass
+    page.keyboard.press("Control+A")
+    page.keyboard.press("Backspace")
+    page.wait_for_timeout(200)
+    log(f"  [입력] {len(value)}글자 · 글자당 {per_char_ms}ms")
+    for i, ch in enumerate(value):
+        page.keyboard.type(ch, delay=0)
+        if i < len(value) - 1:
+            page.wait_for_timeout(per_char_ms)
+    got = ""
+    try:
+        got = el.input_value()
+    except Exception:
+        pass
+    if got != value:
+        log(f"  [경고] 느린입력 불일치 — 기대 {len(value)}자 / 실제 {len(got)}자")
+
+
 def perform_tmg_login(page: Page, user_id: str | None = None, password: str | None = None) -> None:
     """로그인 화면에서 CLI 자격증명으로 로그인 시도.
 
@@ -696,8 +722,13 @@ def perform_tmg_login(page: Page, user_id: str | None = None, password: str | No
     id_box = page.locator('input[name="login_id"]').first
     pw_box = page.locator('input[name="login_pass"]').first
     id_box.wait_for(state="visible", timeout=30_000)
-    type_into(page, id_box, uid)
-    type_into(page, pw_box, pw)
+    # 글자당 1초 간격 입력 (자동화 탐지 완화 시도)
+    log("  아이디 입력 (글자당 1초)")
+    type_into_slow(page, id_box, uid, per_char_ms=1000)
+    page.wait_for_timeout(500)
+    log("  비밀번호 입력 (글자당 1초)")
+    type_into_slow(page, pw_box, pw, per_char_ms=1000)
+    page.wait_for_timeout(500)
 
     # reCAPTCHA 스크립트 준비 대기
     try:
