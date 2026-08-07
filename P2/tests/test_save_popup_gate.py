@@ -159,6 +159,48 @@ def test_buttons_are_distinct(browser):
     page.close()
 
 
+def test_diagnose_detects_overlay_interception(browser):
+    """오버레이가 저장하기 클릭좌표를 가로채면 진단이 same=False로 잡아야 함."""
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.set_content(
+        """
+        <html><body style="margin:0">
+        <a href="#" id="saveBtn" style="position:absolute;left:10px;top:10px;
+          width:100px;height:30px;">저장하기</a>
+        <div id="overlay" style="position:absolute;left:0;top:0;width:100%;
+          height:100%;background:rgba(0,0,0,0.01);z-index:999;"></div>
+        </body></html>
+        """
+    )
+    el = page.locator("#saveBtn")
+    diag = C.diagnose_save_click_environment(page, el)
+    assert diag.get("intercept", {}).get("same") is False, diag
+    assert diag["intercept"].get("id") == "overlay"
+    ctx.close()
+
+
+def test_diagnose_detects_unselected_required_radio(browser):
+    """정책 선택 등 미선택 라디오그룹을 진단이 잡아야 함."""
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.set_content(
+        """
+        <html><body>
+        <div>
+          <input type="radio" name="policy" value="a"> A
+          <input type="radio" name="policy" value="b"> B
+        </div>
+        <a href="#" id="saveBtn">저장하기</a>
+        </body></html>
+        """
+    )
+    el = page.locator("#saveBtn")
+    diag = C.diagnose_save_click_environment(page, el)
+    assert any("policy" in x for x in diag.get("unselected_required", [])), diag
+    ctx.close()
+
+
 def test_save_resolves_clickable_not_wrapper_div(browser):
     """저장하기가 div 래퍼가 아니라 a/button/input 으로 잡혀야 함 (9항 미클릭 원인)."""
     ctx = browser.new_context()
@@ -600,6 +642,8 @@ if __name__ == "__main__":
         b = p.chromium.launch(headless=True)
         for name, fn in [
             ("distinct", test_buttons_are_distinct),
+            ("diag_overlay", test_diagnose_detects_overlay_interception),
+            ("diag_required_radio", test_diagnose_detects_unselected_required_radio),
             ("clickable_not_wrapper", test_save_resolves_clickable_not_wrapper_div),
             ("modal_close_not_reacted", test_modal_close_alone_is_not_reacted),
             ("raise_no_popup", test_wait_popup_raises_without_popup_no_init),
