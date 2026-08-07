@@ -28,11 +28,17 @@ GitHub 저장소 루트: **`AI_Program_Main_Board`** (모노레포 + 논리 분�
 
 ## P3_Python_Item_Collector
 
-- **위치:** [`python-collector/`](./python-collector) (독립 폴더, 웹앱과 무관)
+- **위치:** [`python-collector/`](./python-collector) (독립 폴더) + 보드 좌측 메뉴에 안내/환경점검 UI
 - **하는 일:** **P2와 완전히 동일한 작업**(더망고 대량수집)을 하는 파이썬 단일 스크립트 버전
 - **동작 방식:** Next.js/React/webpack 전혀 없음. `pip install` 두 패키지(`playwright`, `openpyxl`)만으로 실행
 - **실행:** `python-collector/run.bat` 더블클릭 (또는 엑셀 파일을 그 위에 드래그)
 - **P2와의 관계:** 같은 업무를 웹앱 없이 훨씬 가볍게 돌리고 싶을 때 사용. 웹앱 컴파일/캐시/인코딩 이슈에서 완전히 자유로움
+
+## 스모크 테스트
+
+- 보드 UI: 좌측 하단 **프로젝트 스모크 테스트** (P1 / P2 / P3 / 전체)
+- API: `POST /api/project-test` body `{ "project": "all" | "p1" | "p2" | "p3" }`
+- CLI: `npm run test:projects` (서버 필요) · `npm run test:projects:local`
 
 > P2(웹앱)와 P3(파이썬)는 같은 일을 하는 두 가지 실행 방식입니다.
 > 웹앱 UI(엑셀 업로드 화면·실행 로그 화면)가 필요하면 P2, 그냥 빠르고

@@ -18,7 +18,7 @@ if ($PSScriptRoot -match 'OneDrive') {
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.1.1"
+$ExpectedVersion = "3.2.0"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 

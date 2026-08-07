@@ -38,6 +38,17 @@ npm run dev
 ## P3 — 파이썬 독립 실행
 
 웹앱 없이 [`python-collector/`](./python-collector) 폴더만으로 실행됩니다 — 자세한 건 그 폴더의 README 참고.
+보드 좌측 목록에도 **P3_Python_Item_Collector** 가 표시되며, 환경 점검을 할 수 있습니다.
+
+## 프로젝트 스모크 테스트
+
+보드 좌측 하단 **프로젝트 스모크 테스트**에서 P1 / P2 / P3 / 전체를 점검할 수 있습니다.
+
+```bash
+npm run test:projects:local   # 서버 없이 파일·Python 존재 확인
+npm run dev                   # 서버 기동 후
+npm run test:projects         # API 스모크 (P1 실제 crawl 포함)
+```
 
 ## run.ps1 없을 때 (최초 1회만)
 
