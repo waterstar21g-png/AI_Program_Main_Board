@@ -71,6 +71,14 @@ CDP_PORT = 9222
 CDP_URL = f"http://127.0.0.1:{CDP_PORT}"
 PROFILE_DIR = Path(__file__).parent / ".chrome-profile"
 
+# 더망고 솔루션 Chrome 확장프로그램 (Web Store ID = 로컬 load-extension 동일)
+MANGO_EXT_ID = "lgfjcapohoongednoojdaiedebgbcelp"
+MANGO_EXT_DIR = Path(__file__).parent / "extensions" / "themango-solution"
+MANGO_EXT_POPUP = f"chrome-extension://{MANGO_EXT_ID}/popup.html"
+# 크롬 기동 시 확장 팝업에 반드시 넣을 값 (사용자 지정)
+MANGO_SERVICE_URL = "https://tmg1898.cafe24.com"
+MANGO_SERVICE_KEY = "y94Tmx9LbxxCJtk5uI9z0RjGWDtVW4"
+
 CHROME_CANDIDATES = [
     r"C:\Program Files\Google\Chrome\Application\chrome.exe",
     r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -130,6 +138,8 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "login_ok": "로그인 완료",
     "login_gate": "로그인 게이트",
     "login_required": "세션만료·재로그인",
+    "ext_settings": "확장프로그램(더망고솔루션) 설정값 저장",
+    "ext_settings_fail": "확장프로그램 설정 실패",
     "ready": "준비완료(대량수집 진입)",
     "00_init_bulk": "0. 초기화 — 대량데이터수집",
     "01_url_filled": "1. URL 입력 완료",
@@ -439,18 +449,27 @@ def launch_debug_browser() -> None:
     # 로그 파일로 받아두면 안전하고, 문제 생기면 이 파일로 원인도 알 수 있다.
     log_path = PROFILE_DIR / "chrome_debug.log"
     log_file = open(log_path, "ab")
+    chrome_args = [
+        exe,
+        f"--remote-debugging-port={CDP_PORT}",
+        f"--user-data-dir={PROFILE_DIR}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--no-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+    ]
+    # 더망고 솔루션 확장 로드 (전용 프로필에 설정값이 비어 있는 문제 방지)
+    if MANGO_EXT_DIR.is_dir() and (MANGO_EXT_DIR / "manifest.json").is_file():
+        ext_path = str(MANGO_EXT_DIR.resolve())
+        chrome_args.append(f"--load-extension={ext_path}")
+        chrome_args.append(f"--disable-extensions-except={ext_path}")
+        log(f"더망고 솔루션 확장 로드: {ext_path}")
+    else:
+        log(f"[경고] 확장 폴더 없음 — {MANGO_EXT_DIR} (Web Store 설치분만 사용)")
+    chrome_args.append(MAIN_URL)
     subprocess.Popen(
-        [
-            exe,
-            f"--remote-debugging-port={CDP_PORT}",
-            f"--user-data-dir={PROFILE_DIR}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--no-sandbox",
-            "--disable-dev-shm-usage",
-            "--disable-gpu",
-            MAIN_URL,
-        ],
+        chrome_args,
         stdout=log_file,
         stderr=log_file,
     )
@@ -507,6 +526,138 @@ def connect_browser(p) -> tuple[Browser, Page]:
     context = browser.contexts[0] if browser.contexts else browser.new_context()
     page = pick_working_page(context)
     return browser, page
+
+
+def ensure_mango_extension_settings(
+    context: BrowserContext,
+    *,
+    shot_ctx: "RunCtx | None" = None,
+) -> None:
+    """더망고 솔루션 확장에 서비스 URL·인증 KEY를 넣고 설정값 저장.
+
+    Chrome 기동(전용 프로필) 직후 확장 팝업 값이 비어 있는 문제를 막는다.
+    """
+    want_url = MANGO_SERVICE_URL.strip()
+    want_key = MANGO_SERVICE_KEY.strip()
+    log(
+        "더망고 솔루션 확장 설정 확인 — "
+        f"URL={want_url} / KEY={want_key[:4]}…{want_key[-4:]}"
+    )
+    page = context.new_page()
+    dialogs: list[str] = []
+
+    def _on_dialog(dialog) -> None:
+        try:
+            dialogs.append(str(dialog.message or ""))
+            dialog.accept()
+        except Exception:  # noqa: BLE001
+            pass
+
+    page.on("dialog", _on_dialog)
+    try:
+        try:
+            page.goto(MANGO_EXT_POPUP, wait_until="domcontentloaded", timeout=20_000)
+        except Exception as e:  # noqa: BLE001
+            if shot_ctx is not None:
+                try:
+                    shot_ctx.shot(page, "ext_settings_fail", 0)
+                except Exception:  # noqa: BLE001
+                    pass
+            raise RuntimeError(
+                "더망고 솔루션 확장프로그램 팝업을 열 수 없습니다.\n"
+                f"  · 대상: {MANGO_EXT_POPUP}\n"
+                "  · Chrome을 모두 닫고 P2를 다시 실행하세요 "
+                "(전용 프로필에 확장이 로드됩니다).\n"
+                f"  · 원인: {e}"
+            ) from e
+
+        page.wait_for_selector("#site_url", timeout=10_000)
+        page.wait_for_selector("#site_key", timeout=5_000)
+        # load_data.js 의 chrome.storage.local.get 반영 대기
+        page.wait_for_timeout(700)
+
+        cur_url = (page.input_value("#site_url") or "").strip()
+        cur_key = (page.input_value("#site_key") or "").strip()
+        if cur_url == want_url and cur_key == want_key:
+            log("  확장 설정값 이미 올바름 — 저장 스킵")
+            if shot_ctx is not None:
+                shot_ctx.shot(page, "ext_settings", 0)
+            return
+
+        page.fill("#site_url", want_url)
+        page.fill("#site_key", want_key)
+        # 상품수집 ON 유지
+        try:
+            on = page.locator("#onoff")
+            if on.count() and not on.is_checked():
+                page.evaluate(
+                    """() => {
+                        const el = document.querySelector('#onoff');
+                        if (!el) return;
+                        if (window.jQuery) {
+                            try { window.jQuery('#onoff').bootstrapToggle('on'); return; }
+                            catch (e) {}
+                        }
+                        el.checked = true;
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                    }"""
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+        page.click("#sync_set")
+        page.wait_for_timeout(400)
+        # 저장 성공 문구 또는 storage 반영 확인
+        saved_btn = False
+        try:
+            page.wait_for_function(
+                """() => {
+                    const b = document.querySelector('#sync_set');
+                    return !!(b && (b.innerText || '').includes('저장되었습니다'));
+                }""",
+                timeout=5_000,
+            )
+            saved_btn = True
+        except Exception:  # noqa: BLE001
+            saved_btn = False
+
+        stored = page.evaluate(
+            """async () => {
+                const local = await chrome.storage.local.get(
+                    ['site_url', 'site_key', 'onoff']
+                );
+                return {
+                    site_url: (local.site_url || '').trim(),
+                    site_key: (local.site_key || '').trim(),
+                    onoff: local.onoff || '',
+                };
+            }"""
+        )
+        got_url = str((stored or {}).get("site_url") or "").strip()
+        got_key = str((stored or {}).get("site_key") or "").strip()
+        if got_url != want_url or got_key != want_key:
+            if shot_ctx is not None:
+                try:
+                    shot_ctx.shot(page, "ext_settings_fail", 0)
+                except Exception:  # noqa: BLE001
+                    pass
+            raise RuntimeError(
+                "더망고 솔루션 확장 설정값 저장 실패.\n"
+                f"  · 기대 URL={want_url}\n"
+                f"  · 실제 URL={got_url or '(비어있음)'}\n"
+                f"  · KEY 일치={got_key == want_key}\n"
+                f"  · 버튼저장문구={saved_btn}\n"
+                f"  · 대화상자={dialogs[:2] if dialogs else '(없음)'}"
+            )
+
+        log("  확장 설정값 저장 완료 (서비스 URL + 인증 KEY)")
+        if shot_ctx is not None:
+            shot_ctx.shot(page, "ext_settings", 0)
+    finally:
+        try:
+            page.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # ── 엑셀 ──────────────────────────────────────────────────────
@@ -1720,6 +1871,9 @@ def main() -> None:
         with sync_playwright() as p:
             _browser, page = connect_browser(p)
             page.set_default_timeout(120_000)
+            # 망고 Chrome 기동 직후 — 더망고 솔루션 확장에 URL/KEY 필수 세팅
+            ensure_mango_extension_settings(page.context, shot_ctx=ctx)
+            page = refresh_if_closed(page)
             page = ensure_ready_page(page)
             ctx.shot(page, "ready", 0)
 
