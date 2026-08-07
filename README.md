@@ -32,7 +32,16 @@ run.bat
 D:\My_Project\AI_Program_Main_Board
 ```
 
-자세한 내용: [LOCAL_WORKSPACE.md](./LOCAL_WORKSPACE.md)  
+**모든 프로그램은 이 폴더 안에만** 둡니다.  
+PowerShell로 전체 받기: [LOCAL_WORKSPACE.md](./LOCAL_WORKSPACE.md) 또는 `fetch-local.ps1`
+
+```powershell
+# PowerShell (권장)
+Set-Location D:\My_Project
+irm https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/fetch-local.ps1 -OutFile fetch-local.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\fetch-local.ps1
+```
+
 폴더를 옮길 때 복사 항목이 수만 개면 → 거의 전부 `node_modules`입니다. **제외하고** 옮긴 뒤 `npm install`.
 
 ## 컴파일이 느리면 (중요)
