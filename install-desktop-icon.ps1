@@ -49,37 +49,49 @@ if (-not (Test-Path -LiteralPath (Join-Path $PreferredRoot "run.bat"))) {
   }
 }
 
-$startBat = Join-Path $PreferredRoot "start.bat"
 $runBat = Join-Path $PreferredRoot "run.bat"
-$targetBat = if (Test-Path -LiteralPath $startBat) { $startBat } else { $runBat }
-if (-not (Test-Path -LiteralPath $targetBat)) {
-  Write-Host "[ERROR] Not found: $targetBat" -ForegroundColor Red
+if (-not (Test-Path -LiteralPath $runBat)) {
+  Write-Host "[ERROR] Not found: $runBat" -ForegroundColor Red
   exit 1
 }
 
-# Refresh create-shortcut.ps1 (UTF-8 no BOM)
-try {
-  $createPs1 = Join-Path $PreferredRoot "create-shortcut.ps1"
-  Save-Utf8NoBom $createPs1 (Get-RawText "$RepoRaw/create-shortcut.ps1")
-} catch {
-  Write-Host "[WARN] Could not refresh create-shortcut.ps1 - using local if present" -ForegroundColor Yellow
+# Refresh shortcut helpers (UTF-8 no BOM)
+foreach ($name in @("create-shortcut.ps1", "boot-from-icon.ps1", "update-if-newer.ps1")) {
+  try {
+    Save-Utf8NoBom (Join-Path $PreferredRoot $name) (Get-RawText "$RepoRaw/$name")
+  } catch {
+    Write-Host "[WARN] Could not refresh $name" -ForegroundColor Yellow
+  }
 }
 
-# Create shortcut here (no nested script parse issues)
+# Prefer create-shortcut.ps1 (points icon to boot-from-icon.ps1)
+$createPs1 = Join-Path $PreferredRoot "create-shortcut.ps1"
+if (Test-Path -LiteralPath $createPs1) {
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $createPs1
+  exit $LASTEXITCODE
+}
+
+$bootPs1 = Join-Path $PreferredRoot "boot-from-icon.ps1"
+$psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnkPath = Join-Path $desktop "AI_Program_Main_Board.lnk"
 $w = New-Object -ComObject WScript.Shell
 $sc = $w.CreateShortcut($lnkPath)
-$sc.TargetPath = $targetBat
+if (Test-Path -LiteralPath $bootPs1) {
+  $sc.TargetPath = $psExe
+  $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$bootPs1`""
+} else {
+  $sc.TargetPath = $runBat
+}
 $sc.WorkingDirectory = $PreferredRoot
 $sc.WindowStyle = 1
-$sc.Description = "AI_Program_Main_Board start (update if VERSION changed)"
+$sc.Description = "AI_Program_Main_Board (update if VERSION changed)"
 $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
 $sc.Save()
 
 Write-Host ""
 Write-Host "[OK] Project : $PreferredRoot" -ForegroundColor Green
 Write-Host "[OK] Shortcut: $lnkPath" -ForegroundColor Green
-Write-Host "     Target  : $targetBat"
+Write-Host "     Target  : boot-from-icon.ps1 / run.bat"
 Write-Host "[DONE] Double-click desktop icon: AI_Program_Main_Board" -ForegroundColor Green
 Write-Host ""

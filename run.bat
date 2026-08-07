@@ -2,6 +2,26 @@
 setlocal
 cd /d "%~dp0"
 
+REM Icon / direct start: update only when VERSION changed, then re-exec board.
+if /i "%~1"=="--noupdate" goto board
+
+echo ========================================
+echo   AI_Program_Main_Board  update+run
+echo   (git pull ONLY if VERSION changed)
+echo ========================================
+
+if exist "%~dp0update-if-newer.ps1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0update-if-newer.ps1"
+) else (
+  echo [INFO] Downloading update-if-newer.ps1 ...
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "try { $cb=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); Invoke-WebRequest -Uri ('https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/update-if-newer.ps1?t='+$cb) -OutFile '%~dp0update-if-newer.ps1' -UseBasicParsing; & '%~dp0update-if-newer.ps1' } catch { Write-Host $_.Exception.Message }"
+)
+
+REM Re-exec this file after possible pull so new run.bat is used
+call "%~f0" --noupdate
+exit /b %ERRORLEVEL%
+
+:board
 echo ========================================
 echo   AI_Program_Main_Board  (Python B)
 echo   P1 카테고리URL  /  P2 더망고수집(구P3)

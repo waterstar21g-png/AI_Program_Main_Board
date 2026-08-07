@@ -4,28 +4,36 @@
 $ErrorActionPreference = "Stop"
 
 $PreferredRoot = "D:\My_Project\AI_Program_Main_Board"
+$bootPs1 = Join-Path $PreferredRoot "boot-from-icon.ps1"
 $startBat = Join-Path $PreferredRoot "start.bat"
 $runBat = Join-Path $PreferredRoot "run.bat"
-$targetBat = if (Test-Path -LiteralPath $startBat) { $startBat } else { $runBat }
+$psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
 $lnkName = "AI_Program_Main_Board.lnk"
 
-if (-not (Test-Path -LiteralPath $targetBat)) {
-  Write-Host "[ERROR] Not found: $targetBat" -ForegroundColor Red
+if (-not (Test-Path -LiteralPath $runBat)) {
+  Write-Host "[ERROR] Not found: $runBat" -ForegroundColor Red
   exit 1
 }
 
 $desktop = [Environment]::GetFolderPath("Desktop")
 $lnkPath = Join-Path $desktop $lnkName
-$cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
 
-# Desktop shortcut as cmd.exe wrapper (bat alone often cannot pin)
+# Prefer boot-from-icon.ps1 (always refreshes updater from GitHub)
 $w = New-Object -ComObject WScript.Shell
 $sc = $w.CreateShortcut($lnkPath)
-$sc.TargetPath = $cmdExe
-$sc.Arguments = "/c `"$targetBat`""
+if (Test-Path -LiteralPath $bootPs1) {
+  $sc.TargetPath = $psExe
+  $sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$bootPs1`""
+} elseif (Test-Path -LiteralPath $startBat) {
+  $sc.TargetPath = Join-Path $env:SystemRoot "System32\cmd.exe"
+  $sc.Arguments = "/c `"$startBat`""
+} else {
+  $sc.TargetPath = Join-Path $env:SystemRoot "System32\cmd.exe"
+  $sc.Arguments = "/c `"$runBat`""
+}
 $sc.WorkingDirectory = $PreferredRoot
 $sc.WindowStyle = 1
-$sc.Description = "AI_Program_Main_Board start (update if VERSION changed)"
+$sc.Description = "AI_Program_Main_Board (update if VERSION changed)"
 $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
 $sc.Save()
 [System.Runtime.Interopservices.Marshal]::ReleaseComObject($sc) | Out-Null

@@ -6,8 +6,8 @@ D:\My_Project\AI_Program_Main_Board
 
 **현재 메인:** Python B안 보드 — P1 + P2(구P3), npm 없음.
 
-- **아이콘:** `start.bat` (VERSION 변경 시에만 `git pull` 후 보드)
-- **직접 실행:** `run.bat` (업데이트 없음)
+- **아이콘:** `boot-from-icon.ps1` (VERSION 변경 시에만 `git pull` 후 보드)
+- **직접 실행:** `run.bat` (동일하게 VERSION 변경 시에만 pull)
 
 ## 최종 소스 받기 / 갱신 (PowerShell)
 
