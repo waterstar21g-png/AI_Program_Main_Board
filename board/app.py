@@ -36,7 +36,7 @@ from tmg_auth import (  # noqa: E402
     save_credentials,
 )
 
-VERSION = "2.0.8"
+VERSION = "2.0.9"
 APP_TITLE = "AI_Program_Main_Board"
 
 

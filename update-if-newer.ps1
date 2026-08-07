@@ -1,6 +1,6 @@
 #Requires -Version 5.1
-# Pull from GitHub main ONLY when VERSION.txt differs from remote.
-# ASCII-only (PS 5.1 safe). Called by start.bat before run.bat.
+# Pull from GitHub main ONLY when VERSION differs from origin/main.
+# ASCII-only (PS 5.1 safe). Called by run.bat / boot-from-icon.ps1.
 $ErrorActionPreference = "Continue"
 
 $PreferredRoot = "D:\My_Project\AI_Program_Main_Board"
@@ -36,7 +36,18 @@ function Get-LocalVersion {
   }
 }
 
-function Get-RemoteVersion {
+function Get-RemoteVersionViaGit {
+  if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return "" }
+  if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) { return "" }
+  try {
+    git fetch origin main 2>$null | Out-Null
+    $text = git show "origin/main:VERSION.txt" 2>$null
+    if ($text) { return Get-VersionFromText ($text -join "`n") }
+  } catch {}
+  return ""
+}
+
+function Get-RemoteVersionViaHttp {
   $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
   $urls = @(
     "https://raw.githubusercontent.com/$Repo/main/VERSION.txt?t=$cb",
@@ -59,12 +70,16 @@ function Get-RemoteVersion {
 Write-Host "[VERSION-CHECK] root=$Root"
 
 $local = Get-LocalVersion
-$remote = Get-RemoteVersion
+$remote = Get-RemoteVersionViaGit
+if (-not $remote) {
+  Write-Host "[INFO] git remote VERSION unavailable — try HTTP"
+  $remote = Get-RemoteVersionViaHttp
+}
 
 Write-Host "[VERSION] local=$local  remote=$remote"
 
 if (-not $remote) {
-  Write-Host "[SKIP] Cannot read remote VERSION.txt — start without update"
+  Write-Host "[SKIP] Cannot read remote VERSION — start without update"
   exit 0
 }
 
@@ -85,13 +100,28 @@ if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) {
   exit 0
 }
 
-git fetch origin main 2>&1 | Out-Host
+# Prefer main branch so pull applies published VERSION
+$branch = ""
+try { $branch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim() } catch {}
+if ($branch -and ($branch -ne "main")) {
+  Write-Host "[INFO] checkout main (was: $branch)"
+  git checkout main 2>&1 | Out-Host
+}
+
 git pull origin main 2>&1 | Out-Host
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "[WARN] git pull failed — start with local source"
-  exit 0
+  Write-Host "[WARN] git pull failed — try reset to origin/main"
+  git fetch origin main 2>&1 | Out-Host
+  git reset --hard origin/main 2>&1 | Out-Host
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host "[WARN] update failed — start with local source"
+    exit 0
+  }
 }
 
 $after = Get-LocalVersion
-Write-Host "[OK] Source updated. VERSION=$after"
+Write-Host "[OK] Source updated. VERSION=$after (was $local)"
+if ($after -and $remote -and ($after -ne $remote)) {
+  Write-Host "[WARN] After pull local=$after still != remote=$remote"
+}
 exit 0
