@@ -1,0 +1,19 @@
+{
+  "name": "p2-product-capture-app",
+  "version": "4.0.0",
+  "private": true,
+  "description": "P2_Product_Capture_App — 더망고 URL 엑셀 대량수집 (Playwright CLI)",
+  "scripts": {
+    "start": "tsx cli.ts",
+    "cli": "tsx cli.ts"
+  },
+  "dependencies": {
+    "playwright": "^1.52.0",
+    "tsx": "^4.19.4",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^5"
+  }
+}
