@@ -118,6 +118,7 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "00_init_bulk": "0. 초기화 — 대량데이터수집",
     "01_url_filled": "1. URL 입력 완료",
     "01_popup_missing": "1. 검색 팝업 미표시(오류)",
+    "01_popup_opened": "1. 검색 팝업 열림",
     "01_popup_closed": "1. 검색 팝업 닫힘",
     "01_results_ready": "1. 검색 결과 준비",
     "02_save_modal": "2. 모두저장 모달",
@@ -535,40 +536,20 @@ def popups(page: Page) -> list:
     return result
 
 
-def wait_popups_gone(
-    page: Page,
-    timeout_sec: int = POPUP_WAIT_SEC,
-    grace_sec: float = 2.0,
-    warn_if_never_opened: bool = False,
-) -> bool:
-    """팝업이 스스로 닫힐 때까지 대기 — 절대 건드리지 않음
-
-    grace_sec: 클릭 직후 팝업이 뜨기까지 잠깐 기다리는 시간.
-    팝업이 아예 안 뜨는 경우(이미 닫혀 있음)까지 대비해 대기 시간은 짧게 둔다
-    (없는 팝업을 기다리며 매 행마다 시간을 허비하지 않도록).
-    warn_if_never_opened=True 이면, grace_sec 동안 팝업이 단 한 번도
-    뜨지 않았을 때 경고 로그를 남긴다(예: URL 검색 클릭이 안 먹혔을 때).
-
-    주의: Playwright Python 동기 API는 이벤트(새 창 열림/닫힘)를
-    time.sleep() 중에는 처리하지 않는다. 반드시 page.wait_for_timeout()
-    으로 기다려야 context.pages()가 실시간으로 갱신된다.
-
-    반환값: 팝업이 한 번이라도 열렸으면 True.
-    """
-    end = time.time() + timeout_sec
-    grace_end = time.time() + grace_sec
-    ever_seen = False
+def wait_popup_open(page: Page, grace_sec: float = 15.0) -> list:
+    """검색 팝업(새 창)이 열릴 때까지 대기. 열린 팝업 Page 리스트 반환."""
+    grace_end = time.time() + max(0.5, float(grace_sec))
     while time.time() < grace_end:
-        if popups(page):
-            ever_seen = True
-            break
+        cur = popups(page)
+        if cur:
+            return cur
         page.wait_for_timeout(200)
+    return []
 
-    if not ever_seen:
-        if warn_if_never_opened:
-            log("  [경고] 팝업이 뜨지 않음 — 클릭이 제대로 안 됐거나 사이트가 응답하지 않았을 수 있음")
-        return False
 
+def wait_popups_close(page: Page, timeout_sec: int = POPUP_WAIT_SEC) -> None:
+    """열린 검색 팝업이 모두 닫힐 때까지 대기 — 절대 건드리지 않음."""
+    end = time.time() + timeout_sec
     last_beat = 0.0
     while popups(page):
         if time.time() > end:
@@ -577,9 +558,111 @@ def wait_popups_gone(
             last_beat = time.time()
             cur = popups(page)
             urls = ", ".join(p.url for p in cur if not p.is_closed())
-            log(f"  팝업창 대기중... (열린 팝업 {len(cur)}개: {urls})")
+            log(f"  팝업창 닫힘 대기중... (열린 팝업 {len(cur)}개: {urls})")
         page.wait_for_timeout(500)
+
+
+def wait_popups_gone(
+    page: Page,
+    timeout_sec: int = POPUP_WAIT_SEC,
+    grace_sec: float = 2.0,
+    warn_if_never_opened: bool = False,
+) -> bool:
+    """팝업이 한 번 열린 뒤 스스로 닫힐 때까지 대기.
+
+    반환값: 팝업이 한 번이라도 열렸으면 True.
+    """
+    opened = wait_popup_open(page, grace_sec=grace_sec)
+    if not opened:
+        if warn_if_never_opened:
+            log(
+                "  [경고] 팝업이 뜨지 않음 — 클릭이 제대로 안 됐거나 "
+                "사이트가 응답하지 않았을 수 있음"
+            )
+        return False
+    wait_popups_close(page, timeout_sec=timeout_sec)
     return True
+
+
+def scroll_to_product_strip(page: Page) -> None:
+    """수집 상품 썸네일/모두저장 버튼 영역이 보이도록 스크롤."""
+    try:
+        btn = save_all_button(page).first
+        if btn.count() > 0 and btn.is_visible():
+            btn.scroll_into_view_if_needed(timeout=5_000)
+            page.wait_for_timeout(250)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        page.evaluate(
+            """() => {
+                const re = /검색된\\s*상품\\s*모두\\s*저장|전체선택|선택상품저장/;
+                const nodes = Array.from(document.querySelectorAll('input,button,a,td,div,span'));
+                const hit = nodes.find(el => re.test((el.value || el.innerText || '').trim()));
+                if (hit) hit.scrollIntoView({ block: 'center', inline: 'nearest' });
+                const imgs = Array.from(document.querySelectorAll('img')).filter(
+                    (i) => (i.naturalWidth || 0) >= 40 && (i.naturalHeight || 0) >= 40
+                );
+                if (imgs.length) {
+                    imgs[Math.min(3, imgs.length - 1)].scrollIntoView({
+                        block: 'center', inline: 'nearest'
+                    });
+                }
+            }"""
+        )
+        page.wait_for_timeout(300)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def wait_product_images(
+    page: Page,
+    *,
+    min_count: int = 2,
+    timeout_sec: float = 25.0,
+) -> int:
+    """상품 이미지(naturalWidth>=40)가 로드될 때까지 스크롤·대기. 로드 개수 반환."""
+    end = time.time() + max(3.0, float(timeout_sec))
+    best = 0
+    while time.time() < end:
+        try:
+            n = page.evaluate(
+                """() => {
+                    let ok = 0;
+                    for (const img of Array.from(document.querySelectorAll('img'))) {
+                        const w = img.naturalWidth || 0;
+                        const h = img.naturalHeight || 0;
+                        const r = img.getBoundingClientRect();
+                        if (w >= 40 && h >= 40 && r.width >= 20 && r.height >= 20) ok += 1;
+                    }
+                    return ok;
+                }"""
+            )
+            best = max(best, int(n or 0))
+        except Exception:  # noqa: BLE001
+            pass
+        if best >= min_count:
+            scroll_to_product_strip(page)
+            return best
+        try:
+            page.evaluate(
+                "() => window.scrollBy(0, Math.max(280, Math.floor(window.innerHeight * 0.55)))"
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        page.wait_for_timeout(350)
+    scroll_to_product_strip(page)
+    return best
+
+
+def prepare_product_view_for_shot(page: Page, *, min_images: int = 2) -> int:
+    """샷 직전에 상품 이미지가 보이도록 대기·스크롤. 로드된 이미지 수 반환."""
+    wait_page_not_loading(page, timeout_sec=15.0)
+    scroll_to_product_strip(page)
+    n = wait_product_images(page, min_count=min_images, timeout_sec=25.0)
+    scroll_to_product_strip(page)
+    page.wait_for_timeout(400)
+    return n
 
 
 # ── 입력 · 클릭 (망고 구형 input 대응) ────────────────────────
@@ -1063,10 +1146,10 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     ctx.info("1. URL상품검색하기 클릭")
     trusted = click_it(url_search_button(page))
 
-    ctx.info("1. 팝업창이 없어질 때까지 대기")
-    opened = wait_popups_gone(page, grace_sec=15.0, warn_if_never_opened=True)
-
-    if not opened:
+    # 07 선행: 검색 팝업 "열림" 확인·샷 → 그 다음 "닫힘"
+    ctx.info("1. 검색 팝업 열림 대기")
+    opened_pages = wait_popup_open(page, grace_sec=15.0)
+    if not opened_pages:
         ctx.info("  키보드로 재시도 (Enter)")
         try:
             btn = url_search_button(page).first
@@ -1074,24 +1157,56 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
             page.keyboard.press("Enter")
         except Exception:  # noqa: BLE001
             pass
-        opened = wait_popups_gone(page, grace_sec=10.0, warn_if_never_opened=True)
+        opened_pages = wait_popup_open(page, grace_sec=10.0)
 
-    if not opened:
+    if not opened_pages:
         ctx.shot(page, "01_popup_missing", rn)
         raise RuntimeError(
             f"#{rn} URL상품검색하기 클릭 후 팝업이 뜨지 않음 "
             f"(trusted_click={trusted})"
         )
-    ctx.info("1. 팝업창 닫힘")
+
+    popup = opened_pages[0]
+    try:
+        popup.bring_to_front()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        popup_imgs = prepare_product_view_for_shot(popup, min_images=2)
+    except Exception as e:  # noqa: BLE001
+        ctx.info(f"  [경고] 팝업 상품이미지 대기 실패: {e}")
+        popup_imgs = 0
+    ctx.info(f"1. 검색 팝업 열림 (상품이미지 약 {popup_imgs}개)")
+    ctx.shot(popup, "01_popup_opened", rn)
+
+    ctx.info("1. 검색 팝업 닫힘 대기")
+    wait_popups_close(page)
+    try:
+        page.bring_to_front()
+    except Exception:  # noqa: BLE001
+        pass
+    ctx.info("1. 검색 팝업 닫힘")
     ctx.shot(page, "01_popup_closed", rn)
 
-    wait_page_not_loading(page)
+    # 08: 검색 결과 준비 — 하단 수집 상품 이미지가 보이도록 대기 후 샷
+    result_imgs = prepare_product_view_for_shot(page, min_images=2)
+    ctx.info(f"1. 검색 결과 준비 (하단 상품이미지 약 {result_imgs}개)")
+    if result_imgs < 1:
+        ctx.info("  [경고] 검색 결과 상품이미지가 거의 보이지 않음 — 그대로 샷")
     ctx.shot(page, "01_results_ready", rn)
 
     ctx.info("2. 검색된 상품 모두저장 클릭")
+    scroll_to_product_strip(page)
     click_it(save_all_button(page))
     save_modal(page).wait_for(state="visible", timeout=MODAL_WAIT_SEC * 1000)
-    page.wait_for_timeout(400)
+    # 09: 모달과 함께 하단 상품 이미지가 보이도록 스크롤·대기 후 샷
+    try:
+        modal_imgs = prepare_product_view_for_shot(page, min_images=2)
+    except Exception as e:  # noqa: BLE001
+        ctx.info(f"  [경고] 모달 화면 상품이미지 대기 실패: {e}")
+        modal_imgs = 0
+    page.wait_for_timeout(300)
+    ctx.info(f"2. 모두저장 모달 (하단 상품이미지 약 {modal_imgs}개)")
     ctx.shot(page, "02_save_modal", rn)
 
     ctx.info(f"2. 검색필터명 입력: {label}")
