@@ -14,6 +14,8 @@ GitHub 저장소: `waterstar21g-png/AI_Program_Main_Board`
 
 모노레포 + 논리 분리를 유지합니다. (폴더 4개로 물리 분리하지 않음)
 
+**정리 검토(미실행):** 배치 3개만 남기는 안 → [docs/BATCH_THREE_CLEANUP_PLAN.md](./docs/BATCH_THREE_CLEANUP_PLAN.md)
+
 ## 로컬 작업 경로 (고정)
 
 ```
