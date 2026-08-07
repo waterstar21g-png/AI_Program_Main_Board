@@ -15,6 +15,31 @@ if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "VERSION
 Set-Location -LiteralPath $Root
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
 
+# Self-refresh once: old copies still had "git pull 2>&1 | Out-Host" which
+# shows red NativeCommandError on success in Windows PowerShell 5.1.
+# Download latest updater from GitHub, then re-exec so pull uses the new script.
+if (-not $env:AI_BOARD_UPDATER_REFRESHED) {
+  $env:AI_BOARD_UPDATER_REFRESHED = "1"
+  $selfPath = Join-Path $Root "update-if-newer.ps1"
+  try {
+    $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $url = "https://raw.githubusercontent.com/$Repo/main/update-if-newer.ps1?t=$cb"
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers.Add("User-Agent", "AI_Program_Main_Board-updater-self")
+    $wc.Headers.Add("Cache-Control", "no-cache")
+    $wc.Encoding = [System.Text.Encoding]::UTF8
+    $bytes = $wc.DownloadData($url)
+    if ($bytes -and $bytes.Length -gt 200) {
+      [System.IO.File]::WriteAllBytes($selfPath, $bytes)
+      Write-Host "[OK] updater self-refreshed from GitHub — re-exec"
+      & powershell -NoProfile -ExecutionPolicy Bypass -File $selfPath
+      exit $LASTEXITCODE
+    }
+  } catch {
+    Write-Host "[WARN] updater self-refresh skipped: $($_.Exception.Message)"
+  }
+}
+
 # git writes progress ("From https://...") to stderr. In PS 5.1,
 # "git ... 2>&1 | Out-Host" wraps those lines as NativeCommandError (red)
 # even when git succeeds. Run via cmd.exe so stderr is plain text.
