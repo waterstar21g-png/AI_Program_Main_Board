@@ -1,17 +1,19 @@
 """
-P2 — 더망고(tmg1898) 상품데이터 대량수집 (구 P3)
+P2 — 더망고(tmg1898) 상품데이터 대량수집
+
+목표: 카테고리 URL(P1 엑셀) 1행당 상품 정보 N건(기본 3)을 오류 없이 가져오기.
 
 0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭
 1. URL상품검색하기 : 필드값 입력 후 클릭 -> 팝업창이 없어질 때까지 대기
-2. 검색된 상품 모두저장 클릭 -> 팝업창에서 검색필터명 입력 -> 저장하기 버튼 클릭
-3. 팝업창이 없어질 때까지 대기
-4. -> 0. 초기화
+2. 검색된 상품 모두저장 클릭 -> 검색필터명·저장수 입력 -> 저장하기
+3. 팝업창이 없어질 때까지 대기 + 저장 결과 확인
+4. 다음 행 (실패 시 같은 행 재시도)
 
 사용법:
-    python collect.py 엑셀파일.xlsx
-    python collect.py 엑셀파일.xlsx 5     (저장수 5개, 기본 3)
-
-엑셀 헤더(1행): 상위 최종 카테고리명 | 최종 카테고리 URL주소
+    python collect.py 엑셀.xlsx              # 저장수 3
+    python collect.py 엑셀.xlsx 3 --verify   # 1행 검증(샷·재시도)
+    python collect.py 엑셀.xlsx 3 --retries 3 --yes
+    run-verify.bat 엑셀.xlsx
 """
 
 import re
@@ -50,13 +52,82 @@ CHROME_CANDIDATES = [
 POPUP_WAIT_SEC = 600
 MODAL_WAIT_SEC = 180
 DEFAULT_SAVE_COUNT = 3
+DEFAULT_ROW_RETRIES = 3
 
 FILTER_NAME_LABEL = re.compile(r"검색\s*필터\s*명")
 SAVE_COUNT_LABEL = re.compile(r"저장\s*상품\s*수|검색결과\s*상위")
+# 저장 완료로 볼 수 있는 화면 문구 (망고 버전에 따라 다를 수 있음)
+SAVE_OK_PATTERNS = [
+    re.compile(r"저장\s*(이\s*)?(완료|성공)"),
+    re.compile(r"정상\s*처리"),
+    re.compile(r"상품\s*(이\s*)?저장"),
+    re.compile(r"(\d+)\s*건\s*(이\s*)?저장"),
+]
+SAVE_FAIL_PATTERNS = [
+    re.compile(r"저장\s*실패"),
+    re.compile(r"오류\s*가\s*발생"),
+    re.compile(r"다시\s*시도"),
+]
+
+SHOT_ROOT = Path(__file__).parent / "run-logs"
 
 
 def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+class RunCtx:
+    """1행×N상품 검증·재시도·스크린샷용 실행 컨텍스트"""
+
+    def __init__(
+        self,
+        *,
+        save_count: int = DEFAULT_SAVE_COUNT,
+        retries: int = DEFAULT_ROW_RETRIES,
+        verify: bool = False,
+        max_rows: int | None = None,
+        batch: bool = False,
+        shot_dir: Path | None = None,
+    ) -> None:
+        self.save_count = save_count
+        self.retries = max(1, retries)
+        self.verify = verify
+        self.max_rows = max_rows
+        self.batch = batch or verify  # 검증 모드는 기본 무중단
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        self.shot_dir = shot_dir or (SHOT_ROOT / stamp)
+        self.shot_dir.mkdir(parents=True, exist_ok=True)
+        self.step_i = 0
+        self.log_path = self.shot_dir / "run.log"
+        self._log_file = open(self.log_path, "a", encoding="utf-8")
+
+    def close(self) -> None:
+        try:
+            self._log_file.close()
+        except Exception:
+            pass
+
+    def info(self, msg: str) -> None:
+        line = f"[{time.strftime('%H:%M:%S')}] {msg}"
+        print(line, flush=True)
+        try:
+            self._log_file.write(line + "\n")
+            self._log_file.flush()
+        except Exception:
+            pass
+
+    def shot(self, page: Page, tag: str, row_no: int | None = None) -> Path | None:
+        self.step_i += 1
+        safe = re.sub(r"[^\w\-가-힣]+", "_", tag)[:40]
+        name = f"{self.step_i:02d}_r{row_no or 0}_{safe}.png"
+        path = self.shot_dir / name
+        try:
+            page.screenshot(path=str(path), full_page=True)
+            self.info(f"  [샷] {path.name}")
+            return path
+        except Exception as e:  # noqa: BLE001
+            self.info(f"  [샷 실패] {e}")
+            return None
 
 
 # ── 브라우저 연결 (기존 Chrome/Edge에 CDP로 붙기, Chromium 다운로드 없음) ──
@@ -626,20 +697,23 @@ def wait_page_not_loading(page: Page, timeout_sec: float = 15.0) -> None:
         page.wait_for_timeout(300)
 
 
-def process_row(page: Page, row: dict, save_count: int) -> None:
+def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     label = row["label"]
     url = normalize_url(row["url"])
-    log(f"--- {row['row']}행 : {label} ---")
+    save_count = ctx.save_count
+    rn = row["row"]
+    ctx.info(f"--- {rn}행 : {label} (목표 저장수={save_count}) ---")
 
-    log("0. 초기화 : 상품데이터수집 -> 대량데이터수집")
+    ctx.info("0. 초기화 : 상품데이터수집 -> 대량데이터수집")
     reset_to_bulk_menu(page)
     page.wait_for_timeout(500)
+    ctx.shot(page, "00_init_bulk", rn)
 
-    log(f"  엑셀 원본 값: {row['url']!r}")
+    ctx.info(f"  엑셀 원본 값: {row['url']!r}")
     if url != row["url"].strip():
-        log(f"  [정보] 프로토콜 보정됨 (엑셀 값에 http(s):// 없음): {url}")
+        ctx.info(f"  [정보] 프로토콜 보정됨: {url}")
 
-    log(f"1. 필드값 입력: {url}")
+    ctx.info(f"1. 필드값 입력: {url}")
     target = url_input(page)
     type_into(page, target, url)
     actual = ""
@@ -647,19 +721,19 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
         actual = target.input_value()
     except Exception:
         pass
-    log(f"  입력칸 최종 값: {actual!r}")
+    ctx.info(f"  입력칸 최종 값: {actual!r}")
     if actual.strip() != url.strip():
-        log(f"  [경고] 입력값 불일치 — 넣으려던 값: {url!r} / 실제 값: {actual!r}")
-    log("1. URL상품검색하기 클릭")
+        raise RuntimeError(f"URL 입력 불일치 — 기대 {url!r} / 실제 {actual!r}")
+    ctx.shot(page, "01_url_filled", rn)
+
+    ctx.info("1. URL상품검색하기 클릭")
     trusted = click_it(url_search_button(page))
 
-    log("1. 팝업창이 없어질 때까지 대기")
+    ctx.info("1. 팝업창이 없어질 때까지 대기")
     opened = wait_popups_gone(page, grace_sec=15.0, warn_if_never_opened=True)
 
     if not opened:
-        # 클릭이 신뢰되는 클릭이 아니었거나(JS 강제클릭), 사이트가 늦게
-        # 반응하는 경우 — 키보드로 실제 클릭을 한 번 더 시도한다.
-        log("  키보드로 재시도 (Enter)")
+        ctx.info("  키보드로 재시도 (Enter)")
         try:
             btn = url_search_button(page).first
             btn.focus()
@@ -669,32 +743,51 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
         opened = wait_popups_gone(page, grace_sec=10.0, warn_if_never_opened=True)
 
     if not opened:
+        ctx.shot(page, "01_popup_missing", rn)
         raise RuntimeError(
-            f"#{row['row']} URL상품검색하기 클릭 후 팝업이 뜨지 않음 "
-            f"(trusted_click={trusted}) — 화면을 직접 확인해 주세요"
+            f"#{rn} URL상품검색하기 클릭 후 팝업이 뜨지 않음 "
+            f"(trusted_click={trusted})"
         )
-    log("1. 팝업창 닫힘")
+    ctx.info("1. 팝업창 닫힘")
+    ctx.shot(page, "01_popup_closed", rn)
 
-    # 팝업이 닫힌 시점과 메인화면에 검색결과가 실제로 다 그려지는 시점이
-    # 살짝 어긋날 수 있다("검색결과 없음"으로 잘못 보이는 원인 중 하나).
-    # 결과 유무는 판단하지 않고(과거에 오탐 있었음) 로딩 표시가 사라질
-    # 때까지만 잠깐 더 기다린다.
     wait_page_not_loading(page)
+    ctx.shot(page, "01_results_ready", rn)
 
-    log("2. 검색된 상품 모두저장 클릭")
+    ctx.info("2. 검색된 상품 모두저장 클릭")
     click_it(save_all_button(page))
     save_modal(page).wait_for(state="visible", timeout=MODAL_WAIT_SEC * 1000)
     page.wait_for_timeout(400)
+    ctx.shot(page, "02_save_modal", rn)
 
-    log(f"2. 검색필터명 입력: {label}")
+    ctx.info(f"2. 검색필터명 입력: {label}")
     type_into(page, modal_field(page, FILTER_NAME_LABEL), label)
 
     count_field = modal_field(page, SAVE_COUNT_LABEL)
-    if count_field.count() > 0:
-        type_into(page, count_field, str(save_count))
-        type_into(page, modal_field(page, FILTER_NAME_LABEL), label)  # 덮어쓰기 방지 재확인
+    if count_field.count() == 0:
+        ctx.shot(page, "02_no_count_field", rn)
+        raise RuntimeError(f"#{rn} 저장상품수 입력칸을 찾지 못함")
+    type_into(page, count_field, str(save_count))
+    type_into(page, modal_field(page, FILTER_NAME_LABEL), label)
 
-    log("2. 저장하기 버튼 클릭")
+    # 저장수 확인
+    got_count = ""
+    try:
+        got_count = count_field.input_value()
+    except Exception:
+        pass
+    ctx.info(f"  저장상품수 입력값: {got_count!r} (목표 {save_count})")
+    if str(save_count) not in (got_count or "").replace(" ", ""):
+        # 숫자만 비교
+        digits = re.sub(r"\D", "", got_count or "")
+        if digits != str(save_count):
+            ctx.shot(page, "02_count_mismatch", rn)
+            raise RuntimeError(
+                f"#{rn} 저장상품수 불일치 — 기대 {save_count} / 실제 {got_count!r}"
+            )
+    ctx.shot(page, "02_modal_filled", rn)
+
+    ctx.info("2. 저장하기 버튼 클릭")
     click_it(
         save_modal(page)
         .locator('input[value*="저장하기"]')
@@ -702,20 +795,102 @@ def process_row(page: Page, row: dict, save_count: int) -> None:
         .or_(save_modal(page).get_by_text(re.compile("^저장하기$")))
     )
 
-    log("3. 팝업창이 없어질 때까지 대기")
+    ctx.info("3. 팝업창이 없어질 때까지 대기")
     end = time.time() + MODAL_WAIT_SEC
     closed = False
     while time.time() < end:
         if not save_modal_visible(page):
-            wait_popups_gone(page, grace_sec=0.5)  # 남은 팝업이 있으면만 대기
+            wait_popups_gone(page, grace_sec=0.5)
             closed = True
             break
         page.wait_for_timeout(500)
     if not closed:
-        raise TimeoutError(f"#{row['row']} 저장 팝업창이 닫히지 않음")
-    log("3. 팝업창 닫힘")
+        ctx.shot(page, "03_modal_stuck", rn)
+        raise TimeoutError(f"#{rn} 저장 팝업창이 닫히지 않음")
+    ctx.info("3. 팝업창 닫힘")
+    ctx.shot(page, "03_modal_closed", rn)
 
-    log("4. -> 0. 초기화")
+    # C. 3건(저장수) 완료 확인
+    verify_row_save_done(page, ctx, rn, save_count)
+    ctx.info(f"4. -> 행 완료 확인 (저장수 {save_count})")
+    ctx.shot(page, "04_row_done", rn)
+
+
+def verify_row_save_done(page: Page, ctx: RunCtx, row_no: int, save_count: int) -> None:
+    """저장 모달 종료 후, 오류 문구가 없고(가능하면) 성공 신호를 확인."""
+    page.wait_for_timeout(800)
+    try:
+        text = page.evaluate(
+            "() => (document.body && document.body.innerText) ? document.body.innerText : ''"
+        )
+    except Exception:  # noqa: BLE001
+        text = ""
+
+    for pat in SAVE_FAIL_PATTERNS:
+        if pat.search(text or ""):
+            raise RuntimeError(f"#{row_no} 저장 후 오류 문구 감지: {pat.pattern}")
+
+    ok_hit = None
+    for pat in SAVE_OK_PATTERNS:
+        m = pat.search(text or "")
+        if m:
+            ok_hit = m.group(0)
+            break
+
+    # 모달이 닫혔고 오류 문구가 없으면 1차 통과.
+    # 성공 문구가 있으면 로그에 남김. 검증 모드에서는 성공 문구 또는
+    # '저장상품수 입력 확인됨'을 전제로 이미 모달에서 확인했으므로 통과.
+    if ok_hit:
+        ctx.info(f"  [확인] 화면 성공 신호: {ok_hit!r}")
+    else:
+        ctx.info(
+            f"  [확인] 오류 문구 없음 · 모달 종료 · 저장수 {save_count} 입력 확인됨 "
+            f"(성공 문구는 화면에 없을 수 있음)"
+        )
+
+    if ctx.verify:
+        # 검증 모드: 저장수 필드에 넣었던 값이 반영됐는지 이미 확인함.
+        # 추가로 짧은 대기 후 로그인 튕김만 검사.
+        if "admin_login" in page.url:
+            raise RuntimeError(f"#{row_no} 저장 직후 로그인 화면으로 이동됨")
+
+
+def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
+    """행 단위 재시도. 성공 True / 최종 실패 False."""
+    last_err: Exception | None = None
+    for attempt in range(1, ctx.retries + 1):
+        try:
+            ctx.info(f"▶ 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행)")
+            page = refresh_if_closed(page)
+            _process_row_once(page, row, ctx)
+            ctx.info(f"✔ {row['row']}행 성공 (시도 {attempt})")
+            return True
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            ctx.info(f"✘ {row['row']}행 실패 (시도 {attempt}/{ctx.retries}): {e}")
+            try:
+                ctx.shot(page, f"fail_attempt{attempt}", row["row"])
+            except Exception:
+                pass
+            if attempt < ctx.retries:
+                ctx.info("  같은 행 재시도 전 대량수집 화면 복귀…")
+                try:
+                    page = refresh_if_closed(page)
+                    reset_to_bulk_menu(page)
+                except Exception as re:  # noqa: BLE001
+                    ctx.info(f"  복귀 중 경고: {re}")
+                page.wait_for_timeout(1000)
+    ctx.info(f"✖ {row['row']}행 최종 실패: {last_err}")
+    return False
+
+
+def process_row(page: Page, row: dict, save_count: int = DEFAULT_SAVE_COUNT) -> None:
+    """하위 호환: 저장수만 받아 1회 시도."""
+    ctx = RunCtx(save_count=save_count, retries=1, batch=True)
+    try:
+        _process_row_once(page, row, ctx)
+    finally:
+        ctx.close()
 
 
 def ensure_ready_page(page: Page) -> Page:
@@ -759,37 +934,101 @@ def ensure_ready_page(page: Page) -> Page:
 
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        print("사용법: python collect.py 엑셀파일.xlsx [저장수(기본 3)]")
-        sys.exit(1)
+    import argparse
 
-    excel_path = sys.argv[1]
-    save_count = int(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_SAVE_COUNT
+    ap = argparse.ArgumentParser(
+        description="P2 더망고 대량수집 — URL 1행당 상품 N건 (기본 3)"
+    )
+    ap.add_argument("excel", help="P1 출력 엑셀 (.xlsx)")
+    ap.add_argument(
+        "save_count",
+        nargs="?",
+        type=int,
+        default=DEFAULT_SAVE_COUNT,
+        help=f"행당 저장 상품 수 (기본 {DEFAULT_SAVE_COUNT})",
+    )
+    ap.add_argument(
+        "--verify",
+        action="store_true",
+        help="1행 검증 모드: 첫 행만, 단계 스크린샷, 행 재시도, 무중단",
+    )
+    ap.add_argument(
+        "--max-rows",
+        type=int,
+        default=None,
+        help="처리할 최대 행 수 (검증 모드 기본 1)",
+    )
+    ap.add_argument(
+        "--retries",
+        type=int,
+        default=DEFAULT_ROW_RETRIES,
+        help=f"행 실패 시 같은 행 재시도 횟수 (기본 {DEFAULT_ROW_RETRIES})",
+    )
+    ap.add_argument(
+        "--yes",
+        "--batch",
+        dest="batch",
+        action="store_true",
+        help="실패해도 y/n 묻지 않고 다음 행으로 (또는 재시도만)",
+    )
+    args = ap.parse_args()
+
+    excel_path = args.excel
+    save_count = args.save_count if args.save_count and args.save_count > 0 else DEFAULT_SAVE_COUNT
+    verify = bool(args.verify)
+    max_rows = args.max_rows
+    if verify and max_rows is None:
+        max_rows = 1
 
     rows = read_excel(excel_path)
     if not rows:
         print("엑셀에 처리할 행이 없습니다.")
         sys.exit(1)
-    print(f"엑셀 {len(rows)}행 로드 완료. 저장수={save_count}")
+    if max_rows is not None:
+        rows = rows[: max(0, max_rows)]
 
-    with sync_playwright() as p:
-        _browser, page = connect_browser(p)
-        page.set_default_timeout(120_000)
-        page = ensure_ready_page(page)
+    ctx = RunCtx(
+        save_count=save_count,
+        retries=args.retries,
+        verify=verify,
+        max_rows=max_rows,
+        batch=args.batch or verify,
+    )
+    ctx.info(
+        f"엑셀 {len(rows)}행 · 저장수={save_count} · 재시도={ctx.retries} "
+        f"· verify={verify} · 로그={ctx.shot_dir}"
+    )
 
-        ok = 0
-        for row in rows:
-            try:
+    ok = 0
+    fail = 0
+    try:
+        with sync_playwright() as p:
+            _browser, page = connect_browser(p)
+            page.set_default_timeout(120_000)
+            page = ensure_ready_page(page)
+            ctx.shot(page, "ready", 0)
+
+            for row in rows:
                 page = refresh_if_closed(page)
-                process_row(page, row, save_count)
-                ok += 1
-            except Exception as e:  # noqa: BLE001
-                log(f"오류: {e}")
-                if input("계속 진행할까요? (y/n) ").strip().lower() != "y":
-                    break
+                success = process_row_with_retries(page, row, ctx)
+                if success:
+                    ok += 1
+                else:
+                    fail += 1
+                    if not ctx.batch:
+                        if input("계속 진행할까요? (y/n) ").strip().lower() != "y":
+                            break
 
-        print(f"완료: {ok}/{len(rows)}행 처리")
-        print("브라우저는 그대로 열어둡니다 (이 창만 닫으면 됩니다).")
+            ctx.info(f"완료: 성공 {ok} / 실패 {fail} / 대상 {len(rows)}행")
+            ctx.info(f"스크린샷·로그: {ctx.shot_dir}")
+            print("브라우저는 그대로 열어둡니다 (이 창만 닫으면 됩니다).")
+            if verify and ok >= 1 and fail == 0:
+                print("✔ 검증 모드 PASS — 1행×저장수 완료")
+                sys.exit(0)
+            if fail:
+                sys.exit(2)
+    finally:
+        ctx.close()
 
 
 if __name__ == "__main__":

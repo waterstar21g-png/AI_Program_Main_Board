@@ -1,13 +1,9 @@
-node_modules/
-.next/
-.next-dev/
+.data/
+.chrome-profile/
+run-logs/
 .venv/
 venv/
 __pycache__/
 *.pyc
-.data/
-.chrome-profile/
-.env
-.env.local
 *.xlsx
 !~$*.xlsx

@@ -73,3 +73,4 @@ SR_doc_YYYYMMDD_HHMMSS_요건요약20자이내.md
 | [SR_doc_20260807_134500_New보드P1P3.md](./SR_doc_20260807_134500_New보드P1P3.md) | AI_Program_Main_Board_New (P1+P3) |
 | [SR_doc_20260807_141200_P3엑셀목록선택.md](./SR_doc_20260807_141200_P3엑셀목록선택.md) | P3 로컬검색·리스트박스 입력 |
 | [SR_doc_20260807_155000_Python보드B안.md](./SR_doc_20260807_155000_Python보드B안.md) | Python B안 · P3→P2 심플보드 |
+| [SR_doc_20260807_164000_P2_1행3건검증.md](./SR_doc_20260807_164000_P2_1행3건검증.md) | P2 1행×3건 검증·재시도 |

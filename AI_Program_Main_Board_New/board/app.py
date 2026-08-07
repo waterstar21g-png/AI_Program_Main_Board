@@ -29,7 +29,7 @@ from library import (  # noqa: E402
     set_selected,
 )
 
-VERSION = "2.0.0"
+VERSION = "2.0.1"
 APP_TITLE = "AI_Program_Main_Board_New"
 
 
@@ -290,8 +290,19 @@ class BoardApp(tk.Tk):
 
         actions = tk.Frame(lib, bg="#ffffff")
         actions.pack(fill="x")
-        tk.Button(
+        self.var_verify = tk.BooleanVar(value=True)
+        tk.Checkbutton(
             actions,
+            text="1행 검증 모드 (추천: 스크린샷·재시도·3건확인)",
+            variable=self.var_verify,
+            bg="#ffffff",
+            font=("Malgun Gothic", 9),
+        ).pack(anchor="w", pady=(0, 6))
+
+        btn_row = tk.Frame(actions, bg="#ffffff")
+        btn_row.pack(fill="x")
+        tk.Button(
+            btn_row,
             text="선택 파일로 수집 시작",
             command=self._run_p2,
             bg="#2563eb",
@@ -300,8 +311,8 @@ class BoardApp(tk.Tk):
             padx=12,
             pady=6,
         ).pack(side="left")
-        tk.Button(actions, text="목록에서 제거", command=self._remove_lib).pack(side="left", padx=8)
-        tk.Button(actions, text="새로고침", command=self._refresh_p2_list).pack(side="left")
+        tk.Button(btn_row, text="목록에서 제거", command=self._remove_lib).pack(side="left", padx=8)
+        tk.Button(btn_row, text="새로고침", command=self._refresh_p2_list).pack(side="left")
 
         self.p2_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
         self.p2_status.pack(fill="x", pady=6)
@@ -388,19 +399,21 @@ class BoardApp(tk.Tk):
 
         run_bat = ROOT / "P2" / "run.bat"
         collect_py = ROOT / "P2" / "collect.py"
+        verify = bool(self.var_verify.get())
         try:
             if os.name == "nt" and run_bat.exists():
-                subprocess.Popen(
-                    ["cmd", "/c", "start", "P2_수집", "cmd", "/k", str(run_bat), path],
-                    cwd=str(ROOT / "P2"),
-                )
+                cmd = ["cmd", "/c", "start", "P2_수집", "cmd", "/k", str(run_bat), path]
+                if verify:
+                    cmd.append("--verify")
+                subprocess.Popen(cmd, cwd=str(ROOT / "P2"))
             else:
-                subprocess.Popen(
-                    [sys.executable, str(collect_py), path],
-                    cwd=str(ROOT / "P2"),
-                )
+                args = [sys.executable, str(collect_py), path, "3", "--retries", "3", "--yes"]
+                if verify:
+                    args.append("--verify")
+                subprocess.Popen(args, cwd=str(ROOT / "P2"))
             set_selected(path)
-            self.p2_status.configure(text=f"수집 시작: {path}", fg="#15803d")
+            mode = "1행 검증" if verify else "전체(--yes)"
+            self.p2_status.configure(text=f"수집 시작 ({mode}): {path}", fg="#15803d")
         except Exception as e:
             messagebox.showerror("실행 실패", str(e))
 
