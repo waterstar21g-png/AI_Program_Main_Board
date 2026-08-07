@@ -1,14 +1,17 @@
 """
-P2 — 더망고(tmg1898) 상품데이터 대량수집
+P2 — 더망고(tmg1898) 상품데이터 대량수집 (BATCH 순차)
 
-목표: 카테고리 URL(P1 엑셀) 1행당 상품 정보 N건(기본 3)을 오류 없이 가져오기.
+목표: 카테고리 URL 1행당 상품 N건(기본 3)을 오류 없이 가져오기.
 
-0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭
-1. URL상품검색하기 : 필드값 입력 후 클릭 -> 팝업창이 없어질 때까지 대기
-2. [버튼1] 검색된 상품 모두저장 클릭 → 검색필터명·저장수 입력
-   → [버튼2] 모달 하단 저장하기 클릭 (모두저장과 다른 버튼, 서버 최종 갱신)
-3. 저장 실행 팝업/알림 확인(수집건수) — 서버 반영 증거
-4. 다음 행 (버튼2 성공 전에 진행 금지 / 실패 시 1회 재시도 후 다음 행)
+BATCH 필수 순서 (딴 길로 빠지지 않음 — batch_steps.py):
+  1 로그인 (main 1회)
+  2 초기화(상품데이터수집→대량수집)
+  3 URL 입력 → 4 URL상품검색하기 클릭
+  5 검색팝업 열림 → 6 검색팝업 닫기-확인
+  7 모두저장 → 8 필터·건수 → 9 저장하기
+  10 저장팝업 열림 → 11 저장팝업 닫기-확인 → 12 건수로그
+  13 다음행 초기화(=2) 후 3~12 반복
+실패 최대 원인: 6·11·12 확인 없이 다음 단계 진행.
 
 사용법:
     python collect.py 엑셀.xlsx              # 저장수 3
@@ -2061,230 +2064,14 @@ def wait_mango_search_settle(
 
 
 def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
-    rn = row["row"]
-    # ★저장하기 클릭 후 팝업모달 대기 중이면 초기화 절대 금지 (맨 앞 게이트)
-    if getattr(ctx, "save_awaiting_popup", False):
-        raise RuntimeError(
-            f"#{rn} 저장하기 후 팝업모달 대기 미완료 — "
-            "초기화로 진행할 수 없습니다. "
-            "팝업창 모달이 열리고 닫힐 때까지 기다리세요."
-        )
+    """한 행 BATCH: 2→3→4→5→6→7→8→9→10→11→12 순차만 실행.
 
-    label = row["label"]
-    url = normalize_url(row["url"])
-    save_count = ctx.save_count
-    ctx.info(
-        f"처리 시작 | 상위 최종 카테고리명={label} | "
-        f"최종 카테고리 URL주소={row['url']} | 목표 저장수={save_count}"
-    )
+    복잡한 분기·우회 없음. 단계 구현은 batch_steps.py.
+    (1=로그인은 main, 13=다음 행의 2항 초기화)
+    """
+    from batch_steps import run_row_batch
 
-    ctx.info("0. 초기화 : 상품데이터수집 -> 대량데이터수집")
-    reset_to_bulk_menu(page)
-    page.wait_for_timeout(500)
-    ctx.shot(page, "00_init_bulk", rn)
-
-    ctx.info(f"  엑셀 원본 URL: {row['url']}")
-    if url != row["url"].strip():
-        ctx.info(f"  [정보] 프로토콜 보정됨: {url}")
-
-    # URL 검색: 망고 자체 '검색결과 없음'이면 소횟수 재시도 후 다음 행으로
-    search_ok = False
-    last_state = "unknown"
-    last_count = 0
-    popup_imgs = 0
-    max_search = max(1, int(SEARCH_MAX_TRIES))
-    for search_try in range(1, max_search + 1):
-        ctx.check_budget(f"URL검색 {search_try}/{max_search}")
-        ctx.info(
-            f"1. URL 검색 시도 {search_try}/{max_search} | "
-            f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={url}"
-        )
-        target = url_input(page)
-        type_into(page, target, url)
-        actual = ""
-        try:
-            actual = target.input_value()
-        except Exception:
-            pass
-        ctx.info(f"  입력칸 최종 값: {actual!r}")
-        if actual.strip() != url.strip():
-            raise RuntimeError(f"URL 입력 불일치 — 기대 {url!r} / 실제 {actual!r}")
-        if search_try == 1:
-            ctx.shot(page, "01_url_filled", rn)
-
-        ctx.info("1. URL상품검색하기 클릭")
-        trusted = click_it(url_search_button(page))
-
-        # 검색 팝업 "열림" 확인·샷 → 그 다음 "닫힘"
-        ctx.info("1. 검색 팝업 열림 대기")
-        opened_pages = wait_popup_open(page, grace_sec=15.0)
-        if not opened_pages:
-            ctx.info("  키보드로 재시도 (Enter)")
-            try:
-                btn = url_search_button(page).first
-                btn.focus()
-                page.keyboard.press("Enter")
-            except Exception:  # noqa: BLE001
-                pass
-            opened_pages = wait_popup_open(page, grace_sec=10.0)
-
-        if not opened_pages:
-            ctx.shot(page, "01_popup_missing", rn)
-            raise RuntimeError(
-                f"#{rn} URL상품검색하기 클릭 후 팝업이 뜨지 않음 "
-                f"(trusted_click={trusted})"
-            )
-
-        popup = opened_pages[0]
-        try:
-            popup.bring_to_front()
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            popup_imgs = prepare_product_view_for_shot(popup, min_images=2)
-        except Exception as e:  # noqa: BLE001
-            ctx.info(f"  [경고] 팝업 상품이미지 대기 실패: {e}")
-            popup_imgs = 0
-        ctx.info(
-            f"5. 검색 팝업 열림(수집실행) — 상품이미지 약 {popup_imgs}개 "
-            "→ 임시메모리 적재 중"
-        )
-        ctx.search_popup_seen = True
-        ctx.search_popup_closed = False
-        if search_try == 1:
-            ctx.shot(popup, "01_popup_opened", rn)
-
-        # ★6항: 검색 팝업 닫기-확인 — 여기 통과 전 7항(모두저장) 금지
-        ctx.info(f"{COLLECT_STEP6} 대기 — 닫힘 확인 전 모두저장/다음단계 금지")
-        wait_popups_close(page)
-        if popups(page):
-            raise TimeoutError(
-                f"#{rn} 검색 팝업모달이 닫히지 않음 (6항 미확인) — "
-                "모두저장으로 진행 불가"
-            )
-        ctx.search_popup_closed = True
-        try:
-            page.bring_to_front()
-        except Exception:  # noqa: BLE001
-            pass
-        ctx.info(f"{COLLECT_STEP6} 완료 — 임시메모리 보관 완료")
-        if search_try == 1:
-            ctx.shot(page, "01_popup_closed", rn)
-
-        # 망고 로딩(빨간 잠시만 기다려주세요) 종료 후, 자체 무결과 메세지 판별
-        ctx.info("1. 망고 검색결과 안정화 대기 (로딩 종료 후 판별)")
-        last_state, last_count = wait_mango_search_settle(page, timeout_sec=45.0)
-        if last_state == "no_results":
-            ctx.info(
-                "  [망고 자체메세지] 검색하신 검색에 대한 검색결과가 없습니다. "
-                f"(팝업상품이미지약 {popup_imgs}개 / 망고결과힌트 {last_count})"
-            )
-            ctx.shot(page, "01_mango_no_results", rn)
-            if search_try < max_search:
-                ctx.info("  망고 무결과 — URL 검색 재시도")
-                page.wait_for_timeout(800)
-                continue
-            raise RuntimeError(
-                f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
-                f"  · 상위 최종 카테고리명={label}\n"
-                f"  · 최종 카테고리 URL주소={url}\n"
-                f"  · ABC검색팝업 상품이미지 약 {popup_imgs}개였으나 "
-                f"망고 수집결과에 상품이 없음\n"
-                "  · URL/카테고리 접근·망고 세션을 확인하세요."
-            )
-
-        if last_state == "products" or last_count >= 1:
-            search_ok = True
-            break
-
-        # unknown: 이미지 로드를 한번 더 기다려 보고 판단
-        result_imgs = prepare_product_view_for_shot(page, min_images=2)
-        if result_imgs >= 1 and not is_mango_no_results(page):
-            last_state, last_count = "products", result_imgs
-            search_ok = True
-            break
-        if is_mango_no_results(page):
-            ctx.info("  [망고 자체메세지] 검색결과가 없습니다. (재확인)")
-            ctx.shot(page, "01_mango_no_results", rn)
-            if search_try < max_search:
-                continue
-            raise RuntimeError(
-                f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
-                f"  · 상위 최종 카테고리명={label}\n"
-                f"  · 최종 카테고리 URL주소={url}"
-            )
-        ctx.info(
-            f"  [경고] 검색결과 판별 불명 (state={last_state}, hint={last_count}, "
-            f"imgs={result_imgs}) — 재시도"
-        )
-        if search_try < max_search:
-            page.wait_for_timeout(800)
-            continue
-
-    if not search_ok and last_state != "products" and last_count < 1:
-        raise RuntimeError(
-            f"#{rn} 망고 검색결과 확인 실패 (state={last_state}, hint={last_count})"
-        )
-
-    # 08: 검색 결과 준비 — 하단 수집 상품 이미지가 보이도록 대기 후 샷
-    result_imgs = prepare_product_view_for_shot(page, min_images=2)
-    ctx.info(
-        f"1. 검색 결과 준비 (하단 상품이미지 약 {result_imgs}개 / "
-        f"망고상태={last_state}, hint={last_count})"
-    )
-    if is_mango_no_results(page):
-        ctx.shot(page, "01_mango_no_results", rn)
-        raise RuntimeError(
-            f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
-            f"  · 상위 최종 카테고리명={label}\n"
-            f"  · 최종 카테고리 URL주소={url}"
-        )
-    if result_imgs < 1:
-        ctx.info("  [경고] 검색 결과 상품이미지가 거의 보이지 않음 — 그대로 샷")
-    ctx.shot(page, "01_results_ready", rn)
-
-    # ── [버튼1] 검색결과 상단: 검색된 상품 모두저장 (모달 열기) ──
-    ctx.info(
-        "2-A. ★ [버튼1] '검색된 상품 모두저장' 클릭 "
-        "(결과목록 상단 — 모달 하단 '저장하기'와 다른 버튼)"
-    )
-    scroll_to_product_strip(page)
-    click_it(save_all_button(page))
-    # 모달 열림: 제목 또는 하단 저장하기+취소하기
-    end_modal = time.time() + MODAL_WAIT_SEC
-    while time.time() < end_modal:
-        if save_modal_visible(page):
-            break
-        page.wait_for_timeout(300)
-    else:
-        ctx.shot(page, "02_save_missing", rn)
-        raise RuntimeError(
-            f"#{rn} [버튼1] 모두저장 클릭 후 상품저장설정 모달이 열리지 않음"
-        )
-    try:
-        modal_imgs = prepare_product_view_for_shot(page, min_images=2)
-    except Exception as e:  # noqa: BLE001
-        ctx.info(f"  [경고] 모달 화면 상품이미지 대기 실패: {e}")
-        modal_imgs = 0
-    page.wait_for_timeout(300)
-    ctx.info(f"2-A. 상품저장설정 모달 열림 (상품이미지 약 {modal_imgs}개)")
-    ctx.shot(page, "02_save_modal", rn)
-
-    # 저장 단계 시간 확보 (검색 대기 후 예산이 거의 소진된 경우 대비)
-    ctx.row_deadline = time.time() + max(120.0, float(MODAL_WAIT_SEC) + 60.0)
-
-    # 검색필터명 → 저장상품수 → [버튼2] 하단 저장하기 (서버 최종 갱신)
-    fill_save_modal_fields(page, ctx, rn, label, save_count)
-    ctx.info(
-        "2-B. ★ [버튼2] 모달 하단 '저장하기' 클릭 시작 "
-        "([버튼1] 모두저장과 구분 — 서버 최종 갱신)"
-    )
-    run_save_submit_and_verify(page, ctx, rn, save_count)
-    if not ctx.server_save_ok:
-        raise RuntimeError(
-            f"#{rn} [버튼2] 하단 저장하기 서버 최종 갱신 미확인 — "
-            "필터정보·수집갯수·수집상품이 서버에 반영되지 않음"
-        )
+    run_row_batch(page, row, ctx)
 
 
 def fill_save_modal_fields(
@@ -2370,9 +2157,8 @@ def run_save_submit_and_verify(
             )
 
         ctx.info(
-            "2-B. ★★★ [버튼2] 하단 파란 '저장하기' "
-            "(옆=취소하기) = 서버 최종 갱신 — "
-            "[버튼1] '검색된 상품 모두저장' 과 다름"
+            "9. DB저장 시작 : 하단 파란 '저장하기' 클릭 "
+            "(옆=취소하기 / 7항 모두저장과 다른 버튼)"
         )
         scroll_save_modal_to_footer(page)
         dump_save_button_candidates(page, ctx)
@@ -2478,7 +2264,7 @@ def run_save_submit_and_verify(
         # ★필수 순서(사용자 14단계): 10 열림 → 11 닫힘확인 → 12 건수로그 → 13 초기화
         # 6·11·12 확인 없이 다음 단계로 가면 수집 실패의 주요 원인
         ctx.info(
-            "10. ★★★ DB저장 실행 팝업 열림 대기 "
+            "10. DB저장 실행 : 저장 팝업 모달 열림 대기 "
             "(잔여 00건·설정모달 닫힘만으로 통과 금지)"
         )
         wait_save_execution_popup(
@@ -3391,22 +3177,20 @@ def process_row(page: Page, row: dict, save_count: int = DEFAULT_SAVE_COUNT) -> 
 
 
 def ensure_ready_page(page: Page) -> Page:
-    """이미 망고 화면이면 그대로, 아니면 메인화면 진입 → 필요시 로그인 대기 → 0.초기화
+    """BATCH 1항 로그인(+최초 화면 준비). 행별 2항 초기화는 batch_steps에서.
 
-    로그인 성공 후 사이트가 원래 탭을 닫아버리는 경우가 있어(예: 로그인
-    중계 페이지가 스스로를 닫음) 매 단계 사이마다 탭이 살아있는지
-    확인하고, 닫혔으면 같은 브라우저에서 새 탭을 다시 찾아온다.
+    로그인 성공 후 사이트가 원래 탭을 닫아버리는 경우가 있어
+    매 단계 사이마다 탭이 살아있는지 확인하고 복구한다.
     """
     page = refresh_if_closed(page)
+    log("1. 로그인 준비")
 
     if ADMIN_HOST not in page.url or page.url in ("about:blank", ""):
         log("메인화면으로 이동: " + MAIN_URL)
         safe_goto(page, MAIN_URL)
 
-    # 세션 없으면 더망고 로그인창을 직접 연다 (메인 경유 리다이렉트만 기다리지 않음)
     need_login = "admin_login" in page.url
     if not need_login:
-        # 메인에 들어갔는데 세션 쿠키가 없으면 곧 로그인으로 튕김 → 선제 확인
         try:
             if page.locator('input[name="login_id"]').count() > 0:
                 need_login = True
@@ -3414,7 +3198,7 @@ def ensure_ready_page(page: Page) -> Page:
             pass
     if need_login or ADMIN_HOST not in page.url:
         if "admin_login" not in page.url:
-            log("더망고 로그인창으로 이동: " + LOGIN_URL)
+            log("1. 더망고 로그인창으로 이동: " + LOGIN_URL)
             safe_goto(page, LOGIN_URL)
             page = refresh_if_closed(page)
         shot_now(page, "login_gate", 0)
@@ -3432,8 +3216,10 @@ def ensure_ready_page(page: Page) -> Page:
         page = refresh_if_closed(page)
         if "admin_login" in page.url or ADMIN_HOST not in page.url:
             safe_goto(page, MAIN_URL)
+        log("1. 로그인 완료")
 
-    log("0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭")
+    # 최초 진입 시 대량수집 화면까지 준비 (행 루프의 2항과 동일 메뉴)
+    log("1→2 준비: 대량데이터수집 화면")
     if BULK_PATH in page.url:
         wait_bulk_ready(page)
     else:
@@ -3562,8 +3348,12 @@ def main() -> None:
                 success = False
                 try:
                     check_stop(f"입력#{ordinal} 시작 전")
-                    # 2번(및 이후) 수집 전: 팝업·모달 전부 닫힘 확인 + 스크린샷 보관
+                    # 13항: 다음 행 = 화면 정리 후 2항(초기화)부터 3~12 반복
                     if ordinal >= 2:
+                        ctx.info(
+                            f"13. 다음 행 준비(입력#{ordinal}) — "
+                            "팝업정리 후 2항 초기화부터 순차 진행"
+                        )
                         page = ensure_overlays_closed_before_next(
                             page,
                             ctx,
