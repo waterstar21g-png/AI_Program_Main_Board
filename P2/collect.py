@@ -1360,10 +1360,37 @@ def dump_save_button_candidates(page: Page, ctx: "RunCtx | None" = None) -> str:
     return line
 
 
+def _prefer_clickable_save(el):
+    """div/span 래퍼가 잡히면 실제 a/button/input 으로 승격.
+
+    래퍼에 node.click() 하면 onclick이 자식에만 있어 서버 제출이 안 됨.
+    """
+    if el is None:
+        return None
+    try:
+        handle = el.evaluate_handle(
+            """(node) => {
+                const tag = (node.tagName || '').toLowerCase();
+                if (tag === 'a' || tag === 'button' || tag === 'input') return node;
+                const inner = node.querySelector(
+                    'a, button, input[type="button"], input[type="submit"]'
+                );
+                if (inner) return inner;
+                const parent = node.closest('a, button');
+                return parent || node;
+            }"""
+        )
+        upgraded = handle.as_element()
+        return upgraded or el
+    except Exception:  # noqa: BLE001
+        return el
+
+
 def _find_footer_save_by_cancel_pair(page: Page):
     """스크린샷 기준: 하단 [저장하기][취소하기] 쌍에서 저장하기만 반환.
 
     '검색된 상품 모두저장'과는 완전히 다른 버튼이다.
+    ★ 반드시 a/button/input 클릭 가능 요소를 반환 (div/span 래퍼 금지).
     """
     try:
         handle = page.evaluate_handle(
@@ -1378,43 +1405,53 @@ def _find_footer_save_by_cancel_pair(page: Page):
                     const r = el.getBoundingClientRect();
                     return r.width > 2 && r.height > 2;
                 };
-                const nodes = Array.from(document.querySelectorAll(
-                    'input, button, a, span, div, td'
-                ));
-                // 1) 취소하기 기준 — 같은 부모 안의 저장하기 (푸터 쌍)
-                const cancels = nodes.filter((el) => {
-                    const { v, t } = labelOf(el);
-                    return (v === '취소하기' || t === '취소하기') && visible(el);
-                });
-                for (const cancel of cancels) {
-                    let root = cancel.parentElement;
-                    for (let depth = 0; depth < 6 && root; depth++) {
-                        const kids = Array.from(root.querySelectorAll(
-                            'input, button, a, span, div'
-                        ));
-                        const save = kids.find((el) => {
-                            if (el === cancel) return false;
-                            const { v, t, blob } = labelOf(el);
-                            if (v !== '저장하기' && t !== '저장하기') return false;
-                            if (/모두\\s*저장|선택상품\\s*저장/.test(blob)) return false;
-                            return visible(el);
-                        });
-                        if (save) return save;
-                        root = root.parentElement;
-                    }
-                }
-                // 2) 전역 exact 저장하기 (모두저장 제외)
-                return nodes.find((el) => {
+                const isSaveLabel = (el) => {
                     const { v, t, blob } = labelOf(el);
                     if (v !== '저장하기' && t !== '저장하기') return false;
                     if (/모두\\s*저장|선택상품\\s*저장/.test(blob)) return false;
                     return visible(el);
-                }) || null;
+                };
+                const toClickable = (el) => {
+                    if (!el) return null;
+                    const tag = (el.tagName || '').toLowerCase();
+                    if (tag === 'a' || tag === 'button' || tag === 'input') return el;
+                    const inner = el.querySelector(
+                        'a, button, input[type="button"], input[type="submit"]'
+                    );
+                    if (inner && isSaveLabel(inner)) return inner;
+                    if (inner) return inner;
+                    const parent = el.closest('a, button');
+                    return parent || null;
+                };
+                const INTERACTIVE = 'input, button, a';
+                // 1) 취소하기 옆 — 먼저 클릭 가능 요소만
+                const cancels = Array.from(document.querySelectorAll(INTERACTIVE))
+                    .filter((el) => {
+                        const { v, t } = labelOf(el);
+                        return (v === '취소하기' || t === '취소하기') && visible(el);
+                    });
+                for (const cancel of cancels) {
+                    let root = cancel.parentElement;
+                    for (let depth = 0; depth < 6 && root; depth++) {
+                        const kids = Array.from(root.querySelectorAll(INTERACTIVE));
+                        const save = kids.find((el) => el !== cancel && isSaveLabel(el));
+                        if (save) return save;
+                        root = root.parentElement;
+                    }
+                }
+                // 2) 전역 interactive exact 저장하기
+                const direct = Array.from(document.querySelectorAll(INTERACTIVE))
+                    .find((el) => isSaveLabel(el));
+                if (direct) return direct;
+                // 3) 래퍼(span/div) → 클릭 가능 자식/부모로 승격
+                const wrap = Array.from(document.querySelectorAll('span, div, td'))
+                    .find((el) => isSaveLabel(el));
+                return toClickable(wrap);
             }"""
         )
         el = handle.as_element()
         if el is not None:
-            return el
+            return _prefer_clickable_save(el)
     except Exception:  # noqa: BLE001
         pass
     return None
@@ -1430,11 +1467,11 @@ def resolve_save_submit_control(page: Page):
     # 0) 최우선: 취소하기 옆 푸터 쌍의 저장하기 (스크린샷 그대로)
     el = _find_footer_save_by_cancel_pair(page)
     if el is not None:
-        return el
+        return _prefer_clickable_save(el)
 
     modal = save_modal(page)
 
-    # 1) 모달 안 — exact '저장하기' only
+    # 1) 모달 안 — exact '저장하기' only (클릭 가능 요소 우선)
     modal_candidates = [
         modal.locator(
             'input[type="button"][value="저장하기"], '
@@ -1447,7 +1484,7 @@ def resolve_save_submit_control(page: Page):
     for loc in modal_candidates:
         found = _first_visible(loc)
         if found is not None:
-            return found
+            return _prefer_clickable_save(found)
 
     # 2) 페이지 — exact only, 모두저장 제외는 _first_visible에서 처리
     page_candidates = [
@@ -1461,7 +1498,7 @@ def resolve_save_submit_control(page: Page):
     for loc in page_candidates:
         found = _first_visible(loc)
         if found is not None:
-            return found
+            return _prefer_clickable_save(found)
 
     dump_save_button_candidates(page)
     raise RuntimeError(
@@ -1472,11 +1509,16 @@ def resolve_save_submit_control(page: Page):
 
 
 def trusted_click_save_submit(page: Page, el) -> bool:
-    """하단 저장하기 클릭 — 마우스/Playwright 우선, 실패 시 force·JS.
+    """하단 저장하기 클릭 — 실제 a/button/input 에 클릭.
 
-    저장 실행 팝업이 window.open 이면 신뢰 클릭이 필요하지만,
-    클릭 자체가 안 되면 서버 제출이 영원히 누락되므로 최후 JS도 허용.
+    div 래퍼 클릭·JS 가짜 성공으로 서버 미제출되던 경로를 막는다.
     """
+    el = _prefer_clickable_save(el)
+    try:
+        tag = el.evaluate("(n) => (n.tagName || '').toLowerCase()")
+        log(f"  [9항 클릭대상] <{tag}> 저장하기")
+    except Exception:  # noqa: BLE001
+        pass
     try:
         el.scroll_into_view_if_needed(timeout=5_000)
     except Exception:  # noqa: BLE001
@@ -1509,11 +1551,21 @@ def trusted_click_save_submit(page: Page, el) -> bool:
     except Exception:  # noqa: BLE001
         pass
 
-    # 4) 최후 JS (미클릭으로 서버 미반영되는 것보다는 나음)
+    # 4) 최후 JS — 클릭 가능 노드 + bubble 이벤트. 성공으로 단정하지 않음(재시도 유도)
     try:
-        el.evaluate("(node) => node.click()")
-        log("  [경고] 저장하기 JS click 사용 — 팝업이 안 뜨면 재시도")
-        return True
+        el.evaluate(
+            """(node) => {
+                const t = node.closest('a,button')
+                    || node.querySelector('a,button,input[type=button],input[type=submit]')
+                    || node;
+                if (typeof t.click === 'function') t.click();
+                t.dispatchEvent(new MouseEvent('click', {
+                    bubbles: true, cancelable: true, view: window
+                }));
+            }"""
+        )
+        log("  [경고] 저장하기 JS click 사용 — 반응 없으면 재시도")
+        return False
     except Exception:  # noqa: BLE001
         return False
 
@@ -2175,14 +2227,14 @@ def run_save_submit_and_verify(
             )
 
         before_popup_ids = {_popup_id(p) for p in popups(page)}
-        clicked_ok = False
-        # 최대 1회 재시도(총 2회). 동일 실패면 다음 행으로 진행.
+        save_reacted = False
+        # 최대 1회 재시도(총 2회). 팝업 반응 없으면 클릭 성공으로 치지 않음.
         for attempt in range(1, 3):
-            ctx.check_budget(f"[버튼2] 저장하기 서버제출 시도 {attempt}")
+            ctx.check_budget(f"9항 저장하기 서버제출 시도 {attempt}")
             if not save_modal_visible(page) and attempt > 1:
                 ctx.info(
                     "  [경고] 재시도 시 상품저장설정 모달 없음 — "
-                    "팝업 대기로 넘어감"
+                    "저장하기 재클릭 불가 (가짜 클릭으로 보지 않음)"
                 )
                 break
             scroll_save_modal_to_footer(page)
@@ -2192,8 +2244,8 @@ def run_save_submit_and_verify(
                 dump_save_button_candidates(page, ctx)
                 ctx.shot(page, "02_save_missing", rn)
                 raise RuntimeError(
-                    f"#{rn} [버튼2] 하단 '저장하기' 없음 "
-                    f"(모두저장과 다른 버튼). 다음 입력으로. 원인: {e}"
+                    f"#{rn} 9항 하단 '저장하기' 없음 "
+                    f"(모두저장과 다른 버튼). 원인: {e}"
                 ) from e
 
             try:
@@ -2201,65 +2253,57 @@ def run_save_submit_and_verify(
             except Exception:  # noqa: BLE001
                 desc = "저장하기"
             ctx.info(
-                f"2-B. ★ [버튼2] 하단 '저장하기' 클릭 "
-                f"({attempt}/2, 재시도 최대 1회) | {desc}"
+                f"9. ★ 하단 '저장하기' 클릭 "
+                f"({attempt}/2) | {desc}"
             )
-            # 매 클릭 직전 기준 갱신
             alert_baseline = collect_alert_baseline(page)
             dialog_from = len(dialog_msgs)
             before_popup_ids = {_popup_id(p) for p in popups(page)}
             last_click_ok = trusted_click_save_submit(page, btn)
-            # 클릭 성공 순간부터 팝업 닫힘까지 초기화 진입 금지
-            if last_click_ok:
-                ctx.save_awaiting_popup = True
+            # 클릭 시도 순간부터 팝업 닫힘까지 초기화 진입 금지
+            ctx.save_awaiting_popup = True
             ctx.info(
-                f"  하단 저장하기 클릭 전송 "
-                f"(ok={last_click_ok}, attempt={attempt}) "
-                f"— 이후 팝업모달 열림·닫힘까지 대기 "
-                f"(최소 {SAVE_POPUP_GRACE_SEC:.0f}초, 초기화 금지)"
+                f"  9항 클릭 전송 (playwright_ok={last_click_ok}, "
+                f"attempt={attempt}) — 저장 팝업 반응 필수"
             )
-            page.wait_for_timeout(500)
+            page.wait_for_timeout(400)
             ctx.shot(page, "02_save_clicked", rn)
 
-            if not last_click_ok:
-                ctx.info("  [경고] 하단 저장하기 클릭 실패 — 재시도")
-                dump_save_button_candidates(page, ctx)
-                ctx.shot(page, "02_save_no_react", rn)
-                page.wait_for_timeout(500)
-                continue
-
-            clicked_ok = True
-            # 클릭 직후: 잔여문구 무시 + 유예시간 포함 반응 확인
+            react_timeout = (
+                max(8.0, SAVE_POPUP_GRACE_SEC + 2.0)
+                if last_click_ok
+                else 3.0
+            )
             if save_submit_reacted(
                 page,
                 dialog_msgs,
                 before_popup_ids=before_popup_ids,
                 baseline=alert_baseline,
                 dialog_from=dialog_from,
-                timeout_sec=max(8.0, SAVE_POPUP_GRACE_SEC + 2.0),
+                timeout_sec=react_timeout,
             ):
-                ctx.info(
-                    "2-B. ★ 저장하기 클릭 → 신규 저장 실행 팝업/알림 감지"
-                )
+                save_reacted = True
+                ctx.info("9. ★ 저장하기 클릭 → 저장 실행 팝업/알림 감지")
                 break
 
             ctx.info(
-                "  [경고] 클릭 직후 신규 팝업 미감지 — "
-                "잔여 '00건'/설정모달 닫힘만으로는 부족"
+                "  [경고] 9항 클릭 후 저장 팝업 미감지 — "
+                "설정모달 닫힘·잔여 00건만으로는 부족 (재시도)"
             )
             ctx.shot(page, "02_save_no_react", rn)
+            dump_save_button_candidates(page, ctx)
             if save_modal_visible(page) and attempt < 2:
                 page.wait_for_timeout(600)
                 continue
             break
 
-        if not clicked_ok:
+        if not save_reacted:
             dump_save_button_candidates(page, ctx)
             ctx.shot(page, "02_save_failed", rn)
             raise RuntimeError(
-                f"#{rn} 하단 '저장하기' 클릭 실패 — "
-                "팝업창 모달 없이 초기화할 수 없습니다. "
-                "1회 재시도 후에도 동일. 다음 입력으로 진행."
+                f"#{rn} 9항 하단 '저장하기' 서버 제출 실패 — "
+                "클릭해도 저장 팝업이 없음 (래퍼 div 오클릭·미클릭 가능). "
+                "팝업 없이 초기화/다음단계 불가. 1회 재시도 후에도 동일."
             )
 
         # ★필수 순서(사용자 14단계): 10 열림 → 11 닫힘확인 → 12 건수로그 → 13 초기화

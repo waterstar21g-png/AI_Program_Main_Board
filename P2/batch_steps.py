@@ -280,13 +280,17 @@ def step08_filter_count(
 
 
 def step09_to_12_db_save(page, ctx, rn: int, save_count: int) -> None:
-    """9 저장하기 → 10 팝업열림 → 11 닫힘확인 → 12 건수로그."""
+    """9 저장하기 → 10 팝업열림 → 11 닫힘확인 → 12 건수로그 (한 줄도 건너뛰지 않음)."""
     import collect as C
 
-    ctx.info("9~12. DB저장 배치: 저장하기 → 팝업열림 → 닫힘확인 → 건수로그")
+    ctx.info("9. DB저장 시작 — 하단 '저장하기' (모두저장과 다른 버튼)")
+    ctx.info("10. DB저장 실행 — 저장 팝업 열림 대기")
+    ctx.info("11. DB저장 종료 — 저장 팝업 닫기-확인")
+    ctx.info("12. 최종 저장건수 로그 확인")
     C.run_save_submit_and_verify(page, ctx, rn, save_count)
     if not ctx.server_save_ok:
         raise RuntimeError(
-            f"#{rn} 9~12항 DB저장 미완료 — "
-            "저장하기·팝업열림·닫힘·건수로그 확인 필요"
+            f"#{rn} 9항 저장하기 실패 또는 10·11·12항 미완료 — "
+            "저장하기 클릭→팝업열림→닫힘→건수로그 필수"
         )
+    ctx.info("9~12. DB저장 BATCH 완료")
