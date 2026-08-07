@@ -92,7 +92,7 @@ CHROME_CANDIDATES = [
     "/usr/bin/chromium",
 ]
 
-POPUP_WAIT_SEC = 40  # 검색 팝업 닫힘 대기(초) — 초과 시 닫고 다음 단계로
+POPUP_WAIT_SEC = 40  # 검색 팝업(6항) 닫힘 대기(초) — 초과 시 다음단계 금지·실패
 MODAL_WAIT_SEC = 60
 # 저장하기 클릭 후 서버 처리·팝업 생성에 주는 최소 시간(초)
 # (이 전에 화면에 있던 '00건 수집' 문구로 즉시 통과·초기화 금지)
@@ -104,6 +104,12 @@ ROW_BUDGET_SEC = 180  # 한 입력 행에 쓸 수 있는 최대 시간(초) — 
 
 # 보드 "수집 종료" 버튼이 만드는 중단 플래그 (로그는 보드에 보존)
 STOP_FLAG = Path(__file__).parent / ".collect_stop"
+
+# 수집 14단계 중 실패 핵심 게이트: 6항·11항·12항
+# (docs/수집_14단계_필수순서.md 참고)
+COLLECT_STEP6 = "6. 검색팝업 닫기-확인"
+COLLECT_STEP11 = "11. 저장팝업 닫기-확인"
+COLLECT_STEP12 = "12. 저장건수 로그 확인"
 
 # 같은 행을 더 돌리지 않고 다음 입력 데이터로 넘길 확정 실패 문구
 ROW_ADVANCE_FAIL_MARKERS = (
@@ -125,6 +131,10 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "팝업 없이 초기화",
     "최종 팝업이 닫히지",
     "팝업화면이 닫히지",
+    "검색 팝업모달이 닫히지",
+    "6항",
+    "11항",
+    "12항",
 )
 
 
@@ -292,9 +302,15 @@ class RunCtx:
         self.row_deadline: float | None = None  # 행당 제한시간(epoch)
         # 저장하기(서버 최종 갱신) 성공 여부 — True 되기 전 행 완료 금지
         self.server_save_ok: bool = False
-        # 저장하기 후 최종 팝업: 열림 확인 + 닫힘 확인 (둘 다 필수)
+        # 6항: 검색 팝업 열림·닫힘
+        self.search_popup_seen: bool = False
+        self.search_popup_closed: bool = False
+        # 저장하기 후 최종 팝업: 열림 확인 + 닫힘 확인 (둘 다 필수) — 10·11항
         self.save_popup_seen: bool = False
         self.save_popup_closed: bool = False
+        # 12항: 저장건수 로그 확인
+        self.save_count_logged: bool = False
+        self.save_count_snapshot: int | None = None
         # 저장하기 클릭 후 ~ 팝업 열림·닫힘 완료 전: 초기화 진입 금지
         self.save_awaiting_popup: bool = False
         self.save_popup_kind: str = ""
@@ -322,8 +338,12 @@ class RunCtx:
         self.current_url = str(row.get("url") or "").strip()
         self.row_deadline = time.time() + ROW_BUDGET_SEC
         self.server_save_ok = False
+        self.search_popup_seen = False
+        self.search_popup_closed = False
         self.save_popup_seen = False
         self.save_popup_closed = False
+        self.save_count_logged = False
+        self.save_count_snapshot = None
         self.save_awaiting_popup = False
         self.save_popup_kind = ""
         self.save_popup_ui_latched = False
@@ -863,26 +883,45 @@ def wait_popup_open(page: Page, grace_sec: float = 15.0) -> list:
 
 
 def wait_popups_close(page: Page, timeout_sec: int = POPUP_WAIT_SEC) -> None:
-    """열린 검색 팝업이 모두 닫힐 때까지 대기.
+    """★6항: 검색 팝업 모달창이 닫힐 때까지 대기(확인).
 
-    시간 초과 시 팝업을 닫고 다음 단계로 진행(1행에 무한대기하지 않음).
+    닫힘 확인 없이 7항(모두저장)으로 진행하면 수집 실패의 주요 원인.
+    시간 초과 시 강제 닫고 넘기지 않고 — TimeoutError 로 실패 처리.
     """
-    end = time.time() + max(5, int(timeout_sec))
+    wait_sec = max(5, int(timeout_sec))
+    end = time.time() + wait_sec
+    # 5항(수집 실행) 중 너무 빨리 확인을 누르면 안 됨 — 일정 시간 후 보조
+    help_after = time.time() + min(15.0, wait_sec * 0.4)
     last_beat = 0.0
+    helped = False
     while popups(page):
-        check_stop("팝업 닫힘 대기")
+        check_stop("6항 검색 팝업 닫힘 대기")
         if time.time() > end:
-            n = close_search_popups(page)
-            log(
-                f"  [경고] 팝업 닫힘 대기 {timeout_sec}초 초과 — "
-                f"남은 팝업 {n}개 강제 닫고 다음 단계로 진행"
+            n = 0
+            try:
+                n = len(popups(page))
+            except Exception:  # noqa: BLE001
+                n = -1
+            raise TimeoutError(
+                f"검색 팝업모달이 닫히지 않음 (6항 미확인, 남은 팝업 {n}개). "
+                f"{timeout_sec}초 대기 후에도 닫힘 미확인 — "
+                "강제 닫고 모두저장/다음단계로 진행 불가."
             )
-            return
+        # 확인/닫기 버튼이 있으면 눌러 정상 종료 보조 (강제 종료 아님)
+        if not helped and time.time() >= help_after:
+            try:
+                dismiss_mango_alert_ui(page)
+            except Exception:  # noqa: BLE001
+                pass
+            helped = True
         if time.time() - last_beat > 10:
             last_beat = time.time()
             cur = popups(page)
             urls = ", ".join(p.url for p in cur if not p.is_closed())
-            log(f"  팝업창 닫힘 대기중... (열린 팝업 {len(cur)}개: {urls})")
+            log(
+                f"  [6항] 검색 팝업창 닫힘(확인) 대기중... "
+                f"(열린 팝업 {len(cur)}개: {urls})"
+            )
         page.wait_for_timeout(500)
 
 
@@ -2106,17 +2145,29 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
         except Exception as e:  # noqa: BLE001
             ctx.info(f"  [경고] 팝업 상품이미지 대기 실패: {e}")
             popup_imgs = 0
-        ctx.info(f"1. 검색 팝업 열림 (상품이미지 약 {popup_imgs}개)")
+        ctx.info(
+            f"5. 검색 팝업 열림(수집실행) — 상품이미지 약 {popup_imgs}개 "
+            "→ 임시메모리 적재 중"
+        )
+        ctx.search_popup_seen = True
+        ctx.search_popup_closed = False
         if search_try == 1:
             ctx.shot(popup, "01_popup_opened", rn)
 
-        ctx.info("1. 검색 팝업 닫힘 대기")
+        # ★6항: 검색 팝업 닫기-확인 — 여기 통과 전 7항(모두저장) 금지
+        ctx.info(f"{COLLECT_STEP6} 대기 — 닫힘 확인 전 모두저장/다음단계 금지")
         wait_popups_close(page)
+        if popups(page):
+            raise TimeoutError(
+                f"#{rn} 검색 팝업모달이 닫히지 않음 (6항 미확인) — "
+                "모두저장으로 진행 불가"
+            )
+        ctx.search_popup_closed = True
         try:
             page.bring_to_front()
         except Exception:  # noqa: BLE001
             pass
-        ctx.info("1. 검색 팝업 닫힘")
+        ctx.info(f"{COLLECT_STEP6} 완료 — 임시메모리 보관 완료")
         if search_try == 1:
             ctx.shot(page, "01_popup_closed", rn)
 
@@ -2424,10 +2475,10 @@ def run_save_submit_and_verify(
                 "1회 재시도 후에도 동일. 다음 입력으로 진행."
             )
 
-        # ★필수 순서: 팝업 열림 → 건수확인 → 팝업 닫힘 → 다음단계
-        # (최초 요건: 팝업창 열고, 닫힘까지 처리)
+        # ★필수 순서(사용자 14단계): 10 열림 → 11 닫힘확인 → 12 건수로그 → 13 초기화
+        # 6·11·12 확인 없이 다음 단계로 가면 수집 실패의 주요 원인
         ctx.info(
-            "3. ★★★ 저장하기 후 최종 팝업: 열림 대기 "
+            "10. ★★★ DB저장 실행 팝업 열림 대기 "
             "(잔여 00건·설정모달 닫힘만으로 통과 금지)"
         )
         wait_save_execution_popup(
@@ -2446,21 +2497,23 @@ def run_save_submit_and_verify(
                 "팝업 없이 초기화할 수 없습니다."
             )
 
-        # 팝업이 열린 상태에서 망고 저장건수 메세지 확인
-        verify_mango_collect_alert(
+        # 열린 동안 건수 스냅샷만 (닫기/확인은 11항에서)
+        snap_n, snap_msg, snap_src, _ = find_mango_collect_alert(
             page,
-            ctx,
-            rn,
-            save_count,
-            dialog_msgs=dialog_msgs,
+            dialog_msgs,
             baseline=alert_baseline,
             dialog_from=dialog_from,
         )
+        if snap_n is not None:
+            ctx.save_count_snapshot = snap_n
+            ctx.info(
+                f"  [10항 스냅샷] 저장중 건수 힌트={snap_n} "
+                f"({snap_src}:{snap_msg!r}) — 아직 11항 닫힘 전"
+            )
 
-        # ★최종 팝업화면이 닫힐 때까지 대기 — 닫히기 전 초기화 금지
+        # ★11항: 저장 팝업 닫기-반드시 확인 (중간 닫기=ROLLBACK)
         ctx.info(
-            "3. ★★★ 최종 팝업화면이 닫힐 때까지 기다림 "
-            "(열린 채로 초기화/다음행 금지)"
+            f"{COLLECT_STEP11} 대기 — 닫힘 확인 전 건수확정/초기화 금지"
         )
         wait_save_popup_closed(
             page,
@@ -2472,25 +2525,40 @@ def run_save_submit_and_verify(
         if not getattr(ctx, "save_popup_closed", False):
             ctx.shot(page, "03_modal_stuck", rn)
             raise RuntimeError(
-                f"#{rn} 최종 팝업화면이 닫히지 않음 — "
+                f"#{rn} 최종 팝업화면이 닫히지 않음 (11항 미확인) — "
                 "닫힐 때까지 초기화할 수 없습니다."
             )
 
+        # ★12항: 닫힌 뒤 최종 저장건수 로그 확인
+        ctx.info(f"{COLLECT_STEP12} — 망고 자체 'N건이 수집되었음'")
+        verify_mango_collect_alert(
+            page,
+            ctx,
+            rn,
+            save_count,
+            dialog_msgs=dialog_msgs,
+            baseline=alert_baseline,
+            dialog_from=dialog_from,
+            dismiss=False,
+        )
+        ctx.save_count_logged = True
+
         verify_row_save_done(page, ctx, rn, save_count)
-        # 열림+닫힘 둘 다 확인된 경우에만 서버 저장 성공
+        # 10·11·12 모두 확인된 경우에만 서버 저장 성공 → 13항 초기화 허용
         if not (
             getattr(ctx, "save_popup_seen", False)
             and getattr(ctx, "save_popup_closed", False)
+            and getattr(ctx, "save_count_logged", False)
         ):
             raise RuntimeError(
-                f"#{rn} 최종 팝업 열림/닫힘 미완료 — "
-                "팝업이 닫힐 때까지 기다린 뒤에만 초기화 가능"
+                f"#{rn} 10·11·12항 미완료 — "
+                "팝업 열림→닫힘→건수로그 확인 뒤에만 초기화 가능"
             )
         ctx.server_save_ok = True
-        ctx.save_awaiting_popup = False  # 팝업 열림·닫힘 완료 → 이후 초기화 허용
+        ctx.save_awaiting_popup = False  # 11·12 완료 → 13항 초기화 허용
         ctx.info(
-            f"4. -> 서버 최종 갱신 완료 "
-            f"(저장하기 OK + 팝업 열림→닫힘 OK / 저장수 {save_count})"
+            f"12→13. 서버 최종 갱신 완료 "
+            f"(저장하기 OK + 팝업 열림→닫힘→건수로그 OK / 저장수 {save_count})"
         )
         ctx.shot(page, "04_row_done", rn)
     finally:
@@ -2935,18 +3003,29 @@ def wait_save_popup_closed(
     saw_open = bool(getattr(ctx, "save_popup_ui_latched", False))
 
     while time.time() < end:
-        ctx.check_budget("최종 팝업 닫힘 대기")
+        ctx.check_budget("11항 최종 팝업 닫힘 대기")
+        # 닫기 전에 건수 스냅샷 (12항용) — 확인 클릭으로 문구가 사라져도 남김
+        if getattr(ctx, "save_count_snapshot", None) is None:
+            try:
+                sn, sm, ss, _ = find_mango_collect_alert(
+                    page, None, baseline=base
+                )
+                if sn is not None:
+                    ctx.save_count_snapshot = sn
+                    ctx.info(
+                        f"  [11항 직전 스냅샷] {sn}건 ({ss}:{sm!r})"
+                    )
+            except Exception:  # noqa: BLE001
+                pass
         open_now = final_save_popup_still_open(
             page, before_popup_ids=before_popup_ids, baseline=base
         )
         if open_now:
             saw_open = True
             closed_stable = 0
-            if not helped:
-                dismiss_mango_alert_ui(page)
-                helped = True
-            else:
-                dismiss_mango_alert_ui(page)
+            # 11항: 확인 클릭으로 정상 종료 보조
+            dismiss_mango_alert_ui(page)
+            helped = True
             page.wait_for_timeout(400)
             continue
 
@@ -3067,17 +3146,20 @@ def verify_mango_collect_alert(
     baseline: set[str] | None = None,
     dialog_from: int = 0,
     timeout_sec: float = 25.0,
+    dismiss: bool = False,
 ) -> int:
-    """결과 팝업/알림에서 망고 자체 'N건이 수집되었다'를 파악·검증.
+    """★12항: 망고 자체 'N건이 수집되었다' 최종 저장건수 로그 검증.
 
     - 저장하기 클릭 이후 새로 뜬 알림만 사용 (검색단계 00건 잔여 무시)
+    - 11항(저장팝업 닫힘) 이후에 호출하는 것이 정상 순서
+    - 10항에서 찍은 save_count_snapshot 도 인정
     - 기대 건수(저장수)와 일치해야 통과
     - 0건이면 실패(다음 행으로 진행 가능하도록 확정 실패 문구 포함)
     """
     expect = max(0, int(expect_count))
     base = baseline or set()
     ctx.info(
-        f"3. 망고 자체 알림 확인 — 'N건이 수집되었다' (기대 {expect}건) "
+        f"12. 망고 자체 알림 확인 — 'N건이 수집되었다' (기대 {expect}건) "
         f"| 잔여무시={len(base)}건"
     )
     end = time.time() + max(5.0, float(timeout_sec))
@@ -3086,8 +3168,15 @@ def verify_mango_collect_alert(
     source = ""
     shot_page: Page | None = page
 
-    while time.time() < end:
-        ctx.check_budget("망고 수집알림 대기")
+    # 10항 스냅샷이 있으면 우선 후보
+    snap = getattr(ctx, "save_count_snapshot", None)
+    if snap is not None:
+        found_n = int(snap)
+        found_msg = f"(snapshot){snap}건"
+        source = "snapshot"
+
+    while found_n is None and time.time() < end:
+        ctx.check_budget("12항 망고 수집알림 대기")
         found_n, found_msg, source, hit_page = find_mango_collect_alert(
             page,
             dialog_msgs,
@@ -3124,20 +3213,21 @@ def verify_mango_collect_alert(
     if found_n is None:
         ctx.shot(page, "03_collect_alert_fail", row_no)
         raise RuntimeError(
-            f"#{row_no} 망고 수집 알림을 찾지 못함 "
+            f"#{row_no} 12항 망고 수집 알림을 찾지 못함 "
             f"(기대 문구 예: '{expect}건이 수집되었다'). "
-            "저장하기 후 결과 팝업/알림 메세지를 확인하세요."
+            "11항 팝업 닫힘 확인 후 저장건수 로그를 확인하세요."
         )
 
     ctx.info(
-        f"  [망고알림] source={source} | 문구={found_msg!r} | "
+        f"  [12항 망고알림] source={source} | 문구={found_msg!r} | "
         f"수집건수={found_n} | 기대={expect}"
     )
     try:
         ctx.shot(shot_page or page, "03_collect_alert", row_no)
     except Exception:  # noqa: BLE001
         ctx.shot(page, "03_collect_alert", row_no)
-    dismiss_mango_alert_ui(page)
+    if dismiss:
+        dismiss_mango_alert_ui(page)
 
     if found_n == 0:
         raise RuntimeError(
@@ -3149,7 +3239,7 @@ def verify_mango_collect_alert(
             f"#{row_no} 망고 수집건수 알림 불일치 — "
             f"기대 {expect}건 / 알림 {found_n}건 (문구={found_msg!r})"
         )
-    ctx.info(f"  [확인] 망고 알림 수집건수 OK — {found_n}건이 수집됨")
+    ctx.info(f"  [12항 확인] 망고 알림 수집건수 OK — {found_n}건이 수집됨")
     return found_n
 
 
@@ -3207,13 +3297,16 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                 )
                 page = refresh_if_closed(page)
                 _process_row_once(page, row, ctx)
-                if not ctx.server_save_ok or not getattr(
-                    ctx, "save_popup_closed", False
+                if not (
+                    ctx.server_save_ok
+                    and getattr(ctx, "save_popup_closed", False)
+                    and getattr(ctx, "save_count_logged", False)
+                    and getattr(ctx, "search_popup_closed", False)
                 ):
                     raise RuntimeError(
                         f"#{row['row']} 저장하기 서버 최종 갱신 미확인 — "
-                        "최종 팝업 열림→닫힘 완료 전 행을 끝낼 수 없습니다. "
-                        "팝업이 닫힐 때까지 기다린 뒤 초기화하세요."
+                        "6·11·12항(검색팝업닫힘·저장팝업닫힘·건수로그) "
+                        "확인 전 행을 끝낼 수 없습니다."
                     )
                 ctx.info(
                     f"[OK] 엑셀{row['row']}행 성공 (저장하기 서버갱신 OK, 시도 {attempt}) | "
