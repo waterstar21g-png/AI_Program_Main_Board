@@ -148,7 +148,7 @@ async function smokeP2(): Promise<SmokeProjectResult> {
         '3) 데이터 검증 · 필드',
         labelsOk && urlsOk ? 'pass' : 'fail',
         labelsOk && urlsOk
-          ? `라벨/URL 분리 OK — 예: ${parsed[0]?.topFinalLabel}`
+          ? `라벨/URL 분리 완료 — 예: ${parsed[0]?.topFinalLabel}`
           : '라벨·URL 필드 검증 실패',
       ),
     );
@@ -168,7 +168,7 @@ async function smokeP2(): Promise<SmokeProjectResult> {
     } else {
       try {
         await import('playwright');
-        checks.push(check('2) Playwright', 'pass', 'playwright 로드 OK'));
+        checks.push(check('2) Playwright', 'pass', 'playwright 로드 완료'));
       } catch (e) {
         checks.push(
           check('2) Playwright', 'fail', e instanceof Error ? e.message : '없음'),
@@ -246,7 +246,7 @@ async function smokeP3(): Promise<SmokeProjectResult> {
         '2) collect.py 구문',
         compile.status === 0 ? 'pass' : 'fail',
         compile.status === 0
-          ? 'py_compile OK'
+          ? '구문 검사 통과'
           : (compile.stderr || compile.stdout || 'compile 실패').trim().slice(0, 200),
       ),
     );
@@ -289,7 +289,7 @@ print(f"{len(rows)-1}")
           check(
             '3) 데이터 검증 · 샘플엑셀',
             read.ok ? 'pass' : 'fail',
-            read.ok ? `openpyxl ${read.out}행 읽기 OK` : read.out.slice(0, 200),
+            read.ok ? `openpyxl ${read.out}행 읽기 완료` : read.out.slice(0, 200),
           ),
         );
       } finally {
@@ -306,7 +306,7 @@ print(f"{len(rows)-1}")
       check(
         '2) playwright(python)',
         pw.ok ? 'pass' : 'warn',
-        pw.ok ? 'import OK' : '미설치 — pip install -r python-collector/requirements.txt',
+        pw.ok ? '모듈 로드 완료' : '미설치 — pip install -r python-collector/requirements.txt',
       ),
     );
   }

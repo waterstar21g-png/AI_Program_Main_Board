@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { smokeStatusLabel, verifyResultLabel } from '@/lib/smoke-status-label';
 
 type Check = { name: string; status: 'pass' | 'fail' | 'warn'; detail: string };
 
@@ -74,13 +75,13 @@ export function PythonItemCollectorApp() {
         <section className="panel panel--compact">
           <h2 className="panel__title">
             점검 결과{' '}
-            {ok === true && <span className="badge">PASS</span>}
-            {ok === false && <span className="badge badge--warn">FAIL</span>}
+            {ok === true && <span className="badge">{verifyResultLabel(true)}</span>}
+            {ok === false && <span className="badge badge--warn">{verifyResultLabel(false)}</span>}
           </h2>
           <ul className="smoke-list">
             {checks.map((c, i) => (
               <li key={i} className={`smoke-list__item is-${c.status}`}>
-                <span className="smoke-list__status">{c.status.toUpperCase()}</span>
+                <span className="smoke-list__status">{smokeStatusLabel(c.status)}</span>
                 <span className="smoke-list__name">{c.name}</span>
                 <span className="smoke-list__detail">{c.detail}</span>
               </li>
