@@ -111,6 +111,9 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "저장 팝업창이 닫히지 않음",
     "검색결과 확인 실패",
     "팝업이 뜨지 않음",
+    "0건이 수집",
+    "수집건수 알림",
+    "수집 알림",
 )
 
 
@@ -163,6 +166,15 @@ SAVE_FAIL_PATTERNS = [
     re.compile(r"다시\s*시도"),
 ]
 
+# 망고 자체 알림 — "3건이 수집되었다" / "00건이수집되었다" 등
+MANGO_COLLECT_ALERT_PATTERNS = [
+    re.compile(r"(\d+)\s*건\s*(이\s*)?수집\s*되었"),
+    re.compile(r"(\d+)\s*건\s*(이\s*)?저장\s*되었"),
+    re.compile(r"(\d+)\s*건\s*(이\s*)?등록\s*되었"),
+    re.compile(r"(\d+)\s*건\s*(이\s*)?수집\s*완료"),
+    re.compile(r"총\s*(\d+)\s*건\s*(이\s*)?(수집|저장)"),
+]
+
 # 더망고(자체 UI) — 검색 결과 없음 문구 (로딩 중 오판 금지, 로딩 종료 후에만 사용)
 MANGO_NO_RESULT_PATTERNS = [
     re.compile(r"검색하신\s*검색에\s*대한\s*검색결과가\s*없습니다"),
@@ -208,6 +220,8 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "02_modal_filled": "2. 필터명·저장수 입력",
     "03_modal_stuck": "3. 저장 모달 미종료(오류)",
     "03_modal_closed": "3. 저장 모달 닫힘",
+    "03_collect_alert": "3. 망고 수집건수 알림 확인",
+    "03_collect_alert_fail": "3. 망고 수집건수 알림 확인 실패",
     "04_row_done": "4. 행 완료",
 }
 
@@ -1837,52 +1851,207 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
             )
     ctx.shot(page, "02_modal_filled", rn)
 
-    ctx.info("2. 저장하기 버튼 클릭")
-    click_it(
-        save_modal(page)
-        .locator('input[value*="저장하기"]')
-        .or_(save_modal(page).locator('button:has-text("저장하기")'))
-        .or_(save_modal(page).get_by_text(re.compile("^저장하기$")))
+    # 저장 중·직후 망고 alert("N건이 수집되었다") 캡처
+    dialog_msgs: list[str] = []
+
+    def _on_save_dialog(dialog) -> None:
+        try:
+            dialog_msgs.append(str(dialog.message or ""))
+            dialog.accept()
+        except Exception:  # noqa: BLE001
+            try:
+                dialog.dismiss()
+            except Exception:  # noqa: BLE001
+                pass
+
+    page.on("dialog", _on_save_dialog)
+    try:
+        ctx.info("2. 저장하기 버튼 클릭")
+        click_it(
+            save_modal(page)
+            .locator('input[value*="저장하기"]')
+            .or_(save_modal(page).locator('button:has-text("저장하기")'))
+            .or_(save_modal(page).get_by_text(re.compile("^저장하기$")))
+        )
+
+        ctx.info("3. 팝업창이 없어질 때까지 대기")
+        end = time.time() + MODAL_WAIT_SEC
+        closed = False
+        while time.time() < end:
+            ctx.check_budget("저장모달 닫힘 대기")
+            if not save_modal_visible(page):
+                wait_popups_gone(page, grace_sec=0.5)
+                closed = True
+                break
+            page.wait_for_timeout(500)
+        if not closed:
+            # 강제 닫기 후 여전히 열려 있으면 실패 → 다음 행으로
+            try_dismiss_save_modal(page)
+            close_search_popups(page)
+            page.wait_for_timeout(500)
+            if not save_modal_visible(page) and not popups(page):
+                closed = True
+            else:
+                ctx.shot(page, "03_modal_stuck", rn)
+                raise TimeoutError(f"#{rn} 저장 팝업창이 닫히지 않음")
+        ctx.info("3. 팝업창 닫힘")
+        ctx.shot(page, "03_modal_closed", rn)
+
+        # 모달 완전 종료 후 — 망고 자체 알림 "N건이 수집되었다" 확인 (필수)
+        verify_mango_collect_alert(
+            page,
+            ctx,
+            rn,
+            save_count,
+            dialog_msgs=dialog_msgs,
+        )
+
+        # 부가: 오류 문구·로그인 튕김 등
+        verify_row_save_done(page, ctx, rn, save_count)
+        ctx.info(f"4. -> 행 완료 확인 (저장수 {save_count})")
+        ctx.shot(page, "04_row_done", rn)
+    finally:
+        try:
+            page.remove_listener("dialog", _on_save_dialog)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _page_visible_text(page: Page) -> str:
+    try:
+        return (
+            page.evaluate(
+                "() => (document.body && document.body.innerText) "
+                "? document.body.innerText : ''"
+            )
+            or ""
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def parse_mango_collect_count(text: str) -> tuple[int | None, str]:
+    """망고 알림 문구에서 수집 건수 추출. (건수 또는 None, 매칭 원문)."""
+    raw = text or ""
+    for pat in MANGO_COLLECT_ALERT_PATTERNS:
+        m = pat.search(raw)
+        if not m:
+            continue
+        try:
+            n = int(m.group(1))
+        except (TypeError, ValueError):
+            continue
+        return n, m.group(0)
+    return None, ""
+
+
+def dismiss_mango_alert_ui(page: Page) -> None:
+    """화면 알림/레이어의 확인 버튼이 있으면 닫기."""
+    try:
+        btn = (
+            page.locator("button, a, input[type='button'], input[type='submit']")
+            .filter(has_text=re.compile(r"^(확인|닫기|OK|Yes)$", re.I))
+            .first
+        )
+        if btn.count() > 0 and btn.is_visible():
+            click_it(btn)
+            page.wait_for_timeout(300)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def verify_mango_collect_alert(
+    page: Page,
+    ctx: RunCtx,
+    row_no: int,
+    expect_count: int,
+    *,
+    dialog_msgs: list[str] | None = None,
+    timeout_sec: float = 20.0,
+) -> int:
+    """모달 닫힘 후 망고 자체 알림('N건이 수집되었다')을 파악·검증.
+
+    - 기대 건수(저장수)와 일치해야 통과
+    - 0건이면 실패(다음 행으로 진행 가능하도록 확정 실패 문구 포함)
+    """
+    expect = max(0, int(expect_count))
+    ctx.info(
+        f"3. 망고 자체 알림 확인 — 'N건이 수집되었다' (기대 {expect}건)"
     )
+    end = time.time() + max(5.0, float(timeout_sec))
+    found_n: int | None = None
+    found_msg = ""
+    source = ""
 
-    ctx.info("3. 팝업창이 없어질 때까지 대기")
-    end = time.time() + MODAL_WAIT_SEC
-    closed = False
     while time.time() < end:
-        ctx.check_budget("저장모달 닫힘 대기")
-        if not save_modal_visible(page):
-            wait_popups_gone(page, grace_sec=0.5)
-            closed = True
+        ctx.check_budget("망고 수집알림 대기")
+        # 1) JS alert/confirm 캡처
+        for msg in list(dialog_msgs or []):
+            n, hit = parse_mango_collect_count(msg)
+            if n is not None:
+                found_n, found_msg, source = n, hit or msg, "dialog"
+                break
+        if found_n is not None:
             break
-        page.wait_for_timeout(500)
-    if not closed:
-        # 강제 닫기 후 여전히 열려 있으면 실패 → 다음 행으로
-        try_dismiss_save_modal(page)
-        close_search_popups(page)
-        page.wait_for_timeout(500)
-        if not save_modal_visible(page) and not popups(page):
-            closed = True
-        else:
-            ctx.shot(page, "03_modal_stuck", rn)
-            raise TimeoutError(f"#{rn} 저장 팝업창이 닫히지 않음")
-    ctx.info("3. 팝업창 닫힘")
-    ctx.shot(page, "03_modal_closed", rn)
+        # 2) 화면 본문/레이어 문구
+        text = _page_visible_text(page)
+        n, hit = parse_mango_collect_count(text)
+        if n is not None:
+            found_n, found_msg, source = n, hit, "page"
+            break
+        # 실패 문구가 먼저 보이면 즉시 중단
+        for pat in SAVE_FAIL_PATTERNS:
+            if pat.search(text or ""):
+                ctx.shot(page, "03_collect_alert_fail", row_no)
+                raise RuntimeError(
+                    f"#{row_no} 망고 수집 알림 대신 오류 문구 감지: {pat.pattern}"
+                )
+        page.wait_for_timeout(400)
 
-    # C. 3건(저장수) 완료 확인
-    verify_row_save_done(page, ctx, rn, save_count)
-    ctx.info(f"4. -> 행 완료 확인 (저장수 {save_count})")
-    ctx.shot(page, "04_row_done", rn)
+    if found_n is None:
+        # 마지막 한 번 더 합쳐 검사
+        blob = "\n".join(dialog_msgs or []) + "\n" + _page_visible_text(page)
+        found_n, found_msg = parse_mango_collect_count(blob)
+        source = "final" if found_n is not None else ""
+
+    if found_n is None:
+        ctx.shot(page, "03_collect_alert_fail", row_no)
+        raise RuntimeError(
+            f"#{row_no} 망고 수집 알림을 찾지 못함 "
+            f"(기대 문구 예: '{expect}건이 수집되었다'). "
+            "모달 종료 후 알림 메세지를 확인하세요."
+        )
+
+    ctx.info(
+        f"  [망고알림] source={source} | 문구={found_msg!r} | "
+        f"수집건수={found_n} | 기대={expect}"
+    )
+    ctx.shot(page, "03_collect_alert", row_no)
+    dismiss_mango_alert_ui(page)
+
+    if found_n == 0:
+        raise RuntimeError(
+            f"#{row_no} 망고 자체 메세지: 0건이 수집되었다 "
+            f"(알림={found_msg!r}). 다음 입력으로 진행."
+        )
+    if found_n != expect:
+        raise RuntimeError(
+            f"#{row_no} 망고 수집건수 알림 불일치 — "
+            f"기대 {expect}건 / 알림 {found_n}건 (문구={found_msg!r})"
+        )
+    ctx.info(f"  [확인] 망고 알림 수집건수 OK — {found_n}건이 수집됨")
+    return found_n
 
 
 def verify_row_save_done(page: Page, ctx: RunCtx, row_no: int, save_count: int) -> None:
-    """저장 모달 종료 후, 오류 문구가 없고(가능하면) 성공 신호를 확인."""
-    page.wait_for_timeout(800)
-    try:
-        text = page.evaluate(
-            "() => (document.body && document.body.innerText) ? document.body.innerText : ''"
-        )
-    except Exception:  # noqa: BLE001
-        text = ""
+    """저장 모달·알림 확인 후, 오류 문구·로그인 튕김 등 부가 검사."""
+    page.wait_for_timeout(400)
+    text = _page_visible_text(page)
 
     for pat in SAVE_FAIL_PATTERNS:
         if pat.search(text or ""):
@@ -1894,21 +2063,10 @@ def verify_row_save_done(page: Page, ctx: RunCtx, row_no: int, save_count: int) 
         if m:
             ok_hit = m.group(0)
             break
-
-    # 모달이 닫혔고 오류 문구가 없으면 1차 통과.
-    # 성공 문구가 있으면 로그에 남김. 검증 모드에서는 성공 문구 또는
-    # '저장상품수 입력 확인됨'을 전제로 이미 모달에서 확인했으므로 통과.
     if ok_hit:
-        ctx.info(f"  [확인] 화면 성공 신호: {ok_hit!r}")
-    else:
-        ctx.info(
-            f"  [확인] 오류 문구 없음 · 모달 종료 · 저장수 {save_count} 입력 확인됨 "
-            f"(성공 문구는 화면에 없을 수 있음)"
-        )
+        ctx.info(f"  [확인] 화면 부가 성공 신호: {ok_hit!r}")
 
     if ctx.verify:
-        # 검증 모드: 저장수 필드에 넣었던 값이 반영됐는지 이미 확인함.
-        # 추가로 짧은 대기 후 로그인 튕김만 검사.
         if "admin_login" in page.url:
             raise RuntimeError(f"#{row_no} 저장 직후 로그인 화면으로 이동됨")
 

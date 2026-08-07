@@ -15,6 +15,18 @@ if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "VERSION
 Set-Location -LiteralPath $Root
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
 
+# git writes progress ("From https://...") to stderr. In PS 5.1,
+# "git ... 2>&1 | Out-Host" wraps those lines as NativeCommandError (red)
+# even when git succeeds. Run via cmd.exe so stderr is plain text.
+function Invoke-GitHost {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$GitCommandLine
+  )
+  cmd.exe /c $GitCommandLine
+  return $LASTEXITCODE
+}
+
 function Get-VersionFromText([string]$text) {
   if (-not $text) { return "" }
   if ($text -match '(?m)(?:버전|version)\s*([0-9]+(?:\.[0-9]+)+)') {
@@ -40,8 +52,8 @@ function Get-RemoteVersionViaGit {
   if (-not (Get-Command git -ErrorAction SilentlyContinue)) { return "" }
   if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) { return "" }
   try {
-    git fetch origin main 2>$null | Out-Null
-    $text = git show "origin/main:VERSION.txt" 2>$null
+    cmd.exe /c "git fetch origin main >NUL 2>&1" | Out-Null
+    $text = cmd.exe /c "git show origin/main:VERSION.txt 2>NUL"
     if ($text) { return Get-VersionFromText ($text -join "`n") }
   } catch {}
   return ""
@@ -102,18 +114,20 @@ if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) {
 
 # Prefer main branch so pull applies published VERSION
 $branch = ""
-try { $branch = (git rev-parse --abbrev-ref HEAD 2>$null).Trim() } catch {}
+try {
+  $branch = (cmd.exe /c "git rev-parse --abbrev-ref HEAD 2>NUL").Trim()
+} catch {}
 if ($branch -and ($branch -ne "main")) {
   Write-Host "[INFO] checkout main (was: $branch)"
-  git checkout main 2>&1 | Out-Host
+  [void](Invoke-GitHost "git checkout main")
 }
 
-git pull origin main 2>&1 | Out-Host
-if ($LASTEXITCODE -ne 0) {
+$pullCode = Invoke-GitHost "git pull origin main"
+if ($pullCode -ne 0) {
   Write-Host "[WARN] git pull failed — try reset to origin/main"
-  git fetch origin main 2>&1 | Out-Host
-  git reset --hard origin/main 2>&1 | Out-Host
-  if ($LASTEXITCODE -ne 0) {
+  [void](Invoke-GitHost "git fetch origin main")
+  $resetCode = Invoke-GitHost "git reset --hard origin/main"
+  if ($resetCode -ne 0) {
     Write-Host "[WARN] update failed — start with local source"
     exit 0
   }
