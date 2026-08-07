@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useMemo, useState } from 'react';
-import { downloadHierarchyExcel } from '@/lib/excel-export';
 import { MAX_TOP_CATEGORIES } from '@/lib/types';
 import type { CrawlResult, HierarchyRow } from '@/lib/types';
 
@@ -79,8 +78,10 @@ export function CategoryExtractorApp() {
     }
   };
 
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!result?.rows.length) return;
+    // xlsx 는 다운로드 시에만 로드 (초기 컴파일/번들에서 제외)
+    const { downloadHierarchyExcel } = await import('@/lib/excel-export');
     downloadHierarchyExcel(result.rows, siteName.trim() || '사이트');
   };
 
@@ -189,7 +190,7 @@ export function CategoryExtractorApp() {
           <section className="panel">
             <div className="panel__head">
               <h2>계층화된 카테고리표 ({rows.length}행)</h2>
-              <button type="button" className="btn btn--primary" onClick={handleDownload}>
+              <button type="button" className="btn btn--primary" onClick={() => void handleDownload()}>
                 엑셀 로컬 저장 (.xlsx)
               </button>
             </div>

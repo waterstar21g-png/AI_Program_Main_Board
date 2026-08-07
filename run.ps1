@@ -9,16 +9,23 @@ chcp 65001 > $null
 Set-Location $PSScriptRoot
 
 if ($PSScriptRoot -match 'OneDrive') {
-  Write-Host "[경고] 이 폴더가 OneDrive 동기화 경로 안에 있습니다:" -ForegroundColor Yellow
-  Write-Host "       $PSScriptRoot" -ForegroundColor Yellow
-  Write-Host "       OneDrive가 node_modules(파일 2만개+)를 계속 감시/동기화하면" -ForegroundColor Yellow
-  Write-Host "       컴파일이 수십 배 느려질 수 있습니다(26분+ 사례 있음)." -ForegroundColor Yellow
-  Write-Host "       가능하면 C:\Projects 같은 OneDrive 밖 폴더로 옮기는 걸 권장합니다." -ForegroundColor Yellow
   Write-Host ""
+  Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+  Write-Host "  컴파일이 느린 1순위 원인: OneDrive 경로" -ForegroundColor Red
+  Write-Host "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!" -ForegroundColor Red
+  Write-Host "  $PSScriptRoot" -ForegroundColor Yellow
+  Write-Host "  기능을 아무리 줄여도 OneDrive가 node_modules를 감시하면" -ForegroundColor Yellow
+  Write-Host "  컴파일이 26분+ 걸릴 수 있습니다. (이미 관측됨)" -ForegroundColor Yellow
+  Write-Host "  → 폴더를 C:\Projects\AI_Program_Main_Board 로 옮기세요." -ForegroundColor Cyan
+  Write-Host "  → 또는: powershell -File scripts\windows-speed-fix.ps1" -ForegroundColor Cyan
+  Write-Host "  (보드 UI 없이 수집만 하면: python-collector\run.bat = 컴파일 0초)" -ForegroundColor Green
+  Write-Host ""
+  Write-Host "  Enter = 그래도 계속 / Ctrl+C = 중단" -ForegroundColor Gray
+  Read-Host | Out-Null
 }
 
 $Repo = "waterstar21g-png/AI_Program_Main_Board"
-$ExpectedVersion = "3.3.3"
+$ExpectedVersion = "3.4.0"
 $TargetVersion = $ExpectedVersion
 $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
 $Sha = "main"
@@ -145,8 +152,12 @@ if ($skipSync) {
     @("lib\board-actions\run.ts", "lib/board-actions/run.ts"),
     @("components\ProgramBoardApp.tsx", "components/ProgramBoardApp.tsx"),
     @("components\BoardCommandPanel.tsx", "components/BoardCommandPanel.tsx"),
+    @("components\CategoryExtractorApp.tsx", "components/CategoryExtractorApp.tsx"),
     @("components\ProductDataCollectApp.tsx", "components/ProductDataCollectApp.tsx"),
     @("components\PythonItemCollectorApp.tsx", "components/PythonItemCollectorApp.tsx"),
+    @("next.config.ts", "next.config.ts"),
+    @("tsconfig.json", "tsconfig.json"),
+    @("scripts\windows-speed-fix.ps1", "scripts/windows-speed-fix.ps1"),
     @("app\layout.tsx", "app/layout.tsx"),
     @("app\globals.css", "app/globals.css"),
     @("lib\programs\registry.tsx", "lib/programs/registry.tsx"),
@@ -159,7 +170,6 @@ if ($skipSync) {
     @("scripts\run-p2.mjs", "scripts/run-p2.mjs"),
     @("scripts\run-p3.mjs", "scripts/run-p3.mjs"),
     @("scripts\COMMANDS.txt", "scripts/COMMANDS.txt"),
-    @("next.config.ts", "next.config.ts"),
     @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
     @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
     @("app\api\board-actions\route.ts", "app/api/board-actions/route.ts"),
