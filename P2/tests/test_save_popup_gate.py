@@ -159,6 +159,43 @@ def test_buttons_are_distinct(browser):
     page.close()
 
 
+def test_save_resolves_clickable_not_wrapper_div(browser):
+    """저장하기가 div 래퍼가 아니라 a/button/input 으로 잡혀야 함 (9항 미클릭 원인)."""
+    ctx = browser.new_context()
+    page = ctx.new_page()
+    page.set_content(
+        """
+        <html><body>
+        <div id="settings" class="open">
+          <h3>상품저장설정</h3>
+          <div>검색필터명 <input id="filter"></div>
+          <div>저장상품수 <input id="count"></div>
+          <div class="footer">
+            <div class="btn-wrap"><a href="#" id="saveBtn">저장하기</a></div>
+            <div class="btn-wrap"><a href="#" id="cancelBtn">취소하기</a></div>
+          </div>
+        </div>
+        <div id="resultLayer" style="display:none">3건이 수집되었다
+          <button id="ok">확인</button></div>
+        <script>
+          document.getElementById('saveBtn').onclick = (e) => {
+            e.preventDefault();
+            window.__SAVE_CLICKED = true;
+            document.getElementById('settings').style.display = 'none';
+            document.getElementById('resultLayer').style.display = 'block';
+          };
+        </script>
+        </body></html>
+        """
+    )
+    el = C.resolve_save_submit_control(page)
+    tag = el.evaluate("(n) => n.tagName.toLowerCase()")
+    assert tag in ("a", "button", "input"), f"래퍼가 잡힘: <{tag}>"
+    assert C.trusted_click_save_submit(page, el) is True
+    assert page.evaluate("() => window.__SAVE_CLICKED === true")
+    ctx.close()
+
+
 def test_modal_close_alone_is_not_reacted(browser):
     """버그 회귀: 설정 모달만 닫히면 save_submit_reacted == False."""
     page = _open(browser, "nopopup")
@@ -563,6 +600,7 @@ if __name__ == "__main__":
         b = p.chromium.launch(headless=True)
         for name, fn in [
             ("distinct", test_buttons_are_distinct),
+            ("clickable_not_wrapper", test_save_resolves_clickable_not_wrapper_div),
             ("modal_close_not_reacted", test_modal_close_alone_is_not_reacted),
             ("raise_no_popup", test_wait_popup_raises_without_popup_no_init),
             ("popup_ok", test_wait_popup_ok_when_layer_appears),
