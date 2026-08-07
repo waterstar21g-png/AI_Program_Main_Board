@@ -31,7 +31,7 @@ from library import (  # noqa: E402
     set_selected,
 )
 
-VERSION = "2.0.11"
+VERSION = "2.0.12"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -275,10 +275,16 @@ class BoardApp(tk.Tk):
         tk.Button(r2, text="검색", command=self._search_xlsx, bg="#e2e8f0").pack(side="left", padx=6)
         tk.Button(r2, text="선택 → 목록 추가", command=self._add_found).pack(side="left")
 
+        # 1번 검색결과 그리드 · 2번 보관목록 동일 높이
+        self._p2_list_height = 4
+
         found_wrap = tk.Frame(search, bg="#ffffff")
         found_wrap.pack(fill="x", pady=4)
         self.found_list = tk.Listbox(
-            found_wrap, height=4, selectmode="extended", font=("Consolas", 9)
+            found_wrap,
+            height=self._p2_list_height,
+            selectmode="extended",
+            font=("Consolas", 9),
         )
         found_sb = tk.Scrollbar(found_wrap, orient="vertical", command=self.found_list.yview)
         self.found_list.configure(yscrollcommand=found_sb.set)
@@ -326,7 +332,7 @@ class BoardApp(tk.Tk):
             font=("Malgun Gothic", 8),
         ).pack(fill="x", pady=(4, 0))
 
-        # 2. 보관 목록 — 높이 약 10%(기존 10행 → 1행), 스크롤
+        # 2. 보관 목록 — 1번 데이터 그리드와 동일 높이 + 스크롤
         lib = tk.LabelFrame(
             parent, text="2. 보관 목록 (재실행 시 여기서만 선택)", bg="#ffffff", padx=8, pady=4
         )
@@ -336,7 +342,7 @@ class BoardApp(tk.Tk):
         lib_wrap.pack(fill="x")
         self.lib_list = tk.Listbox(
             lib_wrap,
-            height=1,
+            height=self._p2_list_height,
             font=("Malgun Gothic", 10),
             exportselection=False,
         )
