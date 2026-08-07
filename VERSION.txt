@@ -1,2 +1,2 @@
-버전 2.0.23 (Python B안)
-P2: 저장하기 클릭 필수화 · 팝업 열림/닫힘 · 망고 저장건수 알림 확인
+버전 2.0.24 (Python B안)
+업데이트: run.bat/updater 선갱신 — git pull PS NativeCommandError 오탐 제거
