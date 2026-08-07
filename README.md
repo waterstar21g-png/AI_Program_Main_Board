@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.0.16** (Python B안)
+# AI_Program_Main_Board **v2.0.17** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
