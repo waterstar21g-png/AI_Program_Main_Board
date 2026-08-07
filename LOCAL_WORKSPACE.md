@@ -6,6 +6,8 @@
 D:\My_Project\AI_Program_Main_Board
 ```
 
+배치 3개만 남기는 정리안(결정 전 · 미실행): [docs/BATCH_THREE_CLEANUP_PLAN.md](./docs/BATCH_THREE_CLEANUP_PLAN.md)
+
 - OneDrive / `C:\Users\...` 아래는 사용하지 않습니다.
 - GitHub `main` 동기화·`run.bat`·바로가기·P1/P2/P3 실행 모두 이 폴더 기준입니다.
 - 클라우드 에이전트는 GitHub에 반영하고, 로컬 PC는 이 경로에서 Sync/실행합니다.
