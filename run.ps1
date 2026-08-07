@@ -170,7 +170,6 @@ if ($skipSync) {
     @("scripts\run-p2.mjs", "scripts/run-p2.mjs"),
     @("scripts\run-p3.mjs", "scripts/run-p3.mjs"),
     @("scripts\COMMANDS.txt", "scripts/COMMANDS.txt"),
-    @("next.config.ts", "next.config.ts"),
     @("app\api\product-collect\run\route.ts", "app/api/product-collect/run/route.ts"),
     @("app\api\product-collect\open\route.ts", "app/api/product-collect/open/route.ts"),
     @("app\api\board-actions\route.ts", "app/api/board-actions/route.ts"),
