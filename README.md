@@ -16,29 +16,19 @@ GitHub 저장소: `waterstar21g-png/AI_Program_Main_Board`
 
 **정리 검토(미실행):** 배치 3개만 남기는 안 → [docs/BATCH_THREE_CLEANUP_PLAN.md](./docs/BATCH_THREE_CLEANUP_PLAN.md)
 
-## 신규 컴팩트 보드 (별도 · Python)
+`AI_Program_Main_Board_New` 는 **삭제됨**. 모든 작업은 아래 경로만 사용합니다.
 
-기존 보드(**이 루트**, Next.js)는 유지합니다.  
-정제본: [`AI_Program_Main_Board_New/`](./AI_Program_Main_Board_New/) — **Python만**, **P1 + P2**, **npm 없음**.
-
-```bat
-cd AI_Program_Main_Board_New
-run.bat
-```
-
-## 로컬 작업 경로 (고정)
+## 로컬 작업 경로 (고정 · 유일)
 
 ```
 D:\My_Project\AI_Program_Main_Board
 ```
 
-**모든 프로그램은 이 폴더 안에만** 둡니다.  
 PowerShell로 전체 받기: [LOCAL_WORKSPACE.md](./LOCAL_WORKSPACE.md) 또는 `fetch-local.ps1`
 
 ```powershell
-# PowerShell (권장)
 Set-Location D:\My_Project
-irm https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/fetch-local.ps1 -OutFile fetch-local.ps1
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/waterstar21g-png/AI_Program_Main_Board/main/fetch-local.ps1" -OutFile fetch-local.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\fetch-local.ps1
 ```
 
