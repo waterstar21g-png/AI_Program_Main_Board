@@ -28,11 +28,26 @@ GitHub 저장소 루트: **`AI_Program_Main_Board`** (모노레포 + 논리 분�
 
 ## P3_Python_Item_Collector
 
-- **위치:** [`python-collector/`](./python-collector) (독립 폴더, 웹앱과 무관)
+- **위치:** [`python-collector/`](./python-collector) (독립 폴더) + 보드 좌측 메뉴에 안내/환경점검 UI
 - **하는 일:** **P2와 완전히 동일한 작업**(더망고 대량수집)을 하는 파이썬 단일 스크립트 버전
 - **동작 방식:** Next.js/React/webpack 전혀 없음. `pip install` 두 패키지(`playwright`, `openpyxl`)만으로 실행
 - **실행:** `python-collector/run.bat` 더블클릭 (또는 엑셀 파일을 그 위에 드래그)
 - **P2와의 관계:** 같은 업무를 웹앱 없이 훨씬 가볍게 돌리고 싶을 때 사용. 웹앱 컴파일/캐시/인코딩 이슈에서 완전히 자유로움
+
+## 프로젝트별 독립 실행 (연쇄 아님)
+
+P1 / P2 / P3 는 서로 묶이지 않습니다. 각각 따로 실행합니다.
+
+| 프로젝트 | 명령 | 그 안의 명령 순서 |
+|----------|------|-------------------|
+| P1 | `p1.bat` / `npm run p1` | 1) 수집 실행 → 2) URL·라벨 검증 → 3) 요약 |
+| P2 | `p2.bat` / `npm run p2` | 1) 모듈 점검 → 2) 엑셀 파싱 → 3) 필드 검증 |
+| P3 | `p3.bat` / `npm run p3` | 1) 환경 점검 → 2) 구문 검사 → 3) 샘플엑셀 검증 |
+
+상세: [`scripts/COMMANDS.txt`](./scripts/COMMANDS.txt)
+
+- 보드 UI: 좌측 **①P1 ②P2 ③P3 독립 실행** + **①동기화 ②캐시정리 ③개별점검 묶음**
+- API: `POST /api/board-actions` `{ "action": "verify-p1"|"verify-p2"|"verify-p3"|"verify-all"|"sync"|"clean" }`
 
 > P2(웹앱)와 P3(파이썬)는 같은 일을 하는 두 가지 실행 방식입니다.
 > 웹앱 UI(엑셀 업로드 화면·실행 로그 화면)가 필요하면 P2, 그냥 빠르고

@@ -1,12 +1,17 @@
 # AI_Program_Main_Board — Windows 로컬 실행
 
-## 실행 파일 (하나만 사용)
+## 실행·바로가기
+
+| 방법 | 설명 |
+|------|------|
+| **바탕화면 바로가기** | `바로가기만들기.bat` 더블클릭 → `AI_Program_Main_Board.lnk` 생성 |
+| **폴더에서 실행** | `run.bat` 더블클릭 |
 
 ```
 C:\Users\water\AI_Program_Main_Board\run.bat
 ```
 
-**더블클릭** 또는 명령 프롬프트:
+명령 프롬프트:
 
 ```cmd
 cd /d C:\Users\water\AI_Program_Main_Board

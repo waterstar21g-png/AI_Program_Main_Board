@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { APP_NAME } from '@/lib/app-name';
 import { APP_VERSION } from '@/lib/app-version';
 import { DEFAULT_PROGRAM_ID, PROGRAMS } from '@/lib/programs/registry';
+import { BoardCommandPanel } from '@/components/BoardCommandPanel';
 
 export function ProgramBoardApp() {
   const [activeId, setActiveId] = useState(DEFAULT_PROGRAM_ID);
@@ -38,6 +39,7 @@ export function ProgramBoardApp() {
               </li>
             ))}
           </ul>
+          <BoardCommandPanel />
         </aside>
 
         <main className="program-board__main">

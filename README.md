@@ -16,7 +16,8 @@ GitHub 저장소: `waterstar21g-png/AI_Program_Main_Board`
 
 ## Windows — 웹앱 (P1, P2)
 
-**`run.bat`** 또는 `run.ps1` 더블클릭/실행 — 이 파일 하나로 전부 처리됩니다.
+**바탕화면 바로가기:** `바로가기만들기.bat` 더블클릭 → `AI_Program_Main_Board`  
+**실행:** **`run.bat`** 또는 `run.ps1` 더블클릭 — 이 파일 하나로 전부 처리됩니다.
 
 ```powershell
 .\run.ps1          # 평소: 동기화 생략, 바로 실행
@@ -38,6 +39,31 @@ npm run dev
 ## P3 — 파이썬 독립 실행
 
 웹앱 없이 [`python-collector/`](./python-collector) 폴더만으로 실행됩니다 — 자세한 건 그 폴더의 README 참고.
+보드 좌측 목록에도 **P3_Python_Item_Collector** 가 표시되며, 환경 점검을 할 수 있습니다.
+
+## 프로젝트별 독립 실행
+
+P1 / P2 / P3 는 **서로 독립**입니다. 골라서 하나씩 실행합니다.  
+각 프로젝트 안의 **명령 순서**는 [`scripts/COMMANDS.txt`](./scripts/COMMANDS.txt) 참고.
+
+| 구분 | 보드 버튼 |
+|------|-----------|
+| 독립 실행 | ① P1 · ② P2 · ③ P3 |
+| PowerShell 대체 | ① 동기화 · ② 캐시정리 · ③ 개별점검 묶음 |
+
+```bat
+p1.bat                 REM P1만 (독립)
+p2.bat
+p3.bat
+verify.bat p1
+```
+
+```bash
+npm run p1                 # P1 독립 — 명령 순서 안내 포함
+npm run p2
+npm run p3
+npm run verify:all         # 세 개를 각각 독립 실행 후 결과만 모음 (연쇄 아님)
+```
 
 ## run.ps1 없을 때 (최초 1회만)
 
