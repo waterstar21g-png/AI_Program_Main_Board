@@ -91,10 +91,12 @@ CHROME_CANDIDATES = [
     "/usr/bin/chromium",
 ]
 
-POPUP_WAIT_SEC = 90  # 검색 팝업 닫힘 대기(초) — 초과 시 닫고 다음 단계/다음 행으로
-MODAL_WAIT_SEC = 180
+POPUP_WAIT_SEC = 40  # 검색 팝업 닫힘 대기(초) — 초과 시 닫고 다음 단계로
+MODAL_WAIT_SEC = 60
 DEFAULT_SAVE_COUNT = 3
-DEFAULT_ROW_RETRIES = 3
+DEFAULT_ROW_RETRIES = 2
+SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
+ROW_BUDGET_SEC = 180  # 한 입력 행에 쓸 수 있는 최대 시간(초) — 초과 시 다음 행
 
 # 보드 "수집 종료" 버튼이 만드는 중단 플래그 (로그는 보드에 보존)
 STOP_FLAG = Path(__file__).parent / ".collect_stop"
@@ -104,11 +106,20 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "검색결과가 없습니다",
     "망고 자체 메세지",
     "더망고 자체 메세지",
+    "행 제한시간 초과",
+    "팝업창이 닫히지 않음",
+    "저장 팝업창이 닫히지 않음",
+    "검색결과 확인 실패",
+    "팝업이 뜨지 않음",
 )
 
 
 class CollectStopped(Exception):
     """사용자가 보드에서 수집 종료를 요청함."""
+
+
+class RowBudgetExceeded(Exception):
+    """한 입력 행 처리 시간 초과 — 다음 입력으로 진행."""
 
 
 def clear_stop_flag() -> None:
@@ -241,6 +252,7 @@ class RunCtx:
         self.input_ordinal = 0  # 처리 중인 입력 순서(1부터)
         self.current_label = ""
         self.current_url = ""
+        self.row_deadline: float | None = None  # 행당 제한시간(epoch)
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
@@ -248,16 +260,27 @@ class RunCtx:
         if self.shot_first_n > 0:
             self.info(f"[샷대상] 입력 데이터 1~{self.shot_first_n}행 단계별 스크린샷")
 
+    def check_budget(self, where: str = "") -> None:
+        """중단 요청 + 행 제한시간 검사."""
+        check_stop(where)
+        if self.row_deadline is not None and time.time() > self.row_deadline:
+            detail = f" ({where})" if where else ""
+            raise RowBudgetExceeded(
+                f"행 제한시간 초과{detail} — {ROW_BUDGET_SEC}초 내 미완료, 다음 입력으로"
+            )
+
     def begin_row(self, ordinal: int, row: dict) -> None:
         """행 처리 시작 — 로그에 카테고리명·URL 기록."""
         self.input_ordinal = ordinal
         self.current_label = str(row.get("label") or "").strip()
         self.current_url = str(row.get("url") or "").strip()
+        self.row_deadline = time.time() + ROW_BUDGET_SEC
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
             f"상위 최종 카테고리명={self.current_label} | "
-            f"최종 카테고리 URL주소={self.current_url} ---"
+            f"최종 카테고리 URL주소={self.current_url} | "
+            f"제한 {ROW_BUDGET_SEC}초 ---"
         )
 
     def wants_row_shot(self, row_no: int | None = None) -> bool:
@@ -1138,19 +1161,40 @@ def overlay_status(page: Page) -> dict:
     return {"popups": n_pop, "save_modal": modal, "loading": loading}
 
 
+def finalize_row_overlays(page: Page, ctx: "RunCtx", row: dict) -> Page:
+    """행 종료 직후 남은 검색팝업·저장모달을 정리(다음 행 진입 전 보조)."""
+    page = refresh_if_closed(page)
+    try:
+        n = close_search_popups(page)
+        if n:
+            ctx.info(f"  [행종료정리] 검색 팝업 {n}개 닫음")
+        if save_modal_visible(page):
+            ctx.info("  [행종료정리] 저장 모달 닫기 시도")
+            try_dismiss_save_modal(page)
+            page.wait_for_timeout(400)
+            if save_modal_visible(page):
+                try_dismiss_save_modal(page)
+    except Exception as e:  # noqa: BLE001
+        ctx.info(f"  [행종료정리] 경고: {e}")
+    return refresh_if_closed(page)
+
+
 def ensure_overlays_closed_before_next(
     page: Page,
     ctx: "RunCtx",
     *,
     next_ordinal: int,
     next_row: dict,
-    timeout_sec: float = 45.0,
+    timeout_sec: float = 180.0,
 ) -> Page:
-    """다음 입력(특히 2번) 상품수집 전 — 팝업·모달이 모두 닫혔는지 확인 후 스크린샷 보관."""
+    """다음 입력(특히 2번) 상품수집 전 — 모든 모달/팝업이 닫힐 때까지 기다린 뒤 샷 보관.
+
+    닫히지 않은 채 다음 행으로 넘어가지 않는다(반드시 종료 확인 후 진행).
+    """
     rn = int(next_row.get("row") or next_ordinal)
     label = str(next_row.get("label") or "").strip()
     ctx.info(
-        f"[다음행준비] 입력#{next_ordinal} 수집 전 — 팝업된 모든 모달/창 닫힘 확인 "
+        f"[다음행준비] 입력#{next_ordinal} 수집 전 — 팝업·모달 전부 종료될 때까지 대기 "
         f"(엑셀{rn}행 / {label})"
     )
     page = refresh_if_closed(page)
@@ -1159,52 +1203,62 @@ def ensure_overlays_closed_before_next(
     except Exception:  # noqa: BLE001
         pass
 
-    end = time.time() + max(10.0, float(timeout_sec))
-    while time.time() < end:
-        check_stop(f"입력#{next_ordinal} 전 오버레이 정리")
+    end = time.time() + max(30.0, float(timeout_sec))
+    last_log = 0.0
+    clean_stable = 0
+    while True:
+        check_stop(f"입력#{next_ordinal} 전 모달 종료 대기")
         st = overlay_status(page)
         if st["popups"] == 0 and not st["save_modal"] and not st["loading"]:
-            page.wait_for_timeout(400)
-            st2 = overlay_status(page)
-            if st2["popups"] == 0 and not st2["save_modal"] and not st2["loading"]:
+            clean_stable += 1
+            if clean_stable >= 3:  # ~1초 이상 안정적으로 닫힌 상태
                 break
-        if st["popups"] > 0:
-            n = close_search_popups(page)
-            ctx.info(f"  남은 검색 팝업 {n}개 닫음")
-        if st["save_modal"]:
-            ctx.info("  저장 모달 잔존 — 닫기 시도")
-            try_dismiss_save_modal(page)
-        if st["loading"]:
             page.wait_for_timeout(350)
             continue
+        clean_stable = 0
+        now = time.time()
+        if now - last_log > 5:
+            last_log = now
+            ctx.info(
+                f"  모달 종료 대기중... popups={st['popups']}, "
+                f"save_modal={st['save_modal']}, loading={st['loading']}"
+            )
+        if st["popups"] > 0:
+            n = close_search_popups(page)
+            if n:
+                ctx.info(f"  남은 검색 팝업 {n}개 닫음")
+        if st["save_modal"]:
+            try_dismiss_save_modal(page)
+        if now > end:
+            # 제한시간 후에도 강제 닫기 반복 — 그래도 안 닫히면 샷 후 오류
+            for _ in range(5):
+                close_search_popups(page)
+                try_dismiss_save_modal(page)
+                page.wait_for_timeout(500)
+                st = overlay_status(page)
+                if st["popups"] == 0 and not st["save_modal"]:
+                    break
+            st = overlay_status(page)
+            if st["popups"] > 0 or st["save_modal"]:
+                ctx.shot(page, "00_overlays_stuck", rn)
+                raise RuntimeError(
+                    f"입력#{next_ordinal} 수집 전 팝업/모달이 닫히지 않음 "
+                    f"(popups={st['popups']}, save_modal={st['save_modal']}) "
+                    "— 닫힌 뒤에만 다음 행 진행"
+                )
+            break
         page.wait_for_timeout(350)
-    else:
-        st = overlay_status(page)
-        ctx.info(
-            f"  [경고] 오버레이 정리 시간 초과 "
-            f"(popups={st['popups']}, modal={st['save_modal']}, loading={st['loading']}) "
-            "— 강제 정리 후 샷 보관"
-        )
-        close_search_popups(page)
-        try_dismiss_save_modal(page)
-        ctx.shot(page, "00_overlays_stuck", rn)
 
     st = overlay_status(page)
     ctx.info(
-        f"  닫힘 확인 결과: 검색팝업={st['popups']}개, "
+        f"  닫힘 확인 완료: 검색팝업={st['popups']}개, "
         f"저장모달={'열림' if st['save_modal'] else '닫힘'}, "
         f"로딩={'중' if st['loading'] else '없음'}"
     )
-    # 반드시 스크린샷 보관 (다음 행 수집 직전 상태)
     ctx.shot(page, "00_overlays_clear", rn)
     ctx.info(
-        f"[다음행준비] 입력#{next_ordinal} — 팝업/모달 닫힘 스크린샷 보관 완료 → 수집 시작"
+        f"[다음행준비] 입력#{next_ordinal} — 모든 모달 종료 확인·스크린샷 보관 → 수집 시작"
     )
-    if st["popups"] > 0 or st["save_modal"]:
-        raise RuntimeError(
-            f"입력#{next_ordinal} 수집 전 팝업/모달이 닫히지 않음 "
-            f"(popups={st['popups']}, save_modal={st['save_modal']})"
-        )
     return page
 
 
@@ -1598,14 +1652,16 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     if url != row["url"].strip():
         ctx.info(f"  [정보] 프로토콜 보정됨: {url}")
 
-    # URL 검색: 망고 자체 '검색결과 없음'이면 재시도 (ABC 팝업에 상품이 있어도 망고가 비는 경우 있음)
+    # URL 검색: 망고 자체 '검색결과 없음'이면 소횟수 재시도 후 다음 행으로
     search_ok = False
     last_state = "unknown"
     last_count = 0
     popup_imgs = 0
-    for search_try in range(1, 4):
+    max_search = max(1, int(SEARCH_MAX_TRIES))
+    for search_try in range(1, max_search + 1):
+        ctx.check_budget(f"URL검색 {search_try}/{max_search}")
         ctx.info(
-            f"1. URL 검색 시도 {search_try}/3 | "
+            f"1. URL 검색 시도 {search_try}/{max_search} | "
             f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={url}"
         )
         target = url_input(page)
@@ -1677,7 +1733,7 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
                 f"(팝업상품이미지약 {popup_imgs}개 / 망고결과힌트 {last_count})"
             )
             ctx.shot(page, "01_mango_no_results", rn)
-            if search_try < 3:
+            if search_try < max_search:
                 ctx.info("  망고 무결과 — URL 검색 재시도")
                 page.wait_for_timeout(800)
                 continue
@@ -1703,7 +1759,7 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
         if is_mango_no_results(page):
             ctx.info("  [망고 자체메세지] 검색결과가 없습니다. (재확인)")
             ctx.shot(page, "01_mango_no_results", rn)
-            if search_try < 3:
+            if search_try < max_search:
                 continue
             raise RuntimeError(
                 f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
@@ -1714,7 +1770,7 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
             f"  [경고] 검색결과 판별 불명 (state={last_state}, hint={last_count}, "
             f"imgs={result_imgs}) — 재시도"
         )
-        if search_try < 3:
+        if search_try < max_search:
             page.wait_for_timeout(800)
             continue
 
@@ -1793,14 +1849,22 @@ def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
     end = time.time() + MODAL_WAIT_SEC
     closed = False
     while time.time() < end:
+        ctx.check_budget("저장모달 닫힘 대기")
         if not save_modal_visible(page):
             wait_popups_gone(page, grace_sec=0.5)
             closed = True
             break
         page.wait_for_timeout(500)
     if not closed:
-        ctx.shot(page, "03_modal_stuck", rn)
-        raise TimeoutError(f"#{rn} 저장 팝업창이 닫히지 않음")
+        # 강제 닫기 후 여전히 열려 있으면 실패 → 다음 행으로
+        try_dismiss_save_modal(page)
+        close_search_popups(page)
+        page.wait_for_timeout(500)
+        if not save_modal_visible(page) and not popups(page):
+            closed = True
+        else:
+            ctx.shot(page, "03_modal_stuck", rn)
+            raise TimeoutError(f"#{rn} 저장 팝업창이 닫히지 않음")
     ctx.info("3. 팝업창 닫힘")
     ctx.shot(page, "03_modal_closed", rn)
 
@@ -1858,72 +1922,93 @@ def _is_advance_fail(err: BaseException) -> bool:
 def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
     """행 단위 재시도. 성공 True / 최종 실패 False.
 
-    망고 자체 무결과 등 확정 실패는 같은 행을 무한 재시도하지 않고
-    즉시 끝내 다음 입력 데이터로 넘긴다.
+    망고 무결과·시간초과 등 확정 실패는 같은 행을 반복하지 않고
+    즉시 끝내 다음 입력 데이터로 넘긴다. (1행 무한루프 방지)
     """
     last_err: Exception | None = None
     label = str(row.get("label") or "").strip()
     raw_url = str(row.get("url") or "").strip()
-    for attempt in range(1, ctx.retries + 1):
-        check_stop(f"행 시도 전 엑셀{row['row']}행")
-        try:
-            ctx.info(
-                f"> 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행) | "
-                f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
-            )
-            page = refresh_if_closed(page)
-            _process_row_once(page, row, ctx)
-            ctx.info(
-                f"[OK] 엑셀{row['row']}행 성공 (시도 {attempt}) | "
-                f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
-            )
-            return True
-        except CollectStopped:
-            raise
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            err_name = type(e).__name__
-            ctx.info(
-                f"[FAIL] 엑셀{row['row']}행 실패 (시도 {attempt}/{ctx.retries}) | "
-                f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url} | "
-                f"{err_name}: {e}"
-            )
+    success = False
+    try:
+        for attempt in range(1, ctx.retries + 1):
             try:
-                page = refresh_if_closed(page)
-                ctx.shot(page, f"fail_attempt{attempt}", row["row"])
-            except Exception:
-                pass
-            # 확정 실패(무결과 등) → 같은 행 재시도 중단, 다음 입력으로
-            if _is_advance_fail(e):
+                ctx.check_budget(f"행 시도 전 엑셀{row['row']}행")
+            except RowBudgetExceeded as e:
+                last_err = e
+                ctx.info(f"  [다음행] {e}")
+                break
+            try:
                 ctx.info(
-                    "  [다음행] 확정 실패(검색결과 없음 등) — "
-                    "같은 행 재시도 없이 다음 입력 데이터로 진행"
+                    f"> 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행) | "
+                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+                )
+                page = refresh_if_closed(page)
+                _process_row_once(page, row, ctx)
+                ctx.info(
+                    f"[OK] 엑셀{row['row']}행 성공 (시도 {attempt}) | "
+                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+                )
+                success = True
+                return True
+            except CollectStopped:
+                raise
+            except RowBudgetExceeded as e:
+                last_err = e
+                ctx.info(
+                    f"[FAIL] 엑셀{row['row']}행 제한시간 초과 — 다음 입력으로 | {e}"
                 )
                 try:
-                    close_search_popups(page)
+                    ctx.shot(page, "fail_budget", row["row"])
                 except Exception:  # noqa: BLE001
                     pass
                 break
-            # 탭/브라우저가 닫힌 경우 같은 컨텍스트에서 페이지 다시 확보
-            if "TargetClosed" in err_name or "Target closed" in str(e):
-                ctx.info("  탭 닫힘 감지 — 작업 페이지 재연결 시도")
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                err_name = type(e).__name__
+                ctx.info(
+                    f"[FAIL] 엑셀{row['row']}행 실패 (시도 {attempt}/{ctx.retries}) | "
+                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url} | "
+                    f"{err_name}: {e}"
+                )
                 try:
                     page = refresh_if_closed(page)
-                except Exception as re:  # noqa: BLE001
-                    ctx.info(f"  재연결 경고: {re}")
-            if attempt < ctx.retries:
-                ctx.info("  같은 행 재시도 전 대량수집 화면 복귀...")
-                try:
-                    page = refresh_if_closed(page)
-                    reset_to_bulk_menu(page)
-                except Exception as re:  # noqa: BLE001
-                    ctx.info(f"  복귀 중 경고: {re}")
-                try:
-                    page.wait_for_timeout(1000)
+                    ctx.shot(page, f"fail_attempt{attempt}", row["row"])
                 except Exception:
-                    page = refresh_if_closed(page)
-    ctx.info(f"[FAIL] {row['row']}행 최종 실패: {last_err}")
-    return False
+                    pass
+                # 확정 실패 → 같은 행 재시도 중단, 다음 입력으로
+                if _is_advance_fail(e):
+                    ctx.info(
+                        "  [다음행] 확정 실패 — "
+                        "같은 행 재시도 없이 다음 입력 데이터로 진행"
+                    )
+                    break
+                if "TargetClosed" in err_name or "Target closed" in str(e):
+                    ctx.info("  탭 닫힘 감지 — 작업 페이지 재연결 시도")
+                    try:
+                        page = refresh_if_closed(page)
+                    except Exception as re:  # noqa: BLE001
+                        ctx.info(f"  재연결 경고: {re}")
+                if attempt < ctx.retries:
+                    ctx.info("  같은 행 재시도 전 대량수집 화면 복귀...")
+                    try:
+                        page = refresh_if_closed(page)
+                        reset_to_bulk_menu(page)
+                    except Exception as re:  # noqa: BLE001
+                        ctx.info(f"  복귀 중 경고: {re}")
+                    try:
+                        page.wait_for_timeout(800)
+                    except Exception:
+                        page = refresh_if_closed(page)
+        if not success:
+            ctx.info(f"[FAIL] {row['row']}행 최종 실패: {last_err}")
+        return success
+    finally:
+        # 성공/실패와 무관하게 남은 모달·팝업 정리 → 다음 행 대기 부담 감소
+        try:
+            page = finalize_row_overlays(page, ctx, row)
+        except Exception as e:  # noqa: BLE001
+            ctx.info(f"  [행종료정리] 실패: {e}")
+        ctx.row_deadline = None
 
 
 def process_row(page: Page, row: dict, save_count: int = DEFAULT_SAVE_COUNT) -> None:
