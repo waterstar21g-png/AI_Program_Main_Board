@@ -26,6 +26,10 @@ DEFAULT_UA = (
 
 DEFAULT_SITE = "독일자라"
 DEFAULT_URL = "https://www.zara.com/de/en/user/order"
+# ★요건: 독일어(/de/de)가 아닌 영어(/de/en) 표기 사이트로 카테고리·URL 수집
+ZARA_STORE = "de"
+ZARA_LANG = "en"
+ZARA_LOCALE_PATH = f"/{ZARA_STORE}/{ZARA_LANG}"
 # 상위 카테고리는 보드/CLI 입력으로만 지정 (기본 프리필 없음)
 DEFAULT_TOPS: list[str] = []
 
@@ -51,11 +55,11 @@ ZARA_CAT_HREF_RE = re.compile(
 )
 ZARA_CAT_PATH_RE = re.compile(r"/de/(?:de|en)/[^?\s#]+-[lm]\d+\.html", re.I)
 
-# 독일어·영문 섹션명 동의어 (필터 매칭용)
+# 영문 섹션명 기준 + 독일어 입력도 매칭 (수집 결과는 영어 표기)
 TOP_ALIASES: dict[str, set[str]] = {
-    "DAMEN": {"DAMEN", "WOMAN", "WOMEN", "FRAUEN", "LADIES"},
-    "HERREN": {"HERREN", "MAN", "MEN", "MÄNNER", "MAENNER"},
-    "KINDER": {"KINDER", "KIDS", "CHILD", "CHILDREN", "NIÑO", "NINO"},
+    "WOMAN": {"WOMAN", "WOMEN", "DAMEN", "FRAUEN", "LADIES"},
+    "MAN": {"MAN", "MEN", "HERREN", "MÄNNER", "MAENNER"},
+    "KIDS": {"KIDS", "KINDER", "CHILD", "CHILDREN"},
 }
 
 
@@ -184,24 +188,17 @@ def is_zara_de_platform(html: str, url: str) -> bool:
 
 
 def zara_store_homes(site_url: str) -> list[str]:
-    """카테고리 수집용 스토어 홈 후보 (주문/계정 URL이어도 DE 스토어 루트로)."""
+    """카테고리 수집용 스토어 홈 — 영어(/de/en)만 사용."""
     parsed = urlparse(normalize_url(site_url))
     origin = f"{parsed.scheme}://{parsed.netloc}"
-    path = (parsed.path or "/").lower()
-    homes: list[str] = []
-    if "/de/en" in path:
-        homes.append(f"{origin}/de/en/")
-        homes.append(f"{origin}/de/de/")
-    elif "/de/de" in path:
-        homes.append(f"{origin}/de/de/")
-        homes.append(f"{origin}/de/en/")
-    homes.append(f"{origin}/de/")
-    # 중복 제거 순서 유지
-    out: list[str] = []
-    for h in homes:
-        if h not in out:
-            out.append(h)
-    return out
+    return [f"{origin}{ZARA_LOCALE_PATH}/"]
+
+
+def to_english_locale_url(url: str) -> str:
+    """카테고리 URL을 /de/de → /de/en 영어 표기로 정규화."""
+    if not url:
+        return url
+    return re.sub(r"(zara\.com)/de/de/", r"\1/de/en/", url, flags=re.I)
 
 
 def _session() -> requests.Session:
@@ -210,7 +207,8 @@ def _session() -> requests.Session:
         {
             "User-Agent": DEFAULT_UA,
             "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
-            "Accept-Language": "de-DE,de;q=0.9,en;q=0.8,ko;q=0.7",
+            # 영어 UI(/de/en) 우선
+            "Accept-Language": "en-GB,en;q=0.9,de;q=0.5,ko;q=0.3",
             "Cache-Control": "no-cache",
         }
     )
@@ -236,10 +234,12 @@ def _abs_zara_url(origin: str, href: str) -> str | None:
     if not href:
         return None
     abs_u = urljoin(origin + "/", href.strip())
+    abs_u = to_english_locale_url(abs_u)
+    # 상대 경로가 /de/ 없이 오면 영어 로케일로 붙임
     if ZARA_CAT_HREF_RE.match(abs_u):
         return abs_u.split("?")[0].split("#")[0]
     if ZARA_CAT_PATH_RE.search(abs_u):
-        return abs_u.split("?")[0].split("#")[0]
+        return to_english_locale_url(abs_u.split("?")[0].split("#")[0])
     return None
 
 
@@ -324,11 +324,13 @@ def _walk_zara_json(
         if href.startswith("/"):
             href = urljoin(origin, href)
         elif re.search(r"-[lm]\d+$", href, re.I):
-            href = f"{origin}/de/de/{href}.html"
+            href = f"{origin}{ZARA_LOCALE_PATH}/{href}.html"
         else:
             href = ""
 
     abs_url = _abs_zara_url(origin, href) if href else None
+    if abs_url:
+        abs_url = to_english_locale_url(abs_url)
     new_path = path + ([name] if name else [])
 
     if abs_url and name and not kids:
@@ -400,37 +402,37 @@ def parse_zara_html_links(html: str, base_url: str) -> list[Leaf]:
         name = clean_text(a.get_text()) or clean_text(a.get("title") or "")
         if not name or len(name) > 80:
             continue
-        # 상위 추정: 슬러그 토큰 기준 (damen 안의 men- 부분문자열 오탐 방지)
-        top = "DAMEN"
+        # 상위 추정: 영어 섹션명(WOMAN/MAN/KIDS) 기준
+        top = "WOMAN"
         slug = urlparse(abs_url).path.rsplit("/", 1)[-1].lower()
         if (
-            slug.startswith("herren")
-            or "-herren-" in f"-{slug}"
-            or slug.startswith("man-")
+            slug.startswith("man-")
             or slug.startswith("men-")
+            or slug.startswith("herren")
             or "-man-" in f"-{slug}"
             or "-men-" in f"-{slug}"
+            or "-herren-" in f"-{slug}"
         ):
-            top = "HERREN"
+            top = "MAN"
         elif (
-            slug.startswith("kinder")
-            or slug.startswith("kids")
+            slug.startswith("kids")
+            or slug.startswith("kinder")
             or "child" in slug
         ):
-            top = "KINDER"
+            top = "KIDS"
         elif (
-            slug.startswith("damen")
-            or slug.startswith("woman")
+            slug.startswith("woman")
             or slug.startswith("women")
+            or slug.startswith("damen")
         ):
-            top = "DAMEN"
+            top = "WOMAN"
         leaves.append(
             Leaf(
                 top=top,
                 mid="",
                 low="",
                 final=name,
-                category_url=abs_url,
+                category_url=to_english_locale_url(abs_url),
                 cat_id=_cat_id_from_url(abs_url),
             )
         )
@@ -438,27 +440,22 @@ def parse_zara_html_links(html: str, base_url: str) -> list[Leaf]:
 
 
 def collect_zara_leaves(site_url: str) -> tuple[list[Leaf], list[str]]:
-    """카테고리 트리 수집. (leaves, warnings)
+    """카테고리 트리 수집 — 영어 UI(/de/en)만 사용.
 
-    site_url 이 주문/계정 페이지여도 DE 스토어 홈·categories API 로 수집한다.
+    site_url 이 주문/계정 페이지여도 독일자라 영어 홈·categories API 로 수집한다.
     """
     warnings: list[str] = []
     sess = _session()
     origin = f"{urlparse(site_url).scheme}://{urlparse(site_url).netloc}"
     homes = zara_store_homes(site_url)
+    en_home = homes[0]
 
-    # 1) categories ajax (de/en · de/de)
-    ajax_urls: list[str] = []
-    for home in homes:
-        ajax_urls.append(urljoin(home, "categories?ajax=true"))
-    ajax_urls.extend(
-        [
-            f"{origin}/de/en/categories?ajax=true",
-            f"{origin}/de/de/categories?ajax=true",
-            "https://www.zara.com/de/en/categories?ajax=true",
-            "https://www.zara.com/de/de/categories?ajax=true",
-        ]
-    )
+    # 1) categories ajax — 영어(/de/en)만
+    ajax_urls = [
+        urljoin(en_home, "categories?ajax=true"),
+        f"{origin}{ZARA_LOCALE_PATH}/categories?ajax=true",
+        f"https://www.zara.com{ZARA_LOCALE_PATH}/categories?ajax=true",
+    ]
     seen_ajax: set[str] = set()
     for ajax in ajax_urls:
         if ajax in seen_ajax:
@@ -467,30 +464,28 @@ def collect_zara_leaves(site_url: str) -> tuple[list[Leaf], list[str]]:
         try:
             text = fetch_text(ajax, sess)
             if text.strip().startswith("{") or text.strip().startswith("["):
-                leaves = parse_zara_categories_json(text, homes[0])
+                leaves = parse_zara_categories_json(text, en_home)
                 if leaves:
+                    for leaf in leaves:
+                        leaf.category_url = to_english_locale_url(leaf.category_url)
                     return leaves, warnings
             warnings.append(f"카테고리 API 응답이 JSON이 아님: {ajax}")
         except Exception as e:  # noqa: BLE001
             warnings.append(f"카테고리 API 실패({ajax}): {e}")
 
-    # 2) HTML 폴백 — 스토어 홈부터
-    last_err: Exception | None = None
-    for home in homes:
-        try:
-            html = fetch_text(home, sess)
-            if not is_zara_de_platform(html, home):
-                raise RuntimeError("HTML이 ZARA DE 형식이 아닙니다.")
-            leaves = parse_zara_html_links(html, home)
-            if leaves:
-                warnings.append("카테고리 API 대신 HTML 링크 폴백으로 수집했습니다.")
-                return leaves, warnings
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            warnings.append(f"HTML 폴백 실패({home}): {e}")
+    # 2) HTML 폴백 — 영어 스토어 홈만
+    try:
+        html = fetch_text(en_home, sess)
+        if not is_zara_de_platform(html, en_home):
+            raise RuntimeError("HTML이 독일자라(영어 /de/en) 형식이 아닙니다.")
+        leaves = parse_zara_html_links(html, en_home)
+        if leaves:
+            warnings.append("카테고리 API 대신 HTML 링크 폴백으로 수집했습니다. (영어 /de/en)")
+            return leaves, warnings
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"HTML 폴백 실패({en_home}): {e}")
+        raise
 
-    if last_err is not None:
-        raise last_err
     return [], warnings
 
 
@@ -588,7 +583,7 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
         ok=True,
         site_name=name,
         site_url=url,
-        platform="ZARA Deutschland (zara.com/de)",
+        platform="독일자라 영어 (zara.com/de/en)",
         applied_tops=tops,
         rows=rows,
         total=len(rows),

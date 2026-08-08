@@ -9,7 +9,8 @@ ZARA Deutschland 카테고리 URL 리스트 추출 → 엑셀
 |------|-----|
 | 사이트명 | 독일자라 |
 | 사이트 URL | `https://www.zara.com/de/en/user/order` |
-| 상위 카테고리 | **입력으로 지정** (프리필 없음) |
+| 언어 | **영어** (`/de/en`) — 독일어(`/de/de`) 미사용 |
+| 상위 카테고리 | **입력으로 지정** (예: WOMAN, MAN, KIDS) |
 
 ## 보드
 

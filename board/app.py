@@ -421,7 +421,8 @@ class BoardApp(tk.Tk):
             tops_right,
             text=(
                 f"{TOP_GRID_ROWS}행×{TOP_GRID_COLS}칸 · 칸당 {TOP_CELL_MAX_LEN}자 · "
-                "카테고리는 직접 입력 · 명1:명2 입력 시 엑셀 상위명을 명2로 출력"
+                "영어 사이트(/de/en) 기준 · 카테고리 직접 입력(예: WOMAN, MAN, KIDS) · "
+                "명1:명2 → 엑셀 상위명 치환"
             ),
             bg="#ffffff",
             fg="#64748b",

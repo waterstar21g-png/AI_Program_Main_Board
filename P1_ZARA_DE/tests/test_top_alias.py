@@ -20,6 +20,7 @@ from crawl import (  # noqa: E402
     parse_top_cell,
     parse_tops,
     parse_zara_html_links,
+    to_english_locale_url,
     zara_store_homes,
     Leaf,
 )
@@ -34,50 +35,55 @@ def test_defaults():
 
 
 def test_parse_alias():
-    assert parse_top_cell("DAMEN:여성") == ("DAMEN", "여성")
-    names, rename = parse_tops(["DAMEN:여성", "HERREN", "KINDER"])
-    assert names == ["DAMEN", "HERREN", "KINDER"]
-    assert excel_top_name("DAMEN", rename) == "여성"
+    assert parse_top_cell("WOMAN:여성") == ("WOMAN", "여성")
+    names, rename = parse_tops(["WOMAN:여성", "MAN", "KIDS"])
+    assert names == ["WOMAN", "MAN", "KIDS"]
+    assert excel_top_name("WOMAN", rename) == "여성"
 
 
-def test_platform_and_homes():
+def test_platform_and_homes_english_only():
     assert is_zara_de_platform("", DEFAULT_URL)
     assert is_zara_de_platform("", "https://www.zara.com/de/en/user/order")
-    assert is_zara_de_platform("", "https://www.zara.com/de/de/damen-mkt1000.html")
     assert not is_zara_de_platform("", "https://abcmart.a-rt.com/")
     homes = zara_store_homes(DEFAULT_URL)
-    assert any("/de/en/" in h for h in homes)
+    assert homes == ["https://www.zara.com/de/en/"]
+    assert all("/de/de/" not in h for h in homes)
+    assert to_english_locale_url(
+        "https://www.zara.com/de/de/dresses-l1001.html"
+    ) == "https://www.zara.com/de/en/dresses-l1001.html"
 
 
 def test_filter_aliases():
     leaves = [
-        Leaf("DAMEN", "", "", "Kleider", "https://www.zara.com/de/en/kleider-l123.html"),
-        Leaf("WOMAN", "", "", "Schuhe", "https://www.zara.com/de/en/schuhe-l456.html"),
-        Leaf("HERREN", "", "", "Jeans", "https://www.zara.com/de/en/jeans-l789.html"),
+        Leaf("WOMAN", "", "", "Dresses", "https://www.zara.com/de/en/dresses-l123.html"),
+        Leaf("DAMEN", "", "", "Shoes", "https://www.zara.com/de/en/shoes-l456.html"),
+        Leaf("MAN", "", "", "Jeans", "https://www.zara.com/de/en/jeans-l789.html"),
     ]
-    out = filter_by_top(leaves, ["DAMEN", "HERREN"])
-    assert len(out) == 3  # WOMAN ≡ DAMEN
+    out = filter_by_top(leaves, ["WOMAN", "MAN"])
+    assert len(out) == 3  # DAMEN ≡ WOMAN
 
 
-def test_html_link_parse():
+def test_html_link_parse_english():
     html = """
     <html><body>
-      <a href="/de/en/damen-kleider-l1001.html">Kleider</a>
-      <a href="/de/en/herren-jeans-l2002.html">Jeans</a>
+      <a href="/de/en/woman-dresses-l1001.html">Dresses</a>
+      <a href="/de/de/man-jeans-l2002.html">Jeans</a>
       <a href="/about">무시</a>
     </body></html>
     """
     leaves = parse_zara_html_links(html, "https://www.zara.com/de/en/")
     assert len(leaves) == 2
     tops = {x.top for x in leaves}
-    assert "DAMEN" in tops
-    assert "HERREN" in tops
+    assert "WOMAN" in tops
+    assert "MAN" in tops
+    assert all("/de/en/" in x.category_url for x in leaves)
+    assert all("/de/de/" not in x.category_url for x in leaves)
 
 
 if __name__ == "__main__":
     test_defaults()
     test_parse_alias()
-    test_platform_and_homes()
+    test_platform_and_homes_english_only()
     test_filter_aliases()
-    test_html_link_parse()
+    test_html_link_parse_english()
     print("ok")
