@@ -3995,15 +3995,33 @@ def main() -> None:
                     stopped = True
                     ctx.info(f"[중단] {e} — 로그·브라우저는 유지합니다")
                     break
-                except RuntimeError as e:
-                    if "수집 전 팝업/모달이 닫히지 않음" in str(e):
+                except Exception as e:  # noqa: BLE001
+                    # ★절대 규칙(사용자 반복 지시): 엑셀에 자료가 남아있는 동안은
+                    # 계속 수행한다 — 다음 행 준비(ensure_overlays_closed_before_next
+                    # 등) 중 어떤 예외가 나든(RuntimeError 특정 문구가 아니어도,
+                    # Playwright 예외 등 어떤 종류든) 여기서 잡아 이 입력만 실패
+                    # 처리하고 다음 입력으로 진행한다. 과거에는 특정 문구의
+                    # RuntimeError만 잡고 나머지는 raise 해서 전체 배치가 조용히
+                    # 죽는(화면엔 ##MAIN##/##SUB## 마커가 없어 아무 표시도 안 되는)
+                    # 회귀가 있었다 — 다시는 이 루프를 통째로 죽이지 않는다.
+                    ctx.info(
+                        f"[FAIL] 입력#{ordinal} 처리 중 예외 발생 — "
+                        f"엑셀 자료가 남아있으므로 다음 입력으로 계속 진행 | "
+                        f"{type(e).__name__}: {e}"
+                    )
+                    try:
+                        page = refresh_if_closed(page)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    fail += 1
+                    ctx.emit_progress_meta(done=ok)
+                    if ordinal < len(rows):
+                        nxt = rows[ordinal]
                         ctx.info(
-                            f"[FAIL] 입력#{ordinal} 시작 전 팝업/모달 미정리 — "
-                            f"해당 입력 건너뛰고 다음으로 | {e}"
+                            f"==== 다음 입력#{ordinal + 1} 로 진행 "
+                            f"(엑셀{nxt['row']}행 / {nxt.get('label', '')}) ===="
                         )
-                        fail += 1
-                        continue
-                    raise
+                    continue
                 if success:
                     ok += 1
                 else:
