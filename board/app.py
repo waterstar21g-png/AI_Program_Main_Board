@@ -790,12 +790,12 @@ class BoardApp(tk.Tk):
             "2",
         ]
         if verify:
-            # 검증: 1·2행 단계 스크린샷만 (행 수 제한 없음 — 엑셀 전체 처리)
+            # ★스크린샷만 1·2행 — 처리 행 수는 엑셀 전체 (max_rows 강제 금지)
             args.append("--verify")
 
         set_selected(path)
         self._clear_p2_log()
-        mode = "1·2행 스크린샷·전체수집" if verify else "전체(앞2행 샷)"
+        mode = "엑셀전체수집·1·2행샷" if verify else "엑셀전체수집"
         self.p2_status.configure(
             text=f"수집 시작 ({mode}): {path} — 브라우저에서 직접 로그인하세요",
             fg="#15803d",
