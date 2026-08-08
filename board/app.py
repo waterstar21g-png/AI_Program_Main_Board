@@ -30,7 +30,14 @@ from library import (  # noqa: E402
     search_xlsx,
     set_selected,
 )
-from log_protocol import META_FIELDS, parse_line, step_tag, strip_timestamp, sub_time_range  # noqa: E402
+from log_protocol import (  # noqa: E402
+    META_FIELDS,
+    format_meta_line,
+    parse_line,
+    step_tag,
+    strip_timestamp,
+    sub_time_range,
+)
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
 VERSION = "2.0.55"
@@ -455,7 +462,8 @@ class BoardApp(tk.Tk):
         self._main_item_by_seq: dict[int, str] = {}
         self._main_ts_end: dict[int, str] = {}
         self._seq_by_main_item: dict[str, int] = {}
-        self._meta_item_ids: dict[str, str] = {}
+        self._meta_item_id: str | None = None
+        self._meta_values: dict[str, str] = {f: "" for f in META_FIELDS}
         self._selected_seq: int | None = None
         self._latest_seq: int = 0
         self._follow_latest: bool = True
@@ -550,32 +558,35 @@ class BoardApp(tk.Tk):
         self._main_item_by_seq = {}
         self._main_ts_end = {}
         self._seq_by_main_item = {}
-        self._meta_item_ids = {}
+        self._meta_item_id = None
+        self._meta_values = {f: "" for f in META_FIELDS}
         self._selected_seq = None
         self._latest_seq = 0
         self._follow_latest = True
         self._setup_meta_rows()
 
     def _setup_meta_rows(self) -> None:
-        """main 상단 고정 5항목 — 총건수·완료건·순번·수집필드·카테고리URL."""
+        """main 상단 엑셀 진행 정보 — 5항목을 1줄(오렌지)로 표시."""
         tv = getattr(self, "p2_main_log", None)
         if tv is None:
             return
-        self._meta_item_ids = {}
-        for i, field in enumerate(META_FIELDS):
-            item = tv.insert("", i, values=("", field, ""), tags=("meta",))
-            self._meta_item_ids[field] = item
+        self._meta_values = {f: "" for f in META_FIELDS}
+        line = format_meta_line(self._meta_values)
+        self._meta_item_id = tv.insert("", 0, values=("", "엑셀", line), tags=("meta",))
 
     def _update_meta_row(self, field: str, value: str) -> None:
-        item = self._meta_item_ids.get(field)
-        if not item:
+        if field not in META_FIELDS:
             return
-        self.p2_main_log.item(item, values=("", field, value))
+        self._meta_values[field] = str(value or "").strip()
+        if not self._meta_item_id:
+            return
+        line = format_meta_line(self._meta_values)
+        self.p2_main_log.item(self._meta_item_id, values=("", "엑셀", line))
 
     def _setup_p2_log_tags(self) -> None:
         """main 실행로그 — 단계 성격별 색상 태그."""
         tv = self.p2_main_log
-        tv.tag_configure("meta", foreground="#0369a1", background="#e0f2fe")
+        tv.tag_configure("meta", foreground="#ea580c", background="#fff7ed")
         tv.tag_configure("normal", foreground="#0f172a")
         tv.tag_configure("login", foreground="#7c3aed", background="#f5f3ff")
         tv.tag_configure("init", foreground="#0f766e", background="#f0fdfa")
@@ -668,7 +679,7 @@ class BoardApp(tk.Tk):
         seq = self._seq_by_main_item.get(sel[0])
         if seq is None:
             return
-        if sel[0] in self._meta_item_ids.values():
+        if self._meta_item_id and sel[0] == self._meta_item_id:
             return
         self._selected_seq = seq
         self._follow_latest = seq == self._latest_seq

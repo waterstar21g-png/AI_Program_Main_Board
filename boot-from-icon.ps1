@@ -112,5 +112,5 @@ if (-not (Test-Path -LiteralPath $runBat)) {
 }
 
 Write-Host "[BOOT] Starting board (run.bat --noupdate)..."
-$p = Start-Process -FilePath "cmd.exe" -ArgumentList @("/c", "`"$runBat`" --noupdate") -WorkingDirectory $Root -Wait -PassThru
-exit $p.ExitCode
+& cmd.exe /c "`"$runBat`" --noupdate"
+exit $LASTEXITCODE

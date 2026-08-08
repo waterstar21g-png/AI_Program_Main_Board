@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 from log_protocol import (  # noqa: E402
     META_FIELDS,
+    format_meta_line,
     parse_line,
     step_tag,
     strip_timestamp,
@@ -74,6 +75,24 @@ def test_meta_fields_order():
     assert "카테고리 URL" in META_FIELDS
 
 
+def test_format_meta_line_one_row():
+    line = format_meta_line(
+        {
+            "총건수": "2",
+            "완료건": "0",
+            "순번": "2",
+            "수집 필드": "MEN 스니커즈",
+            "카테고리 URL": "https://example.com/cat",
+        }
+    )
+    assert "총건수 2" in line
+    assert "완료건 0" in line
+    assert "순번 2" in line
+    assert "MEN 스니커즈" in line
+    assert "https://example.com/cat" in line
+    assert line.count(" | ") == 4
+
+
 def test_strip_timestamp_range():
     t, rest = strip_timestamp("[10:20:30~10:21:05] ##SUB##3##상세")
     assert t == "10:20:30~10:21:05"
@@ -106,6 +125,7 @@ if __name__ == "__main__":
         ("parse_sub", test_parse_sub_line),
         ("parse_subshot", test_parse_subshot_line),
         ("parse_meta", test_parse_meta_line),
+        ("format_meta_line", test_format_meta_line_one_row),
         ("meta_fields", test_meta_fields_order),
         ("strip_ts_range", test_strip_timestamp_range),
         ("sub_time_range", test_sub_time_range),

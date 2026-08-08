@@ -215,7 +215,11 @@ MANGO_COLLECT_ALERT_PATTERNS = [
 ]
 
 # ★망고 "저장 완료" 확정 메세지 — 보이는 즉시(단계적 대기 없이) 다음 단계로.
-SAVE_COMPLETE_MSG_PATTERN = re.compile(r"신규\s*상품\s*의\s*저장\s*이\s*완료\s*되었습니다")
+SAVE_COMPLETE_MSG_PATTERN = re.compile(
+    r"신규\s*상품\s*의?\s*저장\s*이?\s*완료\s*되었습니다|"
+    r"신규\s*상품\s*저장\s*완료|"
+    r"저장\s*이\s*완료\s*되었습니다"
+)
 
 # 더망고(자체 UI) — 검색 결과 없음 문구 (로딩 중 오판 금지, 로딩 종료 후에만 사용)
 MANGO_NO_RESULT_PATTERNS = [
@@ -2771,23 +2775,29 @@ def run_save_submit_and_verify(
         if not save_reacted:
             dump_save_button_candidates(page, ctx)
             ctx.shot(page, "02_save_failed", rn)
+            hint = (
+                "Chrome을 완전히 종료 후 다시 실행하세요 "
+                "(--disable-popup-blocking 은 새로 켤 때만 적용)."
+            )
             raise RuntimeError(
                 f"#{rn} 9항 하단 '저장하기' 서버 제출 실패 — "
                 "클릭해도 저장 팝업이 없음. 위 [9항 진단]/[9항 원인추정] 로그로 "
                 "가로채는 요소·미선택 필수값·iframe 여부를 확인하세요. "
-                "1회 재시도 후에도 동일."
+                f"1회 재시도 후에도 동일. {hint}"
             )
 
         # ★요건: 120초 무행동 대기·300초 단계적 확인 생략. 클릭 직후부터
         # 곧바로 "신규상품의 저장이 완료되었습니다" 메세지를 확인하고,
         # 보이는 즉시 10·11·12항을 모두 만족한 것으로 보고 다음 단계로.
+        post_dialog_from = len(dialog_msgs)
         found = wait_for_save_complete_signal(
             page,
             ctx,
             rn,
             dialog_msgs=dialog_msgs,
             baseline=alert_baseline,
-            dialog_from=dialog_from,
+            dialog_from=post_dialog_from,
+            before_popup_ids=before_popup_ids,
             timeout_sec=SAVE_COMPLETE_WAIT_SEC,
         )
         if found is None:
@@ -2946,41 +2956,57 @@ def find_save_complete_signal(
     *,
     baseline: set[str] | None = None,
     dialog_from: int = 0,
+    before_popup_ids: set[int] | None = None,
+    after_save_click: bool = False,
 ) -> tuple[str, str, Page | None] | None:
     """★저장완료 확정 신호 — 보이는 즉시(단계적 대기 없이) 다음 단계로.
 
     최우선: "신규상품의 저장이 완료되었습니다" 정확 문구.
     보조: 기존 'N건이 수집/저장되었다' 알림도 저장완료로 인정(실제
     사이트 문구가 다를 수 있는 경우의 안전망).
+    after_save_click=True 이면 검색단계 잔여 본문문구(동일 건수) 오탐을
+    막기 위해 본문 count 는 baseline 으로만 걸러지고, 클릭 이후 새
+    팝업·dialog 의 count 는 항상 인정한다.
     읽기만 한다 — 클릭·스크롤 없음.
     반환: (kind, 매칭문구, 해당 Page) 또는 None.
     """
+    prev_popups = before_popup_ids or set()
+
     # 1) JS dialog
     for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
         if SAVE_COMPLETE_MSG_PATTERN.search(msg or ""):
             return "complete_msg", msg, page
-    n, hit = parse_mango_collect_count("\n".join(dialog_msgs or []))
-    if n is not None:
-        for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
-            n2, hit2 = parse_mango_collect_count(msg)
-            if n2 is not None:
-                return "count_msg", hit2 or msg, page
+    for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
+        n2, hit2 = parse_mango_collect_count(msg)
+        if n2 is not None:
+            return "count_msg", hit2 or msg, page
 
-    # 2) 본문
+    # 2) 본문 — 완료 문구는 항상, count 는 after_save_click 시 본문 제외
     text = _page_visible_text(page)
-    if SAVE_COMPLETE_MSG_PATTERN.search(text or ""):
-        return "complete_msg", SAVE_COMPLETE_MSG_PATTERN.search(text).group(0), page
-    n, hit, src, hit_page = find_mango_collect_alert(
-        page, dialog_msgs, baseline=baseline, dialog_from=dialog_from
-    )
-    if n is not None:
-        return "count_msg", hit, hit_page or page
+    m = SAVE_COMPLETE_MSG_PATTERN.search(text or "")
+    if m:
+        return "complete_msg", m.group(0), page
+    if not after_save_click:
+        n, hit, _src, hit_page = find_mango_collect_alert(
+            page, dialog_msgs, baseline=baseline, dialog_from=dialog_from
+        )
+        if n is not None:
+            return "count_msg", hit, hit_page or page
 
-    # 3) 새 창(ADMIN_HOST 포함)
+    # 3) 새 창(ADMIN_HOST 포함) — 완료 문구·건수 모두
     for p in save_popups(page):
         ptext = _page_visible_text(p)
-        if SAVE_COMPLETE_MSG_PATTERN.search(ptext or ""):
-            return "complete_msg", SAVE_COMPLETE_MSG_PATTERN.search(ptext).group(0), p
+        m2 = SAVE_COMPLETE_MSG_PATTERN.search(ptext or "")
+        if m2:
+            return "complete_msg", m2.group(0), p
+        n, hit = parse_mango_collect_count(ptext)
+        if n is None:
+            continue
+        if after_save_click and _popup_id(p) not in prev_popups:
+            return "count_msg", hit, p
+        fp = f"popup:{n}:{hit}"
+        if fp not in (baseline or set()):
+            return "count_msg", hit, p
 
     return None
 
@@ -2993,6 +3019,7 @@ def wait_for_save_complete_signal(
     dialog_msgs: list[str] | None = None,
     baseline: set[str] | None = None,
     dialog_from: int = 0,
+    before_popup_ids: set[int] | None = None,
     timeout_sec: float | None = None,
 ) -> tuple[str, str] | None:
     """★9항 클릭 후 곧바로(무행동 대기 없이) 계속 확인 — 신호가 보이면 즉시 반환.
@@ -3007,7 +3034,12 @@ def wait_for_save_complete_signal(
     while time.time() < end:
         ctx.check_budget("저장완료 메세지 확인")
         found = find_save_complete_signal(
-            page, dialog_msgs, baseline=baseline, dialog_from=dialog_from
+            page,
+            dialog_msgs,
+            baseline=baseline,
+            dialog_from=dialog_from,
+            before_popup_ids=before_popup_ids,
+            after_save_click=True,
         )
         if found is not None:
             kind, hit, _hit_page = found
