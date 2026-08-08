@@ -16,10 +16,13 @@ from crawl import (  # noqa: E402
     TOP_GRID_COLS,
     TOP_GRID_ROWS,
     URL_ENTRY_WIDTH,
+    CategorySpec,
     _make_leaf,
     expand_grid_rows_to_paths,
     filter_by_hierarchy_specs,
     hierarchy_row_from_match,
+    leaves_from_user_category_page,
+    parse_final_category_links,
     parse_grid_category_specs,
     parse_zara_html_links,
     to_english_locale_url,
@@ -97,6 +100,37 @@ def test_url_spec_lists_final_categories():
     assert row.final in ("Dresses", "Tops", "CLOTHING")
 
 
+def test_user_driven_page_lists_finals():
+    """사용자 URL 페이지 HTML에서 최종 카테고리를 직접 리스트업."""
+    page_url = "https://www.zara.com/de/en/clothing-l10.html"
+    html = """
+    <html><head><title>CLOTHING | Zara Germany</title></head><body>
+      <h1>CLOTHING</h1>
+      <a href="/de/en/dresses-l11.html">Dresses</a>
+      <a href="/de/en/tops-l12.html">Tops</a>
+      <a href="/de/en/clothing-l10.html">CLOTHING</a>
+    </body></html>
+    """
+    links = parse_final_category_links(html, page_url)
+    assert {n for n, _ in links} == {"Dresses", "Tops"}
+    spec = CategorySpec(
+        match1="WOMAN",
+        match2="MID",
+        excel1="WOMAN",
+        excel2="MID",
+        low_url=page_url,
+    )
+    leaves = leaves_from_user_category_page(spec, html, page_url)
+    finals = [x.final for x in leaves]
+    assert "CLOTHING" in finals
+    assert "Dresses" in finals
+    assert "Tops" in finals
+    row = hierarchy_row_from_match("독일자라", leaves[1], spec)
+    assert row.top == "WOMAN"
+    assert row.mid == "MID"
+    assert row.low == "CLOTHING"
+
+
 def test_html_link_parse_english():
     html = """
     <html><body>
@@ -116,5 +150,6 @@ if __name__ == "__main__":
     test_grid_shape()
     test_expand_grid_rows_requires_url()
     test_url_spec_lists_final_categories()
+    test_user_driven_page_lists_finals()
     test_html_link_parse_english()
     print("ok")

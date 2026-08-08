@@ -1,2 +1,2 @@
-버전 2.0.79 (Python B안)
-업데이트: P1_ZARA_DE 20x3(상위·중위·하위URL)·최종카테고리리스트업
+버전 2.0.80 (Python B안)
+업데이트: P1_ZARA_DE 사용자DRIVEN 하위URL최종경로직접접근
