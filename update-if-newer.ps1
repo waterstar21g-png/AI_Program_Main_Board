@@ -2,6 +2,9 @@
 # Pull from GitHub main ONLY when VERSION differs from origin/main.
 # ASCII-only (PS 5.1 safe). Called by run.bat / boot-from-icon.ps1.
 $ErrorActionPreference = "Continue"
+try {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls
+} catch {}
 
 $PreferredRoot = "D:\My_Project\AI_Program_Main_Board"
 if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "VERSION.txt"))) {
@@ -19,22 +22,34 @@ $Repo = "waterstar21g-png/AI_Program_Main_Board"
 if (-not $env:AI_BOARD_UPDATER_REFRESHED) {
   $env:AI_BOARD_UPDATER_REFRESHED = "1"
   $selfPath = Join-Path $Root "update-if-newer.ps1"
-  try {
-    $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-    $url = "https://raw.githubusercontent.com/$Repo/main/update-if-newer.ps1?t=$cb"
-    $wc = New-Object System.Net.WebClient
-    $wc.Headers.Add("User-Agent", "AI_Program_Main_Board-updater-self")
-    $wc.Headers.Add("Cache-Control", "no-cache")
-    $wc.Encoding = [System.Text.Encoding]::UTF8
-    $bytes = $wc.DownloadData($url)
-    if ($bytes -and $bytes.Length -gt 200) {
-      [System.IO.File]::WriteAllBytes($selfPath, $bytes)
-      Write-Host "[OK] updater self-refreshed from GitHub - re-exec"
-      & powershell -NoProfile -ExecutionPolicy Bypass -File $selfPath
-      exit $LASTEXITCODE
+  $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+  $selfUrls = @(
+    "https://raw.githubusercontent.com/$Repo/main/update-if-newer.ps1?t=$cb",
+    "https://raw.githubusercontent.com/$Repo/main/update-if-newer.ps1?t=$cb",
+    "https://cdn.jsdelivr.net/gh/$Repo@main/update-if-newer.ps1?t=$cb"
+  )
+  $refreshed = $false
+  $lastErr = $null
+  foreach ($url in $selfUrls) {
+    try {
+      $wc = New-Object System.Net.WebClient
+      $wc.Headers.Add("User-Agent", "AI_Program_Main_Board-updater-self")
+      $wc.Headers.Add("Cache-Control", "no-cache")
+      $wc.Encoding = [System.Text.Encoding]::UTF8
+      $bytes = $wc.DownloadData($url)
+      if ($bytes -and $bytes.Length -gt 200) {
+        [System.IO.File]::WriteAllBytes($selfPath, $bytes)
+        Write-Host "[OK] updater self-refreshed from GitHub - re-exec"
+        & powershell -NoProfile -ExecutionPolicy Bypass -File $selfPath
+        exit $LASTEXITCODE
+      }
+    } catch {
+      $lastErr = $_.Exception.Message
+      Start-Sleep -Milliseconds 300
     }
-  } catch {
-    Write-Host "[WARN] updater self-refresh skipped: $($_.Exception.Message)"
+  }
+  if (-not $refreshed) {
+    Write-Host "[WARN] updater self-refresh skipped (local copy used): $lastErr"
   }
 }
 

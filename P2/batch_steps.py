@@ -90,7 +90,7 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
 
     # 저장 단계 시간 확보 — 저장완료 메세지 즉시탐지(최대 SAVE_COMPLETE_WAIT_SEC)
     # + 여유 버퍼. 120초/300초 단계적 대기는 더 이상 쓰지 않음.
-    ctx.row_deadline = time.time() + (C.SAVE_COMPLETE_WAIT_SEC + 60.0)
+    ctx.row_deadline = time.time() + (C.SAVE_COMPLETE_WAIT_SEC + 90.0)
 
     # ── 8. 필터 입력(저장상품수는 원래 세팅값 유지·미변경) ──
     effective_count = step08_filter_count(page, ctx, rn, label, save_count)

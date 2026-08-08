@@ -23,6 +23,18 @@ META_FIELDS: tuple[str, ...] = (
     "카테고리 URL",
 )
 
+# main 상단 META 1줄 표시용 구분자
+META_LINE_SEP = " | "
+
+
+def format_meta_line(values: dict[str, str]) -> str:
+    """엑셀 진행 정보 5항목을 한 줄 문자열로 합친다 (보드 main 상단)."""
+    parts: list[str] = []
+    for field in META_FIELDS:
+        val = str(values.get(field, "") or "").strip()
+        parts.append(f"{field} {val}" if val else field)
+    return META_LINE_SEP.join(parts)
+
 META_RE = re.compile(r"^##META##([^#]+)##(.*)$")
 MAIN_RE = re.compile(r"^##MAIN##(\d+)##(\d+)##(.*)$")
 SUB_RE = re.compile(r"^##SUB##(\d+)##(.*)$")
