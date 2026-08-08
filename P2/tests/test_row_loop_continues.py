@@ -53,7 +53,15 @@ class _FakePlaywright:
         return False
 
 
-def _run_main(monkeypatch, tmp_path, *, on_prepare=None, on_row=None, extra=None):
+def _run_main(
+    monkeypatch,
+    tmp_path,
+    *,
+    on_prepare=None,
+    on_row=None,
+    extra=None,
+    argv_extra=(),
+):
     """행 루프만 돌린다. (처리된 순번 목록, 종료코드) 반환."""
     processed: list[int] = []
     prepared: list[int] = []
@@ -88,7 +96,9 @@ def _run_main(monkeypatch, tmp_path, *, on_prepare=None, on_row=None, extra=None
     monkeypatch.setattr(C, "ensure_overlays_closed_before_next", _prepare)
     monkeypatch.setattr(C, "process_row_with_retries", _process)
     monkeypatch.setattr(
-        sys, "argv", ["collect.py", str(tmp_path / "in.xlsx"), "3", "--yes"]
+        sys,
+        "argv",
+        ["collect.py", str(tmp_path / "in.xlsx"), "3", "--yes", *argv_extra],
     )
     for name, value in (extra or {}).items():
         monkeypatch.setattr(C, name, value)
@@ -162,6 +172,31 @@ def test_all_rows_succeed(monkeypatch, tmp_path):
 
     assert processed == [1, 2, 3]
     assert prepared == [2, 3]
+    assert code == 0
+
+
+def test_verify_does_not_limit_rows_to_two(monkeypatch, tmp_path):
+    """--verify 는 스크린샷 범위일 뿐 — 엑셀 전체 행을 처리해야 한다.
+
+    보드 체크박스 "1·2행 전과정 스크린샷"(기본 ON)이 --verify 를 넘기는데,
+    예전에는 verify가 max_rows=2를 강제해서 엑셀에 자료가 많아도 2행만
+    처리하고 "완료"로 끝났다 = 사용자가 본 "엑셀 2번째 자료에서 중단".
+    """
+    processed, _prepared, code = _run_main(
+        monkeypatch, tmp_path, argv_extra=("--verify", "--shot-first", "2")
+    )
+
+    assert processed == [1, 2, 3], "검증 모드에서도 3번째 행까지 처리해야 한다"
+    assert code == 0
+
+
+def test_max_rows_still_limits_explicitly(monkeypatch, tmp_path):
+    """행 수 제한은 --max-rows 로만 건다."""
+    processed, _prepared, code = _run_main(
+        monkeypatch, tmp_path, argv_extra=("--max-rows", "2")
+    )
+
+    assert processed == [1, 2]
     assert code == 0
 
 
