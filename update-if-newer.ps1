@@ -211,4 +211,4 @@ Write-Host "[OK] Source updated. VERSION=$after (was $local)"
 if ($after -and $remote -and ($after -ne $remote)) {
   Write-Host "[WARN] After pull local=$after still != remote=$remote"
 }
-exit 0
+exit 2

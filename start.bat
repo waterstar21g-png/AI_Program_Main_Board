@@ -4,12 +4,16 @@ cd /d "%~dp0"
 
 echo ========================================
 echo   AI_Program_Main_Board  start
-echo   (auto-update ONLY if VERSION changed)
+echo   (icon chain: stop -^> update -^> board)
 echo ========================================
 
 if exist "%~dp0boot-from-icon.ps1" (
   powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0boot-from-icon.ps1"
   exit /b %ERRORLEVEL%
+)
+
+if exist "%~dp0stop-board.ps1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-board.ps1"
 )
 
 if exist "%~dp0update-if-newer.ps1" (

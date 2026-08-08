@@ -56,7 +56,7 @@ if (-not (Test-Path -LiteralPath $runBat)) {
 }
 
 # Refresh shortcut helpers (UTF-8 no BOM)
-foreach ($name in @("create-shortcut.ps1", "boot-from-icon.ps1", "update-if-newer.ps1")) {
+foreach ($name in @("create-shortcut.ps1", "boot-from-icon.ps1", "update-if-newer.ps1", "stop-board.ps1", "refresh-icons.ps1", "pin-taskbar.ps1")) {
   try {
     Save-Utf8NoBom (Join-Path $PreferredRoot $name) (Get-RawText "$RepoRaw/$name")
   } catch {
@@ -85,7 +85,7 @@ if (Test-Path -LiteralPath $bootPs1) {
 }
 $sc.WorkingDirectory = $PreferredRoot
 $sc.WindowStyle = 1
-$sc.Description = "AI_Program_Main_Board (update if VERSION changed)"
+$sc.Description = "AI_Program_Main_Board (stop+update+restart on click)"
 $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
 $sc.Save()
 
