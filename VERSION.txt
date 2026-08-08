@@ -1,2 +1,2 @@
-버전 2.0.61 (Python B안)
-업데이트: update-by-zip.bat 추가(git막힌 PC용 ZIP강제갱신) + run.bat 한글깨짐 수정
+버전 2.0.62 (Python B안)
+업데이트: 다음행 준비중 예외로 배치 전체가 조용히 죽던 치명적 버그 수정
