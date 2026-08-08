@@ -2347,13 +2347,22 @@ def wait_bulk_ready(page: Page) -> None:
     with_nav_retry(page, lambda: _wait_bulk_ready_once(page))
 
 
-def _reset_to_bulk_menu_once(page: Page) -> None:
-    """★불필요한 고정 대기 없음 — 이미 대량수집 화면이면 메뉴 클릭 생략."""
-    try:
-        if BULK_PATH in page.url and url_search_button(page).first.is_visible():
-            return
-    except Exception:  # noqa: BLE001
-        pass
+def _reset_to_bulk_menu_once(page: Page, force: bool = False) -> None:
+    """★불필요한 고정 대기 없음 — 이미 대량수집 화면이면 메뉴 클릭 생략.
+
+    force=True 이면 이 단축 경로를 쓰지 않고 항상 실제 메뉴 클릭(=서버
+    재요청)을 수행한다. ★2026-08-08: 1번째 입력(로그인 직후 ensure_ready_page
+    에서 미리 이동)과 2번째 이후 입력(step02_init에서 이 함수 호출)이
+    서로 다른 경로를 타서 "2단계 필드 초기화" 동작이 행마다 달라지는
+    문제가 있었다 — 2번째 이후 입력은 항상 force=True로 호출해 1번째와
+    동일한 실제 메뉴클릭 동작을 하도록 통일한다.
+    """
+    if not force:
+        try:
+            if BULK_PATH in page.url and url_search_button(page).first.is_visible():
+                return
+        except Exception:  # noqa: BLE001
+            pass
     t_click0 = time.time()
     href = page.locator('a[href*="getGoodsNew"]').first
     if href.count() > 0:
@@ -2390,9 +2399,9 @@ def _reset_to_bulk_menu_once(page: Page) -> None:
     wait_bulk_ready(page)
 
 
-def reset_to_bulk_menu(page: Page) -> None:
+def reset_to_bulk_menu(page: Page, force: bool = False) -> None:
     """0. 초기화 : 상품데이터수집 -> 대량데이터수집 클릭"""
-    with_nav_retry(page, lambda: _reset_to_bulk_menu_once(page))
+    with_nav_retry(page, lambda: _reset_to_bulk_menu_once(page, force=force))
 
 
 def _page_body_text(page: Page) -> str:

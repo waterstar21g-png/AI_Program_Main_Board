@@ -125,11 +125,21 @@ def step02_init(page, ctx, rn: int) -> None:
 
     ★불필요한 고정 대기 없음 — reset_to_bulk_menu() 내부에서 URL검색
     버튼이 실제로 보일 때까지만 기다리고, 그 후 3항으로 곧바로 진행.
+
+    ★2026-08-08 수정: 1번째 입력은 main()의 ensure_ready_page()가 로그인
+    직후 이미 실제 메뉴클릭으로 대량수집 화면에 도착시켜 두므로, 여기서는
+    "이미 도착해 있음"을 확인만 하고 지나간다(빠름). 반면 2번째 이후
+    입력은 이 호출이 초기화의 전부였는데, 직전 행 상태에 따라 실제
+    메뉴클릭을 하기도/안 하기도 해서 1번째와 다른 동작이 되고 필드가
+    제대로 초기화되지 않는 문제가 있었다(사용자 지적). 2번째 이후는
+    항상 force=True로 호출해 1번째와 동일하게 실제 메뉴클릭(서버
+    재요청)을 매번 수행하도록 통일한다.
     """
     import collect as C
 
     ctx.step(2, "상품수집 필드 초기화 : 상품데이터수집 → 대량데이터수집")
-    C.reset_to_bulk_menu(page)
+    force_real_click = getattr(ctx, "input_ordinal", 1) > 1
+    C.reset_to_bulk_menu(page, force=force_real_click)
     ctx.shot(page, "00_init_bulk", rn)
 
 
