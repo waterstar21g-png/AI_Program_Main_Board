@@ -59,7 +59,9 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
         step04_click_search(page, ctx, rn)
         step05_popup_open(page, ctx, rn, try_i)
         step06_popup_close(page, ctx, rn, try_i)
-        ok, last_state, last_count = step06b_settle(
+        # ★요건: 6단계 후 (6→7) 안정화·검색결과준비·샷 등 불필요 액션 제거.
+        # 팝업 닫힘 확인만으로 6항 완료 — 바로 결과 유무만 짧게 판별.
+        ok, last_state, last_count = step06b_quick_check(
             page, ctx, rn, label, url, try_i, max_search
         )
         if ok:
@@ -72,25 +74,12 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
             f"(state={last_state}, hint={last_count})"
         )
 
-    # 결과 화면 준비 (6 이후 · 7 이전) — 요건: 6항 확인 후 7·8항은 지연
-    # 없이 즉시 수행. 스크린샷용 이미지 대기도 최소화(fast=True).
-    result_imgs = C.prepare_product_view_for_shot(page, min_images=2, fast=True)
-    ctx.info(f"  검색결과 준비 (상품이미지 약 {result_imgs}개)")
-    if C.is_mango_no_results(page):
-        ctx.shot(page, "01_mango_no_results", rn)
-        raise RuntimeError(
-            f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
-            f"  · 상위 최종 카테고리명={label}\n"
-            f"  · 최종 카테고리 URL주소={url}"
-        )
-    ctx.shot(page, "01_results_ready", rn)
-
-    # ── 7. 저장범위 ──
+    # ── 7. 저장범위 (6항 직후 즉시 — 이미지대기/안정화/샷 없음) ──
     step07_save_range(page, ctx, rn)
 
-    # 저장 단계 시간 확보 — 저장완료 메세지 즉시탐지(최대 SAVE_COMPLETE_WAIT_SEC)
-    # + 여유 버퍼. 120초/300초 단계적 대기는 더 이상 쓰지 않음.
-    ctx.row_deadline = time.time() + (C.SAVE_COMPLETE_WAIT_SEC + 90.0)
+    # ★요건: 9·10·11 합산 180초 이내 — 초과 시 다음 입력으로.
+    ctx.row_deadline = time.time() + float(C.SAVE_PHASE_BUDGET_SEC)
+    ctx.save_phase_deadline = time.time() + float(C.SAVE_PHASE_BUDGET_SEC)
 
     # ── 8. 필터 입력(저장상품수는 원래 세팅값 유지·미변경) ──
     effective_count = step08_filter_count(page, ctx, rn, label, save_count)
@@ -225,45 +214,54 @@ def step06_popup_close(page, ctx, rn: int, try_i: int) -> None:
         ctx.shot(page, "01_popup_closed", rn)
 
 
-def step06b_settle(
+def step06b_quick_check(
     page, ctx, rn: int, label: str, url: str, try_i: int, max_search: int
 ) -> tuple[bool, str, int]:
-    """6항 직후 결과 판별. (True, state, count) = 7항으로 진행 가능."""
+    """6항 직후 결과 판별만 — 긴 안정화 대기·이미지준비·결과샷 없음.
+
+    ★요건(2026-08-08): 6→7 구간의 불필요 액션(긴 settle / 이미지준비 /
+    결과샷)을 전부 제거. 팝업 닫힘 후 무결과·상품유무만 짧게 확인.
+    """
     import collect as C
 
-    ctx.info("  (6→7) 망고 검색결과 안정화")
-    last_state, last_count = C.wait_mango_search_settle(page, timeout_sec=45.0)
-    if last_state == "no_results":
-        ctx.shot(page, "01_mango_no_results", rn)
-        if try_i < max_search:
-            ctx.info("  무결과 — 3항부터 재시도")
-            page.wait_for_timeout(800)
-            return False, last_state, last_count
-        raise RuntimeError(
-            f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
-            f"  · 상위 최종 카테고리명={label}\n"
-            f"  · 최종 카테고리 URL주소={url}"
-        )
-    if last_state == "products" or last_count >= 1:
-        return True, last_state, last_count
+    # 로딩이 잠깐 남아있으면 최대 3초만 기다림(긴 안정화 루프 없음)
+    end = time.time() + 3.0
+    while time.time() < end and C.is_mango_loading(page):
+        page.wait_for_timeout(200)
 
-    result_imgs = C.prepare_product_view_for_shot(page, min_images=2)
-    if result_imgs >= 1 and not C.is_mango_no_results(page):
-        return True, "products", result_imgs
     if C.is_mango_no_results(page):
-        ctx.shot(page, "01_mango_no_results", rn)
         if try_i < max_search:
-            return False, "no_results", last_count
+            page.wait_for_timeout(400)
+            return False, "no_results", 0
         raise RuntimeError(
             f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
             f"  · 상위 최종 카테고리명={label}\n"
             f"  · 최종 카테고리 URL주소={url}"
         )
+
+    try:
+        last_count = int(C.count_mango_result_products(page) or 0)
+    except Exception:  # noqa: BLE001
+        last_count = 0
+    if last_count >= 1:
+        return True, "products", last_count
+
+    # 상품 카운트가 아직 0이어도 무결과 문구가 없으면 진행(화면 렌더 지연 허용)
+    if not C.is_mango_no_results(page):
+        return True, "unknown", last_count
+
     if try_i < max_search:
-        ctx.info(f"  결과 불명(state={last_state}) — 3항부터 재시도")
-        page.wait_for_timeout(800)
-        return False, last_state, last_count
-    return False, last_state, last_count
+        page.wait_for_timeout(400)
+        return False, "no_results", last_count
+    raise RuntimeError(
+        f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
+        f"  · 상위 최종 카테고리명={label}\n"
+        f"  · 최종 카테고리 URL주소={url}"
+    )
+
+
+# 하위 호환 별칭 (테스트·옛 호출)
+step06b_settle = step06b_quick_check
 
 
 def step07_save_range(page, ctx, rn: int) -> None:

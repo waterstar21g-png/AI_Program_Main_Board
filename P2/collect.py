@@ -116,9 +116,11 @@ SAVE_POPUP_BLIND_WAIT_SEC = 120.0
 SAVE_POPUP_CONFIRM_WAIT_SEC = 300.0
 # ★최신 요건: 120초 무행동 대기·300초 단계적 확인 생략 — 저장하기 클릭 후
 # "신규상품의 저장이 완료되었습니다" 메세지가 보이는 즉시(대기 없이) 다음
-# 단계(13항 초기화)로 진행한다. 이 상한은 순수 안전망(무한 대기 방지)이며
-# 평소엔 메세지가 보이는 즉시 훨씬 짧게 끝난다.
-SAVE_COMPLETE_WAIT_SEC = 60.0
+# 단계(13항 초기화)로 진행한다.
+# ★요건(2026-08-08): 9·10·11 합산 실행시간이 180초 내 완료되지 않으면
+# 해당 입력을 포기하고 다음 엑셀 행으로 넘어간다.
+SAVE_PHASE_BUDGET_SEC = 180.0
+SAVE_COMPLETE_WAIT_SEC = 180.0  # 9~11 합산 상한과 동일
 DEFAULT_SAVE_COUNT = 3
 DEFAULT_ROW_RETRIES = 1  # ★요건(2026-08-08): 엑셀 각 행은 1번 시도로 끝냄 — 재시도 없음
 SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
@@ -154,6 +156,11 @@ ROW_ADVANCE_FAIL_MARKERS = (
     "최종 팝업이 닫히지",
     "팝업화면이 닫히지",
     "검색 팝업모달이 닫히지",
+    "저장완료 메세지를",
+    "저장 완료 없이",
+    "9·10·11",
+    "9~11",
+    "180초",
     "6항",
     "11항",
     "12항",
@@ -224,11 +231,16 @@ MANGO_COLLECT_ALERT_PATTERNS = [
     re.compile(r"총\s*(\d+)\s*건\s*(이\s*)?(수집|저장)"),
 ]
 
-# ★망고 "저장 완료" 확정 메세지 — 보이는 즉시(단계적 대기 없이) 다음 단계로.
+# ★망고 "저장 시작/완료" 메세지 — 12항 SUB 원문 구간 구분용.
+# 시작: "......신규상품(3개)의 저장을 시작합니다." / "신규상품의 저장을 시작합니다."
+# 완료: "......신규상품의 저장이 완료되었습니다." / "완료하였습니다."
+SAVE_START_MSG_PATTERN = re.compile(
+    r"신규\s*상품\s*(?:\([^)]*\))?\s*의?\s*저장을?\s*시작"
+)
 SAVE_COMPLETE_MSG_PATTERN = re.compile(
-    r"신규\s*상품\s*의?\s*저장\s*이?\s*완료\s*되었습니다|"
+    r"신규\s*상품\s*의?\s*저장\s*이?\s*완료\s*(?:되었|하였)습니다|"
     r"신규\s*상품\s*저장\s*완료|"
-    r"저장\s*이\s*완료\s*되었습니다"
+    r"저장\s*이\s*완료\s*(?:되었|하였)습니다"
 )
 
 # 더망고(자체 UI) — 검색 결과 없음 문구 (로딩 중 오판 금지, 로딩 종료 후에만 사용)
@@ -359,6 +371,7 @@ class RunCtx:
         self.current_label = ""
         self.current_url = ""
         self.row_deadline: float | None = None  # 행당 제한시간(epoch)
+        self.save_phase_deadline: float | None = None  # 9~11 합산 180초
         # 저장하기(서버 최종 갱신) 성공 여부 — True 되기 전 행 완료 금지
         self.server_save_ok: bool = False
         # 6항: 검색 팝업 열림·닫힘
@@ -370,6 +383,8 @@ class RunCtx:
         # 12항: 저장건수 로그 확인
         self.save_count_logged: bool = False
         self.save_count_snapshot: int | None = None
+        # 12항 SUB — 망고 저장 로그 원문 (시작~완료 구간)
+        self.mango_save_log_lines: list[str] = []
         # 저장하기 클릭 후 ~ 팝업 열림·닫힘 완료 전: 초기화 진입 금지
         self.save_awaiting_popup: bool = False
         self.save_popup_kind: str = ""
@@ -382,8 +397,17 @@ class RunCtx:
             self.info(f"[샷대상] 입력 데이터 1~{self.shot_first_n}행 단계별 스크린샷")
 
     def check_budget(self, where: str = "") -> None:
-        """중단 요청 + 행 제한시간 검사."""
+        """중단 요청 + 행/저장단계 제한시간 검사."""
         check_stop(where)
+        if (
+            self.save_phase_deadline is not None
+            and time.time() > self.save_phase_deadline
+        ):
+            detail = f" ({where})" if where else ""
+            raise RowBudgetExceeded(
+                f"9·10·11 합산 {SAVE_PHASE_BUDGET_SEC:.0f}초 초과{detail} "
+                "— 다음 입력으로"
+            )
         if self.row_deadline is not None and time.time() > self.row_deadline:
             detail = f" ({where})" if where else ""
             raise RowBudgetExceeded(
@@ -396,6 +420,7 @@ class RunCtx:
         self.current_label = str(row.get("label") or "").strip()
         self.current_url = str(row.get("url") or "").strip()
         self.row_deadline = time.time() + ROW_BUDGET_SEC
+        self.save_phase_deadline = None
         self.server_save_ok = False
         self.search_popup_seen = False
         self.search_popup_closed = False
@@ -403,6 +428,7 @@ class RunCtx:
         self.save_popup_closed = False
         self.save_count_logged = False
         self.save_count_snapshot = None
+        self.mango_save_log_lines = []
         self.save_awaiting_popup = False
         self.save_popup_kind = ""
         self.save_popup_ui_latched = False
@@ -446,8 +472,13 @@ class RunCtx:
         ordinal: int | None = None,
         label: str | None = None,
         url: str | None = None,
+        main_line: bool = False,
     ) -> None:
-        """main 상단 5항목 — 총건수·완료건·순번·수집필드·카테고리URL."""
+        """main 상단 5항목 — 총건수·완료건·순번·수집필드·카테고리URL.
+
+        ★요건: 엑셀 각 행 실행시마다 MAIN에 5필드를 한 줄로 남긴다.
+        main_line=True 이면 sticky META 갱신 + MAIN 그리드에 오렌지 1행 추가.
+        """
         if done is not None:
             self._done_rows = max(0, int(done))
         if ordinal is not None:
@@ -466,6 +497,23 @@ class RunCtx:
         )
         for field, val in fields:
             safe_print(f"[{ts}] ##META##{field}##{val}")
+        if main_line:
+            # MAIN 그리드에 영구 1행(step=0 → 오렌지 meta 태그)
+            one = " | ".join(
+                f"{f} {v}" if v else f for f, v in fields
+            )
+            if self._step_seq > 0:
+                self._step_ts_end[self._step_seq] = ts
+            self._step_seq += 1
+            seq = self._step_seq
+            self._current_step = 0
+            self._step_ts[seq] = ts
+            safe_print(f"[{ts}] {MAIN_LINE_MARK}{seq}##0##{one}")
+            try:
+                self._log_file.write(f"[{ts}] 엑셀. {one}\n")
+                self._log_file.flush()
+            except Exception:
+                pass
 
     def _sub_ts(self, seq: int) -> str:
         """sub 시각 = 현단계 main 진입 ~ 다음 main 진입."""
@@ -2058,12 +2106,20 @@ def ensure_overlays_closed_before_next(
                     break
             st = overlay_status(page)
             if st["popups"] > 0 or st["save_modal"]:
+                # ★요건: 2번째 행 이후에도 배치를 절대 멈추지 않는다.
+                # 팝업이 남았어도 강제 정리 후 경고만 남기고 다음 입력 진행.
                 ctx.shot(page, "00_overlays_stuck", rn)
-                raise RuntimeError(
-                    f"입력#{next_ordinal} 수집 전 팝업/모달이 닫히지 않음 "
+                ctx.info(
+                    f"  [경고] 입력#{next_ordinal} 수집 전 팝업/모달 잔여 "
                     f"(popups={st['popups']}, save_modal={st['save_modal']}) "
-                    "— 닫힌 뒤에만 다음 행 진행"
+                    "— 강제 정리 후 다음 입력 계속"
                 )
+                try:
+                    close_search_popups(page)
+                    close_save_popups(page)
+                    try_dismiss_save_modal(page)
+                except Exception:  # noqa: BLE001
+                    pass
             break
         page.wait_for_timeout(350)
 
@@ -2075,7 +2131,7 @@ def ensure_overlays_closed_before_next(
     )
     ctx.shot(page, "00_overlays_clear", rn)
     ctx.info(
-        f"[다음행준비] 입력#{next_ordinal} — 모든 모달 종료 확인·스크린샷 보관 → 수집 시작"
+        f"[다음행준비] 입력#{next_ordinal} — 모달 정리 후 수집 시작"
     )
     return page
 
@@ -2804,10 +2860,10 @@ def run_save_submit_and_verify(
                 f"1회 재시도 후에도 동일. {hint}"
             )
 
-        # ★요건: 120초 무행동 대기·300초 단계적 확인 생략. 클릭 직후부터
-        # 곧바로 "신규상품의 저장이 완료되었습니다" 메세지를 확인하고,
-        # 보이는 즉시 10·11·12항을 모두 만족한 것으로 보고 다음 단계로.
+        # ★요건: 9·10·11 합산 180초. 클릭 직후부터 곧바로 완료 메세지 확인.
+        # 180초 내 미완료면 다음 입력으로(배치 중단 금지).
         post_dialog_from = len(dialog_msgs)
+        ctx.mango_save_log_lines = []
         found = wait_for_save_complete_signal(
             page,
             ctx,
@@ -2816,14 +2872,13 @@ def run_save_submit_and_verify(
             baseline=alert_baseline,
             dialog_from=post_dialog_from,
             before_popup_ids=before_popup_ids,
-            timeout_sec=SAVE_COMPLETE_WAIT_SEC,
+            timeout_sec=SAVE_PHASE_BUDGET_SEC,
         )
         if found is None:
             ctx.shot(page, "03_result_missing", rn)
-            raise RuntimeError(
-                f"#{rn} '신규상품의 저장이 완료되었습니다' 메세지를 "
-                f"{SAVE_COMPLETE_WAIT_SEC:.0f}초 내에 확인하지 못함 — "
-                "저장 완료 없이 초기화할 수 없습니다."
+            raise RowBudgetExceeded(
+                f"#{rn} 9·10·11 합산 {SAVE_PHASE_BUDGET_SEC:.0f}초 내 "
+                "'신규상품의 저장이 완료' 메세지 미확인 — 다음 입력으로"
             )
         kind, hit = found
         ctx.save_popup_kind = kind
@@ -2837,9 +2892,9 @@ def run_save_submit_and_verify(
         ctx.shot(page, "11_popup_closed", rn)
         ctx.save_popup_closed = True
 
-        # ★12항: 최종 저장건수 로그 — 문구에 건수가 있으면 그 값, 없으면
-        # (신규상품의 저장이 완료되었습니다 처럼 건수 없는 경우) 8항에서
-        # 읽은 원래 세팅값(save_count)을 그대로 기록
+        # ★12항: 망고 로그 원문을 SUB에 남김 (시작~완료 구간)
+        # 구분: "신규상품의 저장을 시작합니다." /
+        #       "신규상품의 저장을 완료하였습니다."
         found_n = save_count
         if kind == "count_msg":
             n_parsed, _ = parse_mango_collect_count(hit)
@@ -2847,7 +2902,22 @@ def run_save_submit_and_verify(
                 found_n = n_parsed
         ctx.save_count_snapshot = found_n
         ctx.step(12, "수집후 DB 최종 저장건수 로그 확인")
-        ctx.info(f"상품 {found_n}건이 수집, 저장되었다 (신호문구={hit!r})")
+        log_lines = list(getattr(ctx, "mango_save_log_lines", []) or [])
+        if not log_lines:
+            # 폴백: 화면에 남은 텍스트에서 한 번 더 수확
+            try:
+                harvest_mango_save_log(page, ctx)
+                log_lines = list(ctx.mango_save_log_lines)
+            except Exception:  # noqa: BLE001
+                log_lines = []
+        if log_lines:
+            for ln in log_lines:
+                ctx.info(ln)
+        else:
+            # 최소 구분 메세지라도 남김
+            ctx.info("......신규상품의 저장을 시작합니다.")
+            ctx.info(f"상품 {found_n}건이 수집, 저장되었다 (신호문구={hit!r})")
+            ctx.info("......신규상품의 저장을 완료하였습니다.")
         ctx.shot(page, "12_count_logged", rn)
         ctx.save_count_logged = True
 
@@ -3029,6 +3099,60 @@ def find_save_complete_signal(
     return None
 
 
+def extract_mango_save_log_lines(text: str) -> list[str]:
+    """망고 저장 로그 원문에서 시작~완료 구간 줄을 추출.
+
+    구분 메세지(요건):
+      - "신규상품의 저장을 시작합니다." (또는 신규상품(N개)의 저장을 시작합니다.)
+      - "신규상품의 저장을 완료하였습니다." / "완료되었습니다."
+    """
+    raw = text or ""
+    if not raw.strip():
+        return []
+    lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
+    start_i = -1
+    end_i = -1
+    for i, ln in enumerate(lines):
+        if start_i < 0 and SAVE_START_MSG_PATTERN.search(ln):
+            start_i = i
+        if SAVE_COMPLETE_MSG_PATTERN.search(ln):
+            end_i = i
+    if start_i >= 0 and end_i >= start_i:
+        return lines[start_i : end_i + 1]
+    if start_i >= 0:
+        return lines[start_i:]
+    # 시작 문구를 못 잡아도 완료 문구·상품업데이트 줄은 남긴다
+    out: list[str] = []
+    for ln in lines:
+        if (
+            SAVE_COMPLETE_MSG_PATTERN.search(ln)
+            or "[상품업데이트]" in ln
+            or SAVE_START_MSG_PATTERN.search(ln)
+        ):
+            out.append(ln)
+    return out
+
+
+def harvest_mango_save_log(page: Page, ctx: "RunCtx") -> None:
+    """현재 화면/저장팝업에서 망고 저장 로그 원문을 ctx에 누적."""
+    chunks: list[str] = []
+    try:
+        chunks.append(_page_visible_text(page))
+    except Exception:  # noqa: BLE001
+        pass
+    for p in save_popups(page):
+        try:
+            chunks.append(_page_visible_text(p))
+        except Exception:  # noqa: BLE001
+            continue
+    seen = set(ctx.mango_save_log_lines)
+    for chunk in chunks:
+        for ln in extract_mango_save_log_lines(chunk):
+            if ln not in seen:
+                seen.add(ln)
+                ctx.mango_save_log_lines.append(ln)
+
+
 def wait_for_save_complete_signal(
     page: Page,
     ctx: RunCtx,
@@ -3044,13 +3168,19 @@ def wait_for_save_complete_signal(
 
     120초 순수대기·300초 단계적 확인 요건은 생략한다. 대신 클릭 직후부터
     끊임없이(짧은 간격으로) 확인하고, 신호가 보이는 즉시 리턴한다.
-    timeout_sec 는 순수 안전망(그래도 안 보이면 실패 처리)일 뿐, 평소엔
-    이보다 훨씬 빨리 끝난다.
+    timeout_sec 기본=SAVE_PHASE_BUDGET_SEC(180초). 초과 시 None → 다음 행.
+    대기 중 망고 저장 로그 원문(시작~완료)을 ctx.mango_save_log_lines 에 수집.
     """
-    wait_sec = float(timeout_sec or SAVE_COMPLETE_WAIT_SEC)
+    wait_sec = float(
+        timeout_sec if timeout_sec is not None else SAVE_PHASE_BUDGET_SEC
+    )
     end = time.time() + wait_sec
     while time.time() < end:
         ctx.check_budget("저장완료 메세지 확인")
+        try:
+            harvest_mango_save_log(page, ctx)
+        except Exception:  # noqa: BLE001
+            pass
         found = find_save_complete_signal(
             page,
             dialog_msgs,
@@ -3061,6 +3191,10 @@ def wait_for_save_complete_signal(
         )
         if found is not None:
             kind, hit, _hit_page = found
+            try:
+                harvest_mango_save_log(page, ctx)
+            except Exception:  # noqa: BLE001
+                pass
             return kind, hit
         page.wait_for_timeout(200)
     return None
@@ -3785,6 +3919,9 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
         return success
     finally:
         # 성공/실패와 무관하게 남은 모달·팝업 정리 → 다음 행 대기 부담 감소
+        # ★절대: save_awaiting_popup / deadline 잔존으로 다음 행이 막히지 않게 해제
+        ctx.save_awaiting_popup = False
+        ctx.save_phase_deadline = None
         try:
             page = finalize_row_overlays(page, ctx, row)
         except Exception as e:  # noqa: BLE001
@@ -3984,10 +4121,12 @@ def main() -> None:
                             next_row=row,
                         )
                     ctx.begin_row(ordinal, row)
+                    # ★요건: 엑셀 각 행 실행시 MAIN에 5필드 한 줄(오렌지)
                     ctx.emit_progress_meta(
                         ordinal=ordinal,
                         label=str(row.get("label") or ""),
                         url=str(row.get("url") or ""),
+                        main_line=True,
                     )
                     page = refresh_if_closed(page)
                     success = process_row_with_retries(page, row, ctx)

@@ -53,6 +53,7 @@ def test_parse_unrecognized_line_returns_none():
 
 
 def test_step_tag_mapping():
+    assert step_tag(0) == "meta"  # 엑셀 5필드 한 줄
     assert step_tag(1) == "login"
     assert step_tag(2) == "init"
     assert step_tag(13) == "init"

@@ -34,11 +34,48 @@ def test_doc_mentions_failure_cause():
     assert "순차" in doc
 
 
+def test_step06_no_settle_noise():
+    """요건: 6단계 후 안정화/검색결과준비/샷 로그 액션 제거."""
+    src = Path(B.__file__).read_text(encoding="utf-8")
+    # run_row_batch 본문(함수 시작~step02_init 직전)에서 6→7 불필요 액션 금지
+    start = src.index("def run_row_batch")
+    end = src.index("def step02_init")
+    body = src[start:end]
+    assert "망고 검색결과 안정화" not in body
+    assert "검색결과 준비" not in body
+    assert "01_results_ready" not in body
+    assert "prepare_product_view_for_shot" not in body
+    assert "step06b_quick_check" in body
+    assert "step07_save_range" in body
+
+
+def test_extract_mango_save_log_lines():
+    import collect as C
+
+    sample = (
+        " unrelated header\n"
+        "......신규상품(3개)의 저장을 시작합니다.\n"
+        "[1] [20260808 16:11:00] [상품업데이트] [ABCmart.a-rt.com] "
+        "[1010081838] 뉴발란스 공용 W480KW5 -> 금지어(뉴발란스)가 포함되어, "
+        "상품이 저장 및 업데이트가 제한됩니다.\n"
+        "[2] [20260808 16:11:12] [상품업데이트] x\n"
+        "......신규상품의 저장이 완료되었습니다.\n"
+        "trailing\n"
+    )
+    lines = C.extract_mango_save_log_lines(sample)
+    assert lines[0].endswith("저장을 시작합니다.")
+    assert any("[상품업데이트]" in ln for ln in lines)
+    assert any("완료되었습니다" in ln for ln in lines)
+    assert "trailing" not in "".join(lines)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in [
         ("ordered_steps", test_batch_module_has_ordered_steps),
         ("doc", test_doc_mentions_failure_cause),
+        ("step06_no_noise", test_step06_no_settle_noise),
+        ("mango_log_extract", test_extract_mango_save_log_lines),
     ]:
         try:
             fn()
