@@ -342,22 +342,49 @@ class BoardApp(tk.Tk):
         self.found_list.bind("<Button-5>", self._on_found_mousewheel)
         self._found_paths: list[str] = []
 
-        # 실행 버튼
+        # 실행 버튼 (좌) + 체크박스 MAIN / SUB / 1·2행 스크린샷 (최우측)
         actions = tk.LabelFrame(parent, text="실행", bg="#ffffff", padx=8, pady=6)
         actions.pack(fill="x", pady=(8, 0))
 
+        self.var_show_main = tk.BooleanVar(value=True)
+        self.var_show_sub = tk.BooleanVar(value=True)
         self.var_verify = tk.BooleanVar(value=True)
         btn_row = tk.Frame(actions, bg="#ffffff")
         btn_row.pack(fill="x")
+
+        # ★최우측 순서: MAIN → SUB → 1·2행 스크린샷
+        # (실행로그 안내 라벨은 삭제 — 요건: 스크린샷 2번째 LABEL 삭제)
+        # pack 순서: right 먼저 → 항상 최우측 고정
+        right_checks = tk.Frame(btn_row, bg="#ffffff")
+        right_checks.pack(side="right")
         tk.Checkbutton(
-            btn_row,
-            text="1·2행 전과정 스크린샷",
+            right_checks,
+            text="MAIN",
+            variable=self.var_show_main,
+            command=self._toggle_log_panels,
+            bg="#ffffff",
+            font=("Malgun Gothic", 9),
+        ).pack(side="left", padx=(0, 6))
+        tk.Checkbutton(
+            right_checks,
+            text="SUB",
+            variable=self.var_show_sub,
+            command=self._toggle_log_panels,
+            bg="#ffffff",
+            font=("Malgun Gothic", 9),
+        ).pack(side="left", padx=(0, 6))
+        tk.Checkbutton(
+            right_checks,
+            text="1·2행 스크린샷",
             variable=self.var_verify,
             bg="#ffffff",
             font=("Malgun Gothic", 9),
-        ).pack(side="left", padx=(0, 8))
+        ).pack(side="left")
+
+        left_btns = tk.Frame(btn_row, bg="#ffffff")
+        left_btns.pack(side="left", fill="x", expand=True)
         tk.Button(
-            btn_row,
+            left_btns,
             text="수집 시작",
             command=self._run_p2,
             bg="#2563eb",
@@ -367,7 +394,7 @@ class BoardApp(tk.Tk):
             pady=4,
         ).pack(side="left")
         tk.Button(
-            btn_row,
+            left_btns,
             text="수집 종료",
             command=self._stop_p2,
             bg="#b91c1c",
@@ -376,15 +403,15 @@ class BoardApp(tk.Tk):
             padx=10,
             pady=4,
         ).pack(side="left", padx=6)
-        tk.Button(btn_row, text="파일 목록에서 제거", command=self._remove_lib).pack(
+        tk.Button(left_btns, text="파일 목록에서 제거", command=self._remove_lib).pack(
             side="left", padx=6
         )
-        tk.Button(btn_row, text="새로고침", command=self._refresh_p2_list).pack(side="left")
-        tk.Button(btn_row, text="로그 지우기", command=self._clear_p2_log).pack(
+        tk.Button(left_btns, text="새로고침", command=self._refresh_p2_list).pack(side="left")
+        tk.Button(left_btns, text="로그 지우기", command=self._clear_p2_log).pack(
             side="left", padx=6
         )
         tk.Button(
-            btn_row,
+            left_btns,
             text="스크린샷 보기",
             command=self._show_shot_viewer,
             bg="#0f766e",
@@ -393,14 +420,6 @@ class BoardApp(tk.Tk):
             padx=8,
             pady=4,
         ).pack(side="left", padx=6)
-        tk.Label(
-            actions,
-            text="실행로그: main(1~13단계) · sub(단계별 추가정보/스크린샷) — main 행 클릭시 sub 갱신",
-            bg="#ffffff",
-            fg="#0f766e",
-            anchor="w",
-            font=("Malgun Gothic", 8),
-        ).pack(fill="x", pady=(4, 0))
 
         # 2. 카테고리URL목록 — 엑셀 전체 행 + 진행중 행 적색
         lib = tk.LabelFrame(
@@ -443,17 +462,18 @@ class BoardApp(tk.Tk):
         except tk.TclError:
             pass
 
-        main_frame = tk.LabelFrame(
+        self._p2_log_area = log_area
+        self.p2_main_frame = tk.LabelFrame(
             log_area,
-            text="3-A. 실행 로그 main (상단=엑셀정보 5항목 · 아래=1~13단계)",
+            text="3-A. 실행 로그 MAIN (상단=엑셀정보 · 아래=1~13단계)",
             bg="#ffffff",
             padx=6,
             pady=4,
         )
-        main_frame.pack(fill="both", expand=True)
+        self.p2_main_frame.pack(fill="both", expand=True)
 
         self.p2_main_log = ttk.Treeview(
-            main_frame,
+            self.p2_main_frame,
             columns=("time", "step", "message"),
             show="headings",
             height=9,
@@ -465,24 +485,26 @@ class BoardApp(tk.Tk):
         self.p2_main_log.column("time", width=130, minwidth=110, stretch=False, anchor="center")
         self.p2_main_log.column("step", width=44, minwidth=40, stretch=False, anchor="center")
         self.p2_main_log.column("message", width=620, minwidth=220, stretch=True, anchor="w")
-        main_sb = tk.Scrollbar(main_frame, orient="vertical", command=self.p2_main_log.yview)
+        main_sb = tk.Scrollbar(
+            self.p2_main_frame, orient="vertical", command=self.p2_main_log.yview
+        )
         self.p2_main_log.configure(yscrollcommand=main_sb.set)
         self.p2_main_log.pack(side="left", fill="both", expand=True)
         main_sb.pack(side="right", fill="y")
         self.p2_main_log.bind("<<TreeviewSelect>>", self._on_main_log_select)
         self._setup_p2_log_tags()
 
-        sub_frame = tk.LabelFrame(
+        self.p2_sub_frame = tk.LabelFrame(
             log_area,
-            text="3-B. 실행 로그 sub (선택한 단계의 추가정보·스크린샷)",
+            text="3-B. 실행 로그 SUB (선택한 단계의 추가정보·스크린샷)",
             bg="#ffffff",
             padx=6,
             pady=4,
         )
-        sub_frame.pack(fill="both", expand=True, pady=(6, 0))
+        self.p2_sub_frame.pack(fill="both", expand=True, pady=(6, 0))
 
         self.p2_sub_log = ttk.Treeview(
-            sub_frame,
+            self.p2_sub_frame,
             columns=("time", "message"),
             show="headings",
             height=7,
@@ -492,7 +514,9 @@ class BoardApp(tk.Tk):
         self.p2_sub_log.heading("message", text="추가정보 · [샷]은 더블클릭으로 열기")
         self.p2_sub_log.column("time", width=130, minwidth=110, stretch=False, anchor="center")
         self.p2_sub_log.column("message", width=700, minwidth=220, stretch=True, anchor="w")
-        sub_sb = tk.Scrollbar(sub_frame, orient="vertical", command=self.p2_sub_log.yview)
+        sub_sb = tk.Scrollbar(
+            self.p2_sub_frame, orient="vertical", command=self.p2_sub_log.yview
+        )
         self.p2_sub_log.configure(yscrollcommand=sub_sb.set)
         self.p2_sub_log.pack(side="left", fill="both", expand=True)
         sub_sb.pack(side="right", fill="y")
@@ -732,6 +756,25 @@ class BoardApp(tk.Tk):
         tv.tag_configure("init", foreground="#0f766e", background="#f0fdfa")
         tv.tag_configure("save", foreground="#5b21b6", background="#f3e8ff")
         tv.tag_configure("done", foreground="#166534", background="#dcfce7")
+
+    def _toggle_log_panels(self) -> None:
+        """MAIN / SUB 체크박스 — 실행로그 패널 표시/숨김 (MAIN 위 · SUB 아래)."""
+        show_main = bool(self.var_show_main.get())
+        show_sub = bool(self.var_show_sub.get())
+        main_f = getattr(self, "p2_main_frame", None)
+        sub_f = getattr(self, "p2_sub_frame", None)
+        if main_f is not None:
+            main_f.pack_forget()
+        if sub_f is not None:
+            sub_f.pack_forget()
+        if show_main and main_f is not None:
+            main_f.pack(fill="both", expand=True)
+        if show_sub and sub_f is not None:
+            sub_f.pack(
+                fill="both",
+                expand=True,
+                pady=(6, 0) if show_main else (0, 0),
+            )
 
     def _handle_collect_line(self, message: str) -> None:
         """collect.py stdout 한 줄 처리 — main/sub 프로토콜만 그리드에 반영.
