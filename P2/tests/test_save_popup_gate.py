@@ -165,8 +165,8 @@ def test_buttons_are_distinct(browser):
     page.close()
 
 
-def test_fill_save_modal_does_not_mix_filter_and_count_fields(browser):
-    """8항: 검색필터명/저장상품수 입력칸이 서로 뒤바뀌면 안 됨.
+def test_fill_save_modal_only_touches_filter_field(browser):
+    """요건: 검색필터명에만 엑셀 데이터 입력, 저장상품수는 절대 안 건드림.
 
     회귀: modal_field()가 넓은 #settings div까지 매치해 저장상품수 칸에
     검색필터명 값이 덮어써지던 버그 재현("저장상품수 불일치 — 실제 'xxx'").
@@ -185,50 +185,42 @@ def test_fill_save_modal_does_not_mix_filter_and_count_fields(browser):
     )
     assert not same, "검색필터명·저장상품수 입력칸이 같은 엘리먼트로 잡힘"
 
+    # "원래 세팅값" 시뮬레이션 — 우리가 넣을 save_count(3)와 다른 값
+    page.fill("#count", "5")
+
     ctx = FakeCtx()
-    C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
+    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
     assert page.locator("#filter").input_value() == "MEN 라이프스타일"
-    assert page.locator("#count").input_value() == "3"
+    # 저장상품수는 절대 안 건드림 — 원래 세팅값(5) 그대로
+    assert page.locator("#count").input_value() == "5"
+    assert effective == 5
     page.close()
 
 
-def test_fill_save_modal_recovers_when_one_field_clears_the_other(browser):
-    """한 필드를 입력하면 사이트 JS가 다른 필드를 지우는 상황에서도,
-    최종적으로는 두 값 다 맞아야 한다 (이미 맞는 값을 이유없이
-    재입력해 덮어쓰던 사고의 재발 방지 — 회귀).
-    """
+def test_fill_save_modal_no_redundant_retype_when_filter_already_correct(browser):
+    """검색필터명이 이미 맞으면 재입력(덮어쓰기) 로그가 없어야 한다."""
     page = _open(browser, "popup")
     page.click("#allSave")
-    # 사이트 버그 시뮬레이션: 필터를 채우면 카운트가 1회 지워짐
-    page.evaluate(
-        """() => {
-            const filter = document.getElementById('filter');
-            const count = document.getElementById('count');
-            let cleared = false;
-            filter.addEventListener('input', () => {
-                if (!cleared && filter.value.trim() !== '') {
-                    cleared = true;
-                    count.value = '';
-                }
-            });
-        }"""
-    )
+    page.fill("#filter", "MEN 라이프스타일")
+    page.fill("#count", "7")
     ctx = FakeCtx()
-    C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
+    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
     assert page.locator("#filter").input_value() == "MEN 라이프스타일"
-    assert page.locator("#count").input_value() == "3"
-    page.close()
-
-
-def test_fill_save_modal_no_redundant_retype_when_already_correct(browser):
-    """이미 맞는 값이면 재입력(덮어쓰기) 로그가 없어야 한다."""
-    page = _open(browser, "popup")
-    page.click("#allSave")
-    ctx = FakeCtx()
-    C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
-    assert page.locator("#filter").input_value() == "MEN 라이프스타일"
-    assert page.locator("#count").input_value() == "3"
+    assert page.locator("#count").input_value() == "7"
+    assert effective == 7
     assert not any("재입력" in m for m in ctx.msgs), ctx.msgs
+    page.close()
+
+
+def test_fill_save_modal_falls_back_to_save_count_when_field_empty(browser):
+    """저장상품수 칸이 원래 비어있으면(파싱 불가) save_count 인자를 기대값으로 사용."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    assert page.locator("#count").input_value() == ""
+    ctx = FakeCtx()
+    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
+    assert page.locator("#count").input_value() == ""
+    assert effective == 3
     page.close()
 
 
@@ -841,9 +833,9 @@ if __name__ == "__main__":
             ("popup_blocking_flag", lambda _b: test_chrome_launch_disables_popup_blocking()),
             ("no_popup_block_hint", test_no_popup_no_layer_raises_with_popup_block_hint),
             ("batch_blocks_init", lambda _b: test_batch_step_blocks_init_when_save_awaiting_popup()),
-            ("fill_modal_no_field_mix", test_fill_save_modal_does_not_mix_filter_and_count_fields),
-            ("fill_modal_recovers_clear", test_fill_save_modal_recovers_when_one_field_clears_the_other),
-            ("fill_modal_no_redundant_retype", test_fill_save_modal_no_redundant_retype_when_already_correct),
+            ("fill_modal_only_filter", test_fill_save_modal_only_touches_filter_field),
+            ("fill_modal_no_redundant_retype", test_fill_save_modal_no_redundant_retype_when_filter_already_correct),
+            ("fill_modal_fallback_save_count", test_fill_save_modal_falls_back_to_save_count_when_field_empty),
             ("modal_visible_icon_wrapped", test_save_modal_visible_survives_icon_wrapped_button),
             ("admin_host_popup_detected", test_save_popup_on_admin_host_is_detected),
             ("diag_overlay", test_diagnose_detects_overlay_interception),

@@ -2436,25 +2436,19 @@ def _safe_input_value(loc) -> str:
         return ""
 
 
-def _value_matches_count(value: str, save_count: int) -> bool:
-    digits = re.sub(r"\D", "", value or "")
-    return digits == str(save_count) or str(save_count) in (value or "").replace(" ", "")
-
-
 def fill_save_modal_fields(
     page: Page,
     ctx: RunCtx,
     rn: int,
     label: str,
     save_count: int,
-) -> None:
-    """상품저장설정 모달에 검색필터명·저장상품수를 입력하고 샷 보관.
+) -> int:
+    """상품저장설정 모달 — 검색필터명에만 엑셀 데이터를 입력.
 
-    ★한 필드를 입력한 뒤 다른 필드를 만지면(사이트 자체 JS든, 잘못된
-    엘리먼트 매칭이든) 이미 맞게 넣은 값이 덮어써질 수 있다. 그래서
-    "한 번 넣고 끝"이 아니라, 두 값을 매 라운드 끝에 다시 읽어 둘 다
-    맞을 때까지(또는 더 이상 손대지 않고) 반복 확인한다 — 이미 맞는
-    값을 별 이유 없이 재입력해서 덮어쓰는 일이 없게 한다.
+    ★요건(사용자 지시): "저장상품수" 입력칸은 절대 건드리지 않는다 —
+    원래 세팅값(모달을 열었을 때 이미 들어있던 값) 그대로 둔다.
+    반환값: 저장상품수 칸의 현재(원래) 값 — 이후 12항 건수확인에서
+    이 값을 기대값으로 쓴다(우리가 입력한 값이 아니라 원래 세팅값 기준).
     """
     filter_field = modal_field(page, FILTER_NAME_LABEL)
     count_field = modal_field(page, SAVE_COUNT_LABEL)
@@ -2462,8 +2456,9 @@ def fill_save_modal_fields(
         ctx.shot(page, "02_no_count_field", rn)
         raise RuntimeError(f"#{rn} 저장상품수 입력칸을 찾지 못함")
 
-    # 안전장치: 두 필드가 실제로 같은 엘리먼트로 잘못 잡히면 즉시 확정 실패
-    # (검색필터명 칸에 저장상품수를 쓰거나 반대로 쓰는 사고 방지)
+    # 안전장치: 검색필터명·저장상품수 칸이 실제로 같은 엘리먼트로 잘못
+    # 잡히면 즉시 확정 실패 (저장상품수 칸을 건드리지 않아도, 필터
+    # 입력이 저장상품수 칸까지 바꿔버리는 사고를 막기 위함)
     try:
         same_el = page.evaluate(
             "([a, b]) => a === b",
@@ -2478,49 +2473,44 @@ def fill_save_modal_fields(
             "필드 구분 실패"
         )
 
-    target = str(save_count)
+    # 저장상품수 원래 세팅값 — 건드리기 전에 먼저 읽어 기준으로 삼음
+    original_count = _safe_input_value(count_field)
+
+    ctx.step(8, "수집 상품 필터·수집상품갯수 입력")
+    ctx.info(f"검색필터명: {label}")
+    ctx.info(f"저장상품수(원래 세팅값, 변경 안 함): {original_count!r}")
+
     max_rounds = 4
-    filter_ok = count_ok = False
+    filter_ok = False
     for round_i in range(1, max_rounds + 1):
         cur_filter = _safe_input_value(filter_field)
-        if cur_filter.strip() != label.strip():
-            if round_i == 1:
-                ctx.step(8, "수집 상품 필터·수집상품갯수 입력")
-                ctx.info(f"검색필터명: {label}")
-            else:
-                ctx.info(f"검색필터명 재입력 (라운드 {round_i}) — 이전 값 {cur_filter!r}")
-            type_into(page, filter_field, label)
-        cur_count = _safe_input_value(count_field)
-        if not _value_matches_count(cur_count, save_count):
-            if round_i == 1:
-                ctx.info(f"저장상품수: {save_count}")
-            else:
-                ctx.info(f"저장상품수 재입력 (라운드 {round_i}) — 이전 값 {cur_count!r}")
-            type_into(page, count_field, target)
-
-        # ★이 라운드에서 이미 맞았던 값을 아무 이유 없이 다시 만지지 않고,
-        # 방금 넣은 값이 그대로 남아 있는지만 다시 읽어 확인한다.
-        final_filter = _safe_input_value(filter_field)
-        final_count = _safe_input_value(count_field)
-        filter_ok = final_filter.strip() == label.strip()
-        count_ok = _value_matches_count(final_count, save_count)
-        if filter_ok and count_ok:
+        if cur_filter.strip() == label.strip():
+            filter_ok = True
             break
-        ctx.info(
-            f"라운드 {round_i} 종료 후 재확인 — 필터={final_filter!r}(OK={filter_ok}), "
-            f"수량={final_count!r}(OK={count_ok})"
-        )
+        if round_i > 1:
+            ctx.info(f"검색필터명 재입력 (라운드 {round_i}) — 이전 값 {cur_filter!r}")
+        type_into(page, filter_field, label)
+        # 저장상품수는 절대 다시 읽거나 건드리지 않음 (요건)
 
-    if not (filter_ok and count_ok):
+    if not filter_ok:
         ctx.shot(page, "02_count_mismatch", rn)
         raise RuntimeError(
-            f"#{rn} {max_rounds}회 시도 후에도 검색필터명/저장상품수가 안정되지 않음 — "
-            f"필터OK={filter_ok}, 수량OK={count_ok} "
-            "(한 필드 입력이 다른 필드를 덮어쓰는 것으로 의심)"
+            f"#{rn} {max_rounds}회 시도 후에도 검색필터명이 안정되지 않음"
         )
 
-    ctx.info("검색필터명·저장상품수 입력 완료 → 저장하기 진행")
+    # 저장상품수는 우리가 건드리지 않았으므로 마지막에 그대로인지만 확인
+    final_count = _safe_input_value(count_field)
+    if final_count != original_count:
+        ctx.info(
+            f"[경고] 저장상품수가 원래 값과 달라짐(우리가 안 건드렸는데도) — "
+            f"원래={original_count!r} / 현재={final_count!r}"
+        )
+
+    ctx.info("검색필터명 입력 완료(저장상품수는 원래 값 유지) → 저장하기 진행")
     ctx.shot(page, "02_modal_filled", rn)
+
+    digits = re.sub(r"\D", "", final_count or "")
+    return int(digits) if digits else int(save_count)
 
 
 def run_save_submit_and_verify(
