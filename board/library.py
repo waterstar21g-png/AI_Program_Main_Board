@@ -1,4 +1,4 @@
-"""P2 입력 엑셀 보관 목록 (리스트박스용)"""
+"""P2 입력 엑셀 보관 목록 · 카테고리URL 행 목록 (리스트박스용)"""
 
 from __future__ import annotations
 
@@ -7,6 +7,11 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    import openpyxl
+except ImportError:  # pragma: no cover
+    openpyxl = None  # type: ignore
 
 
 @dataclass
@@ -183,3 +188,59 @@ def search_xlsx(dir_path: str, query: str = "", max_depth: int = 3, max_files: i
 
     found.sort(key=lambda x: (score(x["name"]), -x["mtime"]))
     return found
+
+
+def read_category_url_rows(path: str) -> list[dict]:
+    """엑셀에서 카테고리URL 행 목록을 읽는다.
+
+    반환: [{"ordinal": 1, "excel_row": 2, "label": "...", "url": "..."}, ...]
+    """
+    if openpyxl is None:
+        raise RuntimeError("openpyxl 이 필요합니다 (pip install openpyxl)")
+    p = Path(path).expanduser()
+    if not p.is_file():
+        raise FileNotFoundError(f"파일 없음: {p}")
+
+    wb = openpyxl.load_workbook(str(p), data_only=True, read_only=True)
+    try:
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
+        try:
+            header_cells = next(rows_iter)
+        except StopIteration:
+            return []
+        headers = [str(c or "").strip() for c in header_cells]
+        try:
+            label_col = headers.index("상위 최종 카테고리명")
+            url_col = headers.index("최종 카테고리 URL주소")
+        except ValueError as e:
+            raise ValueError(
+                "엑셀 1행 헤더에 '상위 최종 카테고리명', "
+                "'최종 카테고리 URL주소' 열이 있어야 합니다."
+            ) from e
+
+        out: list[dict] = []
+        ordinal = 0
+        for excel_row, values in enumerate(rows_iter, start=2):
+            vals = list(values or ())
+            raw_label = vals[label_col] if label_col < len(vals) else ""
+            raw_url = vals[url_col] if url_col < len(vals) else ""
+            label = str(raw_label or "").strip()
+            url = str(raw_url or "").strip()
+            if not url:
+                continue
+            ordinal += 1
+            out.append(
+                {
+                    "ordinal": ordinal,
+                    "excel_row": excel_row,
+                    "label": label,
+                    "url": url,
+                }
+            )
+        return out
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
