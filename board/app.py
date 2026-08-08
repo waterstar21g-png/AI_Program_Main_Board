@@ -30,10 +30,10 @@ from library import (  # noqa: E402
     search_xlsx,
     set_selected,
 )
-from log_protocol import parse_line, step_tag, strip_timestamp  # noqa: E402
+from log_protocol import META_FIELDS, parse_line, step_tag, strip_timestamp, sub_time_range  # noqa: E402
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.51"
+VERSION = "2.0.53"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -394,7 +394,11 @@ class BoardApp(tk.Tk):
             pass
 
         main_frame = tk.LabelFrame(
-            log_area, text="3-A. 실행 로그 main (1~13단계)", bg="#ffffff", padx=6, pady=4
+            log_area,
+            text="3-A. 실행 로그 main (상단=엑셀정보 5항목 · 아래=1~13단계)",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
         )
         main_frame.pack(fill="both", expand=True)
 
@@ -408,7 +412,7 @@ class BoardApp(tk.Tk):
         self.p2_main_log.heading("time", text="시각")
         self.p2_main_log.heading("step", text="단계")
         self.p2_main_log.heading("message", text="내용 (1~13단계)")
-        self.p2_main_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
+        self.p2_main_log.column("time", width=130, minwidth=110, stretch=False, anchor="center")
         self.p2_main_log.column("step", width=44, minwidth=40, stretch=False, anchor="center")
         self.p2_main_log.column("message", width=620, minwidth=220, stretch=True, anchor="w")
         main_sb = tk.Scrollbar(main_frame, orient="vertical", command=self.p2_main_log.yview)
@@ -436,7 +440,7 @@ class BoardApp(tk.Tk):
         )
         self.p2_sub_log.heading("time", text="시각")
         self.p2_sub_log.heading("message", text="추가정보 · [샷]은 더블클릭으로 열기")
-        self.p2_sub_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
+        self.p2_sub_log.column("time", width=130, minwidth=110, stretch=False, anchor="center")
         self.p2_sub_log.column("message", width=700, minwidth=220, stretch=True, anchor="w")
         sub_sb = tk.Scrollbar(sub_frame, orient="vertical", command=self.p2_sub_log.yview)
         self.p2_sub_log.configure(yscrollcommand=sub_sb.set)
@@ -449,10 +453,14 @@ class BoardApp(tk.Tk):
         self._sub_by_seq: dict[int, list[tuple[str, str, str]]] = {}
         self._shot_path_by_seq: dict[tuple[int, int], str] = {}
         self._main_item_by_seq: dict[int, str] = {}
+        self._main_ts_end: dict[int, str] = {}
         self._seq_by_main_item: dict[str, int] = {}
+        self._meta_item_ids: dict[str, str] = {}
         self._selected_seq: int | None = None
         self._latest_seq: int = 0
         self._follow_latest: bool = True
+
+        self._setup_meta_rows()
 
         self.p2_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
         self.p2_status.pack(fill="x", pady=4)
@@ -540,14 +548,34 @@ class BoardApp(tk.Tk):
         self._sub_by_seq = {}
         self._shot_path_by_seq = {}
         self._main_item_by_seq = {}
+        self._main_ts_end = {}
         self._seq_by_main_item = {}
+        self._meta_item_ids = {}
         self._selected_seq = None
         self._latest_seq = 0
         self._follow_latest = True
+        self._setup_meta_rows()
+
+    def _setup_meta_rows(self) -> None:
+        """main 상단 고정 5항목 — 총건수·완료건·순번·수집필드·카테고리URL."""
+        tv = getattr(self, "p2_main_log", None)
+        if tv is None:
+            return
+        self._meta_item_ids = {}
+        for i, field in enumerate(META_FIELDS):
+            item = tv.insert("", i, values=("", field, ""), tags=("meta",))
+            self._meta_item_ids[field] = item
+
+    def _update_meta_row(self, field: str, value: str) -> None:
+        item = self._meta_item_ids.get(field)
+        if not item:
+            return
+        self.p2_main_log.item(item, values=("", field, value))
 
     def _setup_p2_log_tags(self) -> None:
         """main 실행로그 — 단계 성격별 색상 태그."""
         tv = self.p2_main_log
+        tv.tag_configure("meta", foreground="#0369a1", background="#e0f2fe")
         tv.tag_configure("normal", foreground="#0f172a")
         tv.tag_configure("login", foreground="#7c3aed", background="#f5f3ff")
         tv.tag_configure("init", foreground="#0f766e", background="#f0fdfa")
@@ -568,7 +596,10 @@ class BoardApp(tk.Tk):
             return  # 마커 없는 줄은 화면에 출력하지 않음 — 요건 2
 
         kind = parsed[0]
-        if kind == "main":
+        if kind == "meta":
+            _, field, value = parsed
+            self._update_meta_row(field, value)
+        elif kind == "main":
             _, seq, n, msg = parsed
             self._insert_main_row(t, seq, n, msg)
         elif kind == "sub":
@@ -580,7 +611,29 @@ class BoardApp(tk.Tk):
             self._append_sub_entry(seq, t, "shot", f"[샷] {label} -> {Path(path).name}")
             self._shot_path_by_seq[(seq, len(self._sub_by_seq.get(seq, [])) - 1)] = path
 
+    def _main_ts_for_seq(self, seq: int) -> str | None:
+        """main 그리드에 기록된 시각 — sub와 동일하게 맞출 때 사용."""
+        item = self._main_item_by_seq.get(seq)
+        if not item:
+            return None
+        vals = self.p2_main_log.item(item, "values")
+        return vals[0] if vals else None
+
+    def _ts_for_sub(self, seq: int, t: str) -> str:
+        """sub 시각 = 현단계 MAIN 진입 ~ 다음 MAIN 진입."""
+        if "~" in (t or ""):
+            return t
+        start = self._main_ts_for_seq(seq)
+        if not start:
+            return t
+        end = self._main_ts_end.get(seq, start)
+        return sub_time_range(start, end)
+
     def _insert_main_row(self, t: str, seq: int, n: int, msg: str) -> None:
+        if seq > 1:
+            self._main_ts_end[seq - 1] = t
+            if self._selected_seq == seq - 1:
+                self._render_sub_grid(seq - 1)
         tag = step_tag(n)
         item = self.p2_main_log.insert("", "end", values=(t, n, msg), tags=(tag,))
         self._main_item_by_seq[seq] = item
@@ -593,18 +646,20 @@ class BoardApp(tk.Tk):
             self._render_sub_grid(seq)
 
     def _append_sub_entry(self, seq: int, t: str, kind: str, msg: str) -> None:
-        self._sub_by_seq.setdefault(seq, []).append((t, kind, msg))
+        display_t = self._ts_for_sub(seq, t)
+        self._sub_by_seq.setdefault(seq, []).append((display_t, kind, msg))
         if self._selected_seq == seq:
             tag = ("shot",) if kind == "shot" else ()
-            item = self.p2_sub_log.insert("", "end", values=(t, msg), tags=tag)
+            item = self.p2_sub_log.insert("", "end", values=(display_t, msg), tags=tag)
             self.p2_sub_log.see(item)
 
     def _render_sub_grid(self, seq: int) -> None:
         for item in self.p2_sub_log.get_children():
             self.p2_sub_log.delete(item)
         for t, kind, msg in self._sub_by_seq.get(seq, []):
+            display_t = self._ts_for_sub(seq, t)
             tag = ("shot",) if kind == "shot" else ()
-            self.p2_sub_log.insert("", "end", values=(t, msg), tags=tag)
+            self.p2_sub_log.insert("", "end", values=(display_t, msg), tags=tag)
 
     def _on_main_log_select(self, _evt=None) -> None:
         sel = self.p2_main_log.selection()
@@ -612,6 +667,8 @@ class BoardApp(tk.Tk):
             return
         seq = self._seq_by_main_item.get(sel[0])
         if seq is None:
+            return
+        if sel[0] in self._meta_item_ids.values():
             return
         self._selected_seq = seq
         self._follow_latest = seq == self._latest_seq
@@ -695,12 +752,12 @@ class BoardApp(tk.Tk):
             "2",
         ]
         if verify:
-            # 검증: 입력 1·2행 처리 + 단계 스크린샷 (전행 카테고리명·URL은 로그에 기록)
-            args.extend(["--verify", "--max-rows", "2"])
+            # 검증: 1·2행 단계 스크린샷만 (행 수 제한 없음 — 엑셀 전체 처리)
+            args.append("--verify")
 
         set_selected(path)
         self._clear_p2_log()
-        mode = "1·2행 전과정 스크린샷" if verify else "전체(앞2행 샷)"
+        mode = "1·2행 스크린샷·전체수집" if verify else "전체(앞2행 샷)"
         self.p2_status.configure(
             text=f"수집 시작 ({mode}): {path} — 브라우저에서 직접 로그인하세요",
             fg="#15803d",

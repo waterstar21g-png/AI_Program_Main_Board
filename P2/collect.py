@@ -337,6 +337,10 @@ class RunCtx:
         self._gallery_written = False
         self._current_step = 0  # main그리드 마지막 단계번호(1~13, 표시용)
         self._step_seq = 0  # main그리드 각 발생(행)의 고유번호 — sub 연결용
+        self._step_ts: dict[int, str] = {}  # seq → main 진입 시각
+        self._step_ts_end: dict[int, str] = {}  # seq → 다음 main 진입 시각(sub 범위 끝)
+        self._total_rows = 0
+        self._done_rows = 0
         self.input_ordinal = 0  # 처리 중인 입력 순서(1부터)
         self.current_label = ""
         self.current_url = ""
@@ -418,13 +422,55 @@ class RunCtx:
         if _ACTIVE_CTX is self:
             _ACTIVE_CTX = None
 
+    def set_progress_totals(self, total: int) -> None:
+        self._total_rows = max(0, int(total))
+
+    def emit_progress_meta(
+        self,
+        *,
+        done: int | None = None,
+        ordinal: int | None = None,
+        label: str | None = None,
+        url: str | None = None,
+    ) -> None:
+        """main 상단 5항목 — 총건수·완료건·순번·수집필드·카테고리URL."""
+        if done is not None:
+            self._done_rows = max(0, int(done))
+        if ordinal is not None:
+            self.input_ordinal = int(ordinal)
+        if label is not None:
+            self.current_label = str(label).strip()
+        if url is not None:
+            self.current_url = str(url).strip()
+        ts = time.strftime("%H:%M:%S")
+        fields = (
+            ("총건수", str(self._total_rows)),
+            ("완료건", str(self._done_rows)),
+            ("순번", str(self.input_ordinal)),
+            ("수집 필드", self.current_label),
+            ("카테고리 URL", self.current_url),
+        )
+        for field, val in fields:
+            safe_print(f"[{ts}] ##META##{field}##{val}")
+
+    def _sub_ts(self, seq: int) -> str:
+        """sub 시각 = 현단계 main 진입 ~ 다음 main 진입."""
+        start = self._step_ts.get(seq, "")
+        end = self._step_ts_end.get(seq, start)
+        if start and end and end != start:
+            return f"{start}~{end}"
+        return start or time.strftime("%H:%M:%S")
+
     def step(self, n: int, msg: str) -> None:
         """★main 그리드 — 1~13단계 줄만(발생마다 새 seq). 이후 info()/shot()은
         이 발생(seq)에 딸린 sub 항목으로 연결된다."""
+        ts = time.strftime("%H:%M:%S")
+        if self._step_seq > 0:
+            self._step_ts_end[self._step_seq] = ts
         self._step_seq += 1
         self._current_step = n
         seq = self._step_seq
-        ts = time.strftime("%H:%M:%S")
+        self._step_ts[seq] = ts
         safe_print(f"[{ts}] {MAIN_LINE_MARK}{seq}##{n}##{msg}")
         try:
             self._log_file.write(f"[{ts}] {n}. {msg}\n")
@@ -435,7 +481,7 @@ class RunCtx:
     def info(self, msg: str) -> None:
         """sub 그리드 — 마지막 step() 발생(seq)에 딸린 추가정보로 표시됨."""
         seq = self._step_seq
-        ts = time.strftime("%H:%M:%S")
+        ts = self._sub_ts(seq)
         safe_print(f"[{ts}] {SUB_LINE_MARK}{seq}##{msg}")
         try:
             self._log_file.write(f"[{ts}]   {msg}\n")
@@ -482,7 +528,7 @@ class RunCtx:
                     "path": str(path),
                 }
             )
-            ts = time.strftime("%H:%M:%S")
+            ts = self._sub_ts(seq)
             safe_print(f"[{ts}] {SUB_SHOT_MARK}{seq}##{path}##{label}")
             try:
                 self._log_file.write(
@@ -2256,15 +2302,15 @@ def handle_possible_login_page(page: Page) -> None:
 
 
 def _wait_bulk_ready_once(page: Page) -> None:
-    """★타이밍 진단 포함 — 2→3항 사이 지연이 어디서 나는지 sub로그로 남긴다.
-
-    코드가 만드는 블라인드 sleep은 전부 제거했다. 남는 시간은 실제
-    페이지 전환·서버응답·렌더링 시간일 가능성이 높으므로, 다음 실행에서
-    바로 원인을 특정할 수 있게 각 구간 소요시간을 기록한다.
-    """
+    """★2→3항 — URL검색 버튼이 보이면 즉시 반환(불필요 대기 없음)."""
+    try:
+        if url_search_button(page).first.is_visible():
+            return
+    except Exception:  # noqa: BLE001
+        pass
     t0 = time.time()
     try:
-        page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        page.wait_for_load_state("domcontentloaded", timeout=8_000)
     except Exception:  # noqa: BLE001
         pass
     t1 = time.time()
@@ -2289,11 +2335,12 @@ def wait_bulk_ready(page: Page) -> None:
 
 
 def _reset_to_bulk_menu_once(page: Page) -> None:
-    """★불필요한 고정 대기 없음 — 클릭 후 곧바로 wait_bulk_ready()가
-
-    실제로 URL검색 버튼이 보일 때까지만 기다린다(그 이상 블라인드로
-    쉬지 않음 — 2항 초기화 후 3항까지 8초씩 걸리던 지연 제거).
-    """
+    """★불필요한 고정 대기 없음 — 이미 대량수집 화면이면 메뉴 클릭 생략."""
+    try:
+        if BULK_PATH in page.url and url_search_button(page).first.is_visible():
+            return
+    except Exception:  # noqa: BLE001
+        pass
     t_click0 = time.time()
     href = page.locator('a[href*="getGoodsNew"]').first
     if href.count() > 0:
@@ -3680,7 +3727,7 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                     except Exception as re:  # noqa: BLE001
                         ctx.info(f"  복귀 중 경고: {re}")
                     try:
-                        page.wait_for_timeout(800)
+                        page.wait_for_timeout(100)
                     except Exception:
                         page = refresh_if_closed(page)
         if not success:
@@ -3734,11 +3781,6 @@ def ensure_ready_page(page: Page) -> Page:
         page = refresh_if_closed(page)
         try:
             page.wait_for_load_state("domcontentloaded", timeout=15_000)
-        except Exception:  # noqa: BLE001
-            pass
-        page = refresh_if_closed(page)
-        try:
-            page.wait_for_timeout(500)
         except Exception:  # noqa: BLE001
             pass
         page = refresh_if_closed(page)
@@ -3858,6 +3900,9 @@ def main() -> None:
         f"로그={ctx.shot_dir}"
     )
 
+    ctx.set_progress_totals(len(rows))
+    ctx.emit_progress_meta(done=0, ordinal=0, label="", url="")
+
     clear_stop_flag()
     ok = 0
     fail = 0
@@ -3889,6 +3934,11 @@ def main() -> None:
                             next_row=row,
                         )
                     ctx.begin_row(ordinal, row)
+                    ctx.emit_progress_meta(
+                        ordinal=ordinal,
+                        label=str(row.get("label") or ""),
+                        url=str(row.get("url") or ""),
+                    )
                     page = refresh_if_closed(page)
                     success = process_row_with_retries(page, row, ctx)
                 except CollectStopped as e:
@@ -3911,6 +3961,7 @@ def main() -> None:
                     if not ctx.batch:
                         if input("계속 진행할까요? (y/n) ").strip().lower() != "y":
                             break
+                ctx.emit_progress_meta(done=ok)
                 ctx.info(
                     f"==== 입력#{ordinal} 종료 (성공={success}) "
                     f"| 엑셀{row['row']}행 ===="

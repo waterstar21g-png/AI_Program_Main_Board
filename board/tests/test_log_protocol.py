@@ -8,7 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from log_protocol import parse_line, step_tag, strip_timestamp  # noqa: E402
+from log_protocol import (  # noqa: E402
+    META_FIELDS,
+    parse_line,
+    step_tag,
+    strip_timestamp,
+    sub_time_range,
+)
 
 
 def test_strip_timestamp_extracts_prefix():
@@ -57,6 +63,29 @@ def test_step_tag_mapping():
     assert step_tag(7) == "normal"
 
 
+def test_parse_meta_line():
+    parsed = parse_line("##META##총건수##42")
+    assert parsed == ("meta", "총건수", "42")
+
+
+def test_meta_fields_order():
+    assert len(META_FIELDS) == 5
+    assert "총건수" in META_FIELDS
+    assert "카테고리 URL" in META_FIELDS
+
+
+def test_strip_timestamp_range():
+    t, rest = strip_timestamp("[10:20:30~10:21:05] ##SUB##3##상세")
+    assert t == "10:20:30~10:21:05"
+    assert rest.startswith("##SUB##")
+
+
+def test_sub_time_range():
+    assert sub_time_range("10:20:30", "10:21:05") == "10:20:30~10:21:05"
+    assert sub_time_range("10:20:30", "10:20:30") == "10:20:30"
+    assert len(sub_time_range("", None)) == 8
+
+
 def test_full_pipeline_timestamp_then_parse():
     """실제 collect.py 출력 형태 전체 파이프라인."""
     raw = "[10:20:30] ##MAIN##3##9##수집 상품 DB저장하기 시작 : 하단 '저장하기' 클릭"
@@ -76,6 +105,10 @@ if __name__ == "__main__":
         ("parse_main", test_parse_main_line),
         ("parse_sub", test_parse_sub_line),
         ("parse_subshot", test_parse_subshot_line),
+        ("parse_meta", test_parse_meta_line),
+        ("meta_fields", test_meta_fields_order),
+        ("strip_ts_range", test_strip_timestamp_range),
+        ("sub_time_range", test_sub_time_range),
         ("parse_unrecognized_none", test_parse_unrecognized_line_returns_none),
         ("step_tag_map", test_step_tag_mapping),
         ("full_pipeline", test_full_pipeline_timestamp_then_parse),
