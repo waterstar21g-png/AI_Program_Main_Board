@@ -312,6 +312,10 @@ class BoardApp(tk.Tk):
         """상위 카테고리 칸 — 한글 포함 최대 TOP_CELL_MAX_LEN자."""
         return len(new_value) <= TOP_CELL_MAX_LEN
 
+    def _validate_p1_zara_url_cell(self, new_value: str) -> bool:
+        """P1_ZARA_DE 하위 카테고리 URL 칸."""
+        return len(new_value) <= p1_zara_crawl.URL_CELL_MAX_LEN
+
     def _p1_top_values(self) -> list[str]:
         """그리드에서 비어 있지 않은 상위 카테고리 칸 값을 순서대로."""
         out: list[str] = []
@@ -406,12 +410,12 @@ class BoardApp(tk.Tk):
         self._row(form, "사이트명", self.var_zara_site)
         self._row(form, "사이트 URL", self.var_zara_url)
 
-        # ★요건: 3행 × 12열 — 한 행 = 상위, 중위, 하위1…하위10
+        # ★요건: 20행 × 3열 — 상위명, 중위명, 하위 URL (URL 칸=명 칸의 10배)
         z_rows = p1_zara_crawl.TOP_GRID_ROWS
-        z_cols = p1_zara_crawl.TOP_GRID_COLS
-        z_cell = p1_zara_crawl.TOP_CELL_MAX_LEN
         z_labels = p1_zara_crawl.COL_LABELS
-        z_lows = p1_zara_crawl.LOW_SLOT_COUNT
+        name_w = p1_zara_crawl.NAME_ENTRY_WIDTH
+        url_w = p1_zara_crawl.URL_ENTRY_WIDTH
+        col_widths = (name_w, name_w, url_w)
 
         tops_wrap = tk.Frame(form, bg="#ffffff")
         tops_wrap.pack(fill="x", pady=3)
@@ -423,30 +427,16 @@ class BoardApp(tk.Tk):
             bg="#ffffff",
         ).pack(side="left", anchor="n", pady=2)
         tops_right = tk.Frame(tops_wrap, bg="#ffffff")
-        tops_right.pack(side="left", fill="x", expand=True)
-        tk.Label(
-            tops_right,
-            text=(
-                f"{z_rows}행 × {z_cols}열 · 칸당 {z_cell}자 · "
-                f"한 행=상위·중위·하위1~{z_lows} · "
-                "상위/중위 생략 시 이전 행 값 복사 · "
-                "이름이 있는 상위·중위·하위 노드의 하위 전부 수집 · "
-                "엑셀은 입력 계층에 맞춰 출력 · 명1:명2 치환 가능"
-            ),
-            bg="#ffffff",
-            fg="#64748b",
-            anchor="w",
-            font=("Malgun Gothic", 8),
-            wraplength=720,
-            justify="left",
-        ).pack(fill="x", pady=(0, 2))
+        tops_right.pack(side="left", fill="both", expand=True)
 
-        # 가로 스크롤 (12칸 헤더·입력)
-        canvas = tk.Canvas(tops_right, bg="#ffffff", height=118, highlightthickness=0)
+        # 가로·세로 스크롤 (20행)
+        canvas = tk.Canvas(tops_right, bg="#ffffff", height=280, highlightthickness=0)
         h_sb = tk.Scrollbar(tops_right, orient="horizontal", command=canvas.xview)
-        canvas.configure(xscrollcommand=h_sb.set)
+        v_sb = tk.Scrollbar(tops_right, orient="vertical", command=canvas.yview)
+        canvas.configure(xscrollcommand=h_sb.set, yscrollcommand=v_sb.set)
         h_sb.pack(side="bottom", fill="x")
-        canvas.pack(side="top", fill="x", expand=True)
+        v_sb.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
         grid = tk.Frame(canvas, bg="#ffffff")
         canvas.create_window((0, 0), window=grid, anchor="nw")
 
@@ -457,19 +447,21 @@ class BoardApp(tk.Tk):
 
         self._p1_zara_grid_vars: list[list[tk.StringVar]] = []
         self._p1_zara_level_vars = []  # 하위 호환 비움
-        vcmd = (self.register(self._validate_p1_top_cell), "%P")
-        # 열 헤더: 상위 / 중위 / 하위1 … 하위10
+        vcmd_name = (self.register(self._validate_p1_top_cell), "%P")
+        vcmd_url = (self.register(self._validate_p1_zara_url_cell), "%P")
+        # 열 헤더: 상위 카테고리명 / 중위 카테고리명 / 하위 카테고리 URL
         hdr = tk.Frame(grid, bg="#ffffff")
         hdr.pack(fill="x")
         tk.Label(hdr, text="행", width=4, bg="#ffffff", fg="#94a3b8").pack(side="left")
-        for label in z_labels:
+        for label, w in zip(z_labels, col_widths):
             tk.Label(
                 hdr,
-                text=label.replace(" 카테고리", ""),
-                width=9,
+                text=label,
+                width=w,
                 bg="#ffffff",
                 fg="#64748b",
                 font=("Malgun Gothic", 7),
+                anchor="w",
             ).pack(side="left", padx=1)
         for row_i in range(z_rows):
             row_f = tk.Frame(grid, bg="#ffffff")
@@ -483,17 +475,18 @@ class BoardApp(tk.Tk):
                 font=("Malgun Gothic", 8),
             ).pack(side="left")
             row_vars: list[tk.StringVar] = []
-            for _c in range(z_cols):
+            for col_i, w in enumerate(col_widths):
                 var = tk.StringVar(value="")
                 row_vars.append(var)
+                is_url = col_i == 2
                 tk.Entry(
                     row_f,
                     textvariable=var,
-                    width=9,
+                    width=w,
                     font=("Malgun Gothic", 8),
-                    justify="center",
+                    justify="left" if is_url else "center",
                     validate="key",
-                    validatecommand=vcmd,
+                    validatecommand=vcmd_url if is_url else vcmd_name,
                 ).pack(side="left", padx=1)
             self._p1_zara_grid_vars.append(row_vars)
         self._p1_zara_top_vars = []
@@ -624,14 +617,14 @@ class BoardApp(tk.Tk):
         return out
 
     def _p1_zara_grid_rows(self) -> list[tuple[str, ...]]:
-        """3행 × 12열 원시 입력 (상위·중위·하위1~10)."""
+        """20행 × 3열 원시 입력 (상위명·중위명·하위URL)."""
         grid = getattr(self, "_p1_zara_grid_vars", None)
         if not grid:
             return []
         return [tuple(var.get() for var in row) for row in grid]
 
     def _p1_zara_hierarchy_paths(self) -> list[tuple[str, str, str]]:
-        """그리드 → (상위, 중위, 하위) 경로. crawl.expand_grid_rows_to_paths와 동일."""
+        """그리드 → (상위, 중위, 하위URL). crawl.expand_grid_rows_to_paths와 동일."""
         return p1_zara_crawl.expand_grid_rows_to_paths(self._p1_zara_grid_rows())
 
     def _pick_zara_outdir(self) -> None:

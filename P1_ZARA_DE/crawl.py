@@ -46,20 +46,25 @@ EXCEL_HEADERS = [
     "최종 카테고리 URL주소",
 ]
 
-# 보드 입력 그리드: 3행 × 12열
-# 한 행 = 상위 카테고리, 중위 카테고리, 하위 카테고리1 … 하위 카테고리10
-TOP_GRID_ROWS = 3
-TOP_GRID_COLS = 12
-LOW_SLOT_COUNT = 10  # 하위 카테고리1~10
-TOP_GRID_LEVELS = 3  # 상위·중위·하위 (계층 수)
-MAX_TOP = TOP_GRID_ROWS * LOW_SLOT_COUNT  # 최대 경로 수
-TOP_CELL_MAX_LEN = 15
+# 보드 입력 그리드: 20행 × 3열
+# 한 행 = 상위 카테고리명, 중위 카테고리명, 하위 카테고리 URL
+TOP_GRID_ROWS = 20
+TOP_GRID_COLS = 3
+TOP_GRID_LEVELS = 3  # 상위·중위·하위URL
+MAX_TOP = TOP_GRID_ROWS
+TOP_CELL_MAX_LEN = 15  # 상위·중위 명
+URL_CELL_MAX_LEN = 240  # 하위 카테고리 URL
+# 보드 Entry width: 상위·중위 기준, 하위 URL은 10배
+NAME_ENTRY_WIDTH = 12
+URL_ENTRY_WIDTH = NAME_ENTRY_WIDTH * 10
 COL_LABELS: tuple[str, ...] = (
-    "상위 카테고리",
-    "중위 카테고리",
-    *(f"하위 카테고리{i}" for i in range(1, LOW_SLOT_COUNT + 1)),
+    "상위 카테고리명",
+    "중위 카테고리명",
+    "하위 카테고리 URL",
 )
 LEVEL_LABELS = COL_LABELS  # 보드 열 헤더
+# 하위 호환 (이전 그리드 상수)
+LOW_SLOT_COUNT = 1
 
 # ZARA 카테고리 링크: /de/de|en/slug-l123.html 또는 -m123.html
 ZARA_CAT_HREF_RE = re.compile(
@@ -101,7 +106,7 @@ class HierarchyRow:
 
 @dataclass
 class CategorySpec:
-    """입력 1열 = 3계층 경로 (매칭명 + 엑셀 출력명)."""
+    """입력 1경로 = 상위·중위 명 + (하위명 또는 하위 URL)."""
 
     match1: str = ""
     match2: str = ""
@@ -109,6 +114,8 @@ class CategorySpec:
     excel1: str = ""
     excel2: str = ""
     excel3: str = ""
+    # 하위 카테고리 URL (있으면 URL로 앵커 매칭 → 최종 카테고리 리스트업)
+    low_url: str = ""
 
     def match_levels(self) -> list[str]:
         return [x for x in (self.match1, self.match2, self.match3) if x]
@@ -117,6 +124,9 @@ class CategorySpec:
         return (self.excel1 or "", self.excel2 or "", self.excel3 or "")
 
     def label(self) -> str:
+        if self.low_url:
+            head = " > ".join(x for x in (self.excel1 or self.match1, self.excel2 or self.match2) if x)
+            return f"{head} > {self.low_url}" if head else self.low_url
         return " > ".join(self.match_levels())
 
 
@@ -219,15 +229,46 @@ def fill_hierarchy_from_previous(
     return out
 
 
+def normalize_category_url(raw: str) -> str | None:
+    """하위 카테고리 URL 정규화 (/de/en, 쿼리 제거). 실패 시 None."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if len(s) > URL_CELL_MAX_LEN:
+        s = s[:URL_CELL_MAX_LEN]
+    if not s.startswith("http"):
+        s = f"https://{s}"
+    try:
+        s = normalize_url(s)
+    except ValueError:
+        return None
+    s = to_english_locale_url(s.split("?")[0].split("#")[0])
+    if ZARA_CAT_HREF_RE.match(s) or ZARA_CAT_PATH_RE.search(s):
+        return s
+    # zara.com/de/... 형태면 허용 (id 없는 경로도 비교용)
+    if re.search(r"zara\.com/de/(?:de|en)/", s, re.I):
+        return s
+    return None
+
+
+def category_urls_equivalent(a: str, b: str) -> bool:
+    """두 카테고리 URL이 동일 노드인지 (영문 로케일·cat_id 기준)."""
+    na = to_english_locale_url((a or "").split("?")[0].split("#")[0]).rstrip("/").lower()
+    nb = to_english_locale_url((b or "").split("?")[0].split("#")[0]).rstrip("/").lower()
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    ida, idb = _cat_id_from_url(na), _cat_id_from_url(nb)
+    return bool(ida and idb and ida == idb)
+
+
 def expand_grid_rows_to_paths(
     raw_rows: list[tuple[str, ...] | list[str]],
 ) -> list[tuple[str, str, str]]:
-    """3행×12열 그리드 → (상위, 중위, 하위) 경로 목록.
+    """N행×3열(상위·중위·하위URL) → (상위, 중위, 하위URL) 목록.
 
-    한 행 구조: 상위 카테고리, 중위 카테고리, 하위1 … 하위10.
-    - 상위/중위 생략 시 이전 행 값을 복사.
-    - 하위 칸이 하나 이상이면 칸마다 경로 생성.
-    - 하위가 모두 비어 있으면 (상위, 중위, '') 한 경로로 해당 노드 하위 전부 수집.
+    상위/중위 생략 시 이전 행 값을 복사. 하위 URL이 있는 행만 채택.
     """
     prev1, prev2 = "", ""
     paths: list[tuple[str, str, str]] = []
@@ -235,9 +276,8 @@ def expand_grid_rows_to_paths(
         cells = [(c or "").strip() for c in list(row)[:TOP_GRID_COLS]]
         if len(cells) < TOP_GRID_COLS:
             cells.extend([""] * (TOP_GRID_COLS - len(cells)))
-        a1, a2 = cells[0], cells[1]
-        lows = cells[2 : 2 + LOW_SLOT_COUNT]
-        if not (a1 or a2 or any(lows)):
+        a1, a2, url = cells[0], cells[1], cells[2]
+        if not (a1 or a2 or url):
             continue
         if not a1:
             a1 = prev1
@@ -247,42 +287,54 @@ def expand_grid_rows_to_paths(
             prev1 = a1
         if a2:
             prev2 = a2
-        filled_lows = [x for x in lows if x]
-        if filled_lows:
-            for low in filled_lows:
-                paths.append((a1, a2, low))
-        else:
-            paths.append((a1, a2, ""))
+        if not url:
+            continue
+        paths.append((a1, a2, url))
     return paths
 
 
 def parse_category_specs(
     raw_paths: list[tuple[str, str, str]], max_n: int = MAX_TOP
 ) -> list[CategorySpec]:
-    """(상위, 중위, 하위) 원시 입력 → CategorySpec 목록.
+    """(상위, 중위, 하위명또는URL) 원시 입력 → CategorySpec 목록.
 
     ★요건: 상위·중위 생략 시 이전 경로 값을 복사한 뒤 파싱한다.
+    3번째 칸이 URL이면 low_url 로 저장한다.
     """
     filled = fill_hierarchy_from_previous(raw_paths)
     out: list[CategorySpec] = []
     for raw1, raw2, raw3 in filled:
-        cells = [parse_top_cell(raw1), parse_top_cell(raw2), parse_top_cell(raw3)]
-        if all(c is None for c in cells):
-            continue
+        url = normalize_category_url(raw3)
+        c1 = parse_top_cell(raw1)
+        c2 = parse_top_cell(raw2)
         m1 = e1 = m2 = e2 = m3 = e3 = ""
-        if cells[0] is not None:
-            m1, e1 = cells[0]
-        if cells[1] is not None:
-            m2, e2 = cells[1]
-        if cells[2] is not None:
-            m3, e3 = cells[2]
-        if not (m1 or m2 or m3):
-            continue
-        out.append(
-            CategorySpec(
-                match1=m1, match2=m2, match3=m3, excel1=e1, excel2=e2, excel3=e3
+        if c1 is not None:
+            m1, e1 = c1
+        if c2 is not None:
+            m2, e2 = c2
+        if url:
+            out.append(
+                CategorySpec(
+                    match1=m1,
+                    match2=m2,
+                    match3="",
+                    excel1=e1,
+                    excel2=e2,
+                    excel3="",
+                    low_url=url,
+                )
             )
-        )
+        else:
+            c3 = parse_top_cell(raw3)
+            if c3 is not None:
+                m3, e3 = c3
+            if not (m1 or m2 or m3):
+                continue
+            out.append(
+                CategorySpec(
+                    match1=m1, match2=m2, match3=m3, excel1=e1, excel2=e2, excel3=e3
+                )
+            )
         if len(out) >= max_n:
             break
     return out
@@ -291,7 +343,7 @@ def parse_category_specs(
 def parse_grid_category_specs(
     raw_rows: list[tuple[str, ...] | list[str]], max_n: int = MAX_TOP
 ) -> list[CategorySpec]:
-    """3행×12열(상위·중위·하위1~10) → CategorySpec 목록."""
+    """N행×3열(상위·중위·하위URL) → CategorySpec 목록."""
     return parse_category_specs(expand_grid_rows_to_paths(raw_rows), max_n=max_n)
 
 
@@ -468,27 +520,72 @@ def filter_subcategories_of(leaves: list[Leaf], names: list[str]) -> list[Leaf]:
     return [leaf for leaf, _spec in filter_by_hierarchy_specs(leaves, specs)]
 
 
+def find_anchor_by_url(leaves: list[Leaf], url: str) -> Leaf | None:
+    """하위 카테고리 URL과 동일한 노드(리프)를 찾는다."""
+    for leaf in leaves:
+        if category_urls_equivalent(leaf.category_url, url):
+            return leaf
+    return None
+
+
+def path_under_prefix(path: tuple[str, ...], prefix: tuple[str, ...]) -> bool:
+    """path 가 prefix 노드 아래(자기 자신 포함)인지."""
+    if not prefix or len(path) < len(prefix):
+        return False
+    for i, p in enumerate(prefix):
+        if _normalize_top_key(path[i]) == _normalize_top_key(p):
+            continue
+        if not category_name_matches(path[i], p):
+            return False
+    return True
+
+
 def filter_by_hierarchy_specs(
     leaves: list[Leaf], specs: list[CategorySpec]
 ) -> list[tuple[Leaf, CategorySpec]]:
-    """3계층 입력 스펙과 일치하는 하위 카테고리 전부 (leaf, 매칭스펙)."""
+    """입력 스펙과 일치하는 최종 카테고리 전부 (leaf, 매칭스펙).
+
+    - low_url 있으면: 해당 URL 노드 및 그 하위 전부 → 최종 카테고리명 리스트업
+    - 없으면: 상위·중위·하위 명 계층 매칭
+    """
     if not specs:
         return []
     out: list[tuple[Leaf, CategorySpec]] = []
     seen: set[str] = set()
-    for leaf in leaves:
+
+    def _add(leaf: Leaf, spec: CategorySpec) -> None:
         path = leaf_path(leaf)
         key = "|".join([*path, leaf.cat_id or leaf.category_url])
-        for spec in specs:
-            levels = spec.match_levels()
-            if not levels:
+        if key in seen:
+            return
+        seen.add(key)
+        out.append((leaf, spec))
+
+    for spec in specs:
+        if spec.low_url:
+            anchor = find_anchor_by_url(leaves, spec.low_url)
+            if anchor is None:
                 continue
-            if path_matches_hierarchy(path, levels):
-                if key in seen:
-                    break
-                seen.add(key)
-                out.append((leaf, spec))
-                break
+            # 엑셀 하위명 = URL 노드의 사이트 카테고리명
+            if not (spec.excel3 or "").strip():
+                spec.excel3 = anchor.final
+            if not (spec.match3 or "").strip():
+                spec.match3 = anchor.final
+            prefix = leaf_path(anchor)
+            for leaf in leaves:
+                lp = leaf_path(leaf)
+                if path_under_prefix(lp, prefix) or category_urls_equivalent(
+                    leaf.category_url, spec.low_url
+                ):
+                    _add(leaf, spec)
+            continue
+
+        levels = spec.match_levels()
+        if not levels:
+            continue
+        for leaf in leaves:
+            if path_matches_hierarchy(leaf_path(leaf), levels):
+                _add(leaf, spec)
     return out
 
 
@@ -500,7 +597,7 @@ def filter_by_top(leaves: list[Leaf], tops: list[str]) -> list[Leaf]:
 def hierarchy_row_from_match(
     site_name: str, leaf: Leaf, spec: CategorySpec
 ) -> HierarchyRow:
-    """입력 계층명을 엑셀 상위·중위·하위에 반영하고 최종·URL은 사이트 값."""
+    """입력 상위·중위(+URL노드 하위명)를 엑셀에 반영하고 최종·URL은 사이트 값."""
     e1, e2, e3 = spec.excel_levels()
     final = leaf.final
     return HierarchyRow(
@@ -821,9 +918,9 @@ def crawl_site(
     applied = [s.label() for s in specs]
     if not specs:
         err = (
-            f"카테고리 계층을 1행 이상 입력하세요. "
+            f"카테고리 행을 1행 이상 입력하세요. "
             f"({TOP_GRID_ROWS}행 × {TOP_GRID_COLS}열: "
-            f"상위·중위·하위1~{LOW_SLOT_COUNT})"
+            f"상위 카테고리명 · 중위 카테고리명 · 하위 카테고리 URL)"
         )
         log("오류", err)
         return CrawlResult(
@@ -880,11 +977,15 @@ def crawl_site(
             run_log_dir=str(run_dir),
         )
 
-    log("필터", f"수집 원본 {len(leaves)}건 → 3계층 입력 경로의 하위 전부 수집")
+    log(
+        "필터",
+        f"수집 원본 {len(leaves)}건 → 하위 URL 노드의 최종 카테고리 리스트업",
+    )
     matched = filter_by_hierarchy_specs(leaves, specs)
     if not matched:
         err = (
-            f"지정한 계층({', '.join(applied)})과 일치하는 하위 카테고리를 찾지 못했습니다."
+            f"지정한 하위 URL/계층({', '.join(applied)})과 일치하는 "
+            f"최종 카테고리를 찾지 못했습니다."
         )
         log("오류", err)
         return CrawlResult(
