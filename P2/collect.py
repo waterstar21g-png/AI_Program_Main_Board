@@ -391,6 +391,8 @@ class RunCtx:
         self.save_awaiting_popup: bool = False
         self.save_popup_kind: str = ""
         self.save_popup_ui_latched: bool = False
+        # 12항 망고 '저장이 완료' 이후 SUB 화면 출력 mute
+        self._mute_sub_after_save_complete: bool = False
         self.log_path = self.shot_dir / "run.log"
         self._log_file = open(self.log_path, "a", encoding="utf-8")
         _ACTIVE_CTX = self
@@ -434,6 +436,7 @@ class RunCtx:
         self.save_awaiting_popup = False
         self.save_popup_kind = ""
         self.save_popup_ui_latched = False
+        self._mute_sub_after_save_complete = False
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
@@ -476,10 +479,11 @@ class RunCtx:
         url: str | None = None,
         main_line: bool = False,
     ) -> None:
-        """main 상단 5항목 — 총건수·완료건·순번·수집필드·카테고리URL.
+        """main 상단 META — 총건수·완료·수집필드·카테고리URL.
 
-        ★요건: 엑셀 각 행 실행시마다 MAIN에 5필드를 한 줄로 남긴다.
+        ★요건: 완료건→완료, 순번 삭제. 총건수는 목차행 제외 값.
         main_line=True 이면 sticky META 갱신 + MAIN 그리드에 오렌지 1행 추가.
+        진행 적색용으로 ##META##진행##N 도 함께 보낸다(화면 META 줄에는 안 씀).
         """
         if done is not None:
             self._done_rows = max(0, int(done))
@@ -492,13 +496,15 @@ class RunCtx:
         ts = time.strftime("%H:%M:%S")
         fields = (
             ("총건수", str(self._total_rows)),
-            ("완료건", str(self._done_rows)),
-            ("순번", str(self.input_ordinal)),
+            ("완료", str(self._done_rows)),
             ("수집 필드", self.current_label),
             ("카테고리 URL", self.current_url),
         )
         for field, val in fields:
             safe_print(f"[{ts}] ##META##{field}##{val}")
+        # 카테고리URL목록 진행행 적색용 (META 표시 항목 아님)
+        if self.input_ordinal > 0:
+            safe_print(f"[{ts}] ##META##진행##{self.input_ordinal}")
         if main_line:
             # MAIN 그리드에 영구 1행(step=0 → 오렌지 meta 태그)
             one = " | ".join(
@@ -528,6 +534,8 @@ class RunCtx:
     def step(self, n: int, msg: str) -> None:
         """★main 그리드 — 1~13단계 줄만(발생마다 새 seq). 이후 info()/shot()은
         이 발생(seq)에 딸린 sub 항목으로 연결된다."""
+        # 새 단계 시작 → 12항 저장완료 이후 SUB 화면 mute 해제
+        self._mute_sub_after_save_complete = False
         ts = time.strftime("%H:%M:%S")
         if self._step_seq > 0:
             self._step_ts_end[self._step_seq] = ts
@@ -543,15 +551,26 @@ class RunCtx:
             pass
 
     def info(self, msg: str) -> None:
-        """sub 그리드 — 마지막 step() 발생(seq)에 딸린 추가정보로 표시됨."""
+        """sub 그리드 — 마지막 step() 발생(seq)에 딸린 추가정보로 표시됨.
+
+        ★요건: 12단계 망고 로그 '저장이 완료되었습니다' 이후 메세지는
+        파일에는 남기되 화면(##SUB##)에는 내지 않는다.
+        """
         seq = self._step_seq
         ts = self._sub_ts(seq)
-        safe_print(f"[{ts}] {SUB_LINE_MARK}{seq}##{msg}")
+        text = str(msg or "")
         try:
-            self._log_file.write(f"[{ts}]   {msg}\n")
+            self._log_file.write(f"[{ts}]   {text}\n")
             self._log_file.flush()
         except Exception:
             pass
+        # 저장완료 메세지 자체는 화면에 남기고, 그 다음부터 mute
+        is_save_done = bool(SAVE_COMPLETE_MSG_PATTERN.search(text))
+        if getattr(self, "_mute_sub_after_save_complete", False) and not is_save_done:
+            return
+        safe_print(f"[{ts}] {SUB_LINE_MARK}{seq}##{text}")
+        if is_save_done and int(getattr(self, "_current_step", 0) or 0) == 12:
+            self._mute_sub_after_save_complete = True
 
     @staticmethod
     def label_for_tag(tag: str) -> str:
@@ -593,7 +612,6 @@ class RunCtx:
                 }
             )
             ts = self._sub_ts(seq)
-            safe_print(f"[{ts}] {SUB_SHOT_MARK}{seq}##{path}##{label}")
             try:
                 self._log_file.write(
                     f"[{ts}]   [샷] {self.step_i:02d}. {label} -> {path.name}\n"
@@ -601,6 +619,9 @@ class RunCtx:
                 self._log_file.flush()
             except Exception:  # noqa: BLE001
                 pass
+            # ★12항 저장완료 이후 화면 SUB/샷 제외 (파일·갤러리에는 보관)
+            if not getattr(self, "_mute_sub_after_save_complete", False):
+                safe_print(f"[{ts}] {SUB_SHOT_MARK}{seq}##{path}##{label}")
             return path
         except Exception as e:  # noqa: BLE001
             self.info(f"[샷 실패] {label}: {e}")
@@ -1021,6 +1042,18 @@ def ensure_mango_extension_settings(
 
 # ── 엑셀 ──────────────────────────────────────────────────────
 
+def is_toc_row(label: str) -> bool:
+    """목차 행 여부 — 총건수/처리 대상에서 제외.
+
+    ★요건: 총건수는 목차를 제외하고 계산.
+    헤더(1행)는 원래부터 읽지 않으며, 라벨이 '목차'인 데이터 행도 제외.
+    """
+    t = str(label or "").strip()
+    if not t:
+        return False
+    return t == "목차" or t.startswith("목차") or t.upper() == "TOC"
+
+
 def read_excel(path: str) -> list[dict]:
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
@@ -1037,8 +1070,12 @@ def read_excel(path: str) -> list[dict]:
     for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
         label = str(row[label_col].value or "").strip()
         url = str(row[url_col].value or "").strip()
-        if url:
-            rows.append({"row": i, "label": label, "url": url})
+        if not url:
+            continue
+        # ★총건수·처리: 목차 행 제외 (헤더 1행은 위 min_row=2로 이미 제외)
+        if is_toc_row(label):
+            continue
+        rows.append({"row": i, "label": label, "url": url})
     return rows
 
 
@@ -2866,6 +2903,8 @@ def run_save_submit_and_verify(
                 found_n = n_parsed
         ctx.save_count_snapshot = found_n
         ctx.step(12, "수집후 DB 최종 저장건수 로그 확인")
+        # 샷은 저장완료 mute 전에 (12항 확인 샷은 화면에 남김)
+        ctx.shot(page, "12_count_logged", rn)
         log_lines = list(getattr(ctx, "mango_save_log_lines", []) or [])
         if not log_lines:
             # 폴백: 화면에 남은 텍스트에서 한 번 더 수확
@@ -2877,14 +2916,16 @@ def run_save_submit_and_verify(
         if log_lines:
             for ln in log_lines:
                 ctx.info(ln)
+                # 완료 메세지까지만 화면 SUB — 이후는 mute (요건)
+                if SAVE_COMPLETE_MSG_PATTERN.search(ln):
+                    break
         else:
             # 최소 구분 메세지라도 남김
             ctx.info("......신규상품의 저장을 시작합니다.")
-            ctx.info(f"상품 {found_n}건이 수집, 저장되었다 (신호문구={hit!r})")
             ctx.info("......신규상품의 저장을 완료하였습니다.")
-        ctx.shot(page, "12_count_logged", rn)
         ctx.save_count_logged = True
 
+        # 이 아래 info/샷 들은 파일·갤러리에만 남고 화면 SUB에는 안 나감(mute)
         verify_row_save_done(page, ctx, rn, save_count)
         # 10·11·12 모두 확인된 경우에만 서버 저장 성공 → 13항 초기화 허용
         if not (

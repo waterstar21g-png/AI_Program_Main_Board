@@ -1,7 +1,8 @@
 """P2(collect.py) stdout ↔ 보드 main/sub 그리드 프로토콜 (tk 불필요, 테스트 가능).
 
 collect.py 는 화면에 보여야 하는 줄만 다음 마커로 표준출력에 보낸다:
-  ##META##<field>##<value>       main 상단 고정 5항목(총건수·완료건·순번·수집필드·URL)
+  ##META##<field>##<value>       main 상단 고정 항목(총건수·완료·수집필드·URL)
+  ##META##진행##<n>              화면 미표시 — 카테고리URL목록 진행행 적색용
   ##MAIN##<seq>##<n>##<msg>      1~13단계 (main 그리드, 발생마다 새 seq)
   ##SUB##<seq>##<msg>            그 발생(seq)에 딸린 추가정보 (sub 그리드)
   ##SUBSHOT##<seq>##<path>##<label>   그 발생(seq)에 딸린 스크린샷
@@ -15,20 +16,23 @@ from __future__ import annotations
 import re
 import time
 
+# ★요건(2026-08-08): 완료건→완료, 순번 삭제. 총건수는 목차행 제외 계산.
 META_FIELDS: tuple[str, ...] = (
     "총건수",
-    "완료건",
-    "순번",
+    "완료",
     "수집 필드",
     "카테고리 URL",
 )
+
+# 화면 META 줄에는 안 나오고, 진행행 적색 표시에만 쓰는 내부 필드
+META_INTERNAL_FIELDS: frozenset[str] = frozenset({"진행", "순번"})
 
 # main 상단 META 1줄 표시용 구분자
 META_LINE_SEP = " | "
 
 
 def format_meta_line(values: dict[str, str]) -> str:
-    """엑셀 진행 정보 5항목을 한 줄 문자열로 합친다 (보드 main 상단)."""
+    """엑셀 진행 정보 항목을 한 줄 문자열로 합친다 (보드 main 상단)."""
     parts: list[str] = []
     for field in META_FIELDS:
         val = str(values.get(field, "") or "").strip()

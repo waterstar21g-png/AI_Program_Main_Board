@@ -26,12 +26,14 @@ from library import (  # noqa: E402
     entries_annotated,
     is_in_library,
     load,
+    read_category_url_rows,
     remove_path,
     search_xlsx,
     set_selected,
 )
 from log_protocol import (  # noqa: E402
     META_FIELDS,
+    META_INTERNAL_FIELDS,
     format_meta_line,
     parse_line,
     step_tag,
@@ -272,24 +274,31 @@ class BoardApp(tk.Tk):
             messagebox.showerror("저장 실패", str(e))
             return
         self.p1_status.configure(text=f"저장됨: {path}", fg="#15803d")
-        # P2 목록에 바로 추가
+        # P2 디렉터리목록·카테고리URL목록에 바로 반영
         add_paths([str(path)])
+        try:
+            self.var_dir.set(str(Path(path).parent))
+        except Exception:
+            pass
         self._refresh_p2_list()
-        if messagebox.askyesno("P2로 이동", f"엑셀 저장·P2 목록에 추가했습니다.\n\n{path}\n\nP2 화면으로 갈까요?"):
+        self._load_category_url_list(str(path))
+        if messagebox.askyesno("P2로 이동", f"엑셀 저장·카테고리URL목록에 반영했습니다.\n\n{path}\n\nP2 화면으로 갈까요?"):
             self._show("p2")
 
     # ── P2 ─────────────────────────────────────────────
     def _build_p2(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="P2 — P1 엑셀을 로컬에서 찾아 목록에 넣고, 목록에서만 선택·실행",
+            text="P2 — 폴더의 엑셀 파일 선택 → 카테고리URL목록 확인 → 수집 실행",
             bg="#f1f5f9",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",
         ).pack(fill="x", pady=(0, 6))
 
-        # 1. 검색
-        search = tk.LabelFrame(parent, text="1. 로컬에서 엑셀 찾아 추가", bg="#ffffff", padx=8, pady=6)
+        # 1. 디렉터리 파일 목록 (리스트박스 + 스크롤)
+        search = tk.LabelFrame(
+            parent, text="1. 디렉터리 파일 목록", bg="#ffffff", padx=8, pady=6
+        )
         search.pack(fill="x")
 
         self.var_dir = tk.StringVar(value=(default_roots() or [str(Path.home())])[0])
@@ -305,27 +314,35 @@ class BoardApp(tk.Tk):
         r2.pack(fill="x", pady=2)
         tk.Label(r2, text="필터", width=8, anchor="w", bg="#ffffff").pack(side="left")
         tk.Entry(r2, textvariable=self.var_q, width=20).pack(side="left")
-        tk.Button(r2, text="검색", command=self._search_xlsx, bg="#e2e8f0").pack(side="left", padx=6)
-        tk.Button(r2, text="선택 → 목록 추가", command=self._add_found).pack(side="left")
+        tk.Button(r2, text="파일 새로고침", command=self._search_xlsx, bg="#e2e8f0").pack(
+            side="left", padx=6
+        )
+        tk.Button(r2, text="선택 파일 열기", command=self._add_found).pack(side="left")
 
-        # 1번 검색결과 그리드 · 2번 보관목록 동일 높이
-        self._p2_list_height = 4
+        self._p2_file_list_height = 5
+        self._p2_url_list_height = 8
 
         found_wrap = tk.Frame(search, bg="#ffffff")
         found_wrap.pack(fill="x", pady=4)
         self.found_list = tk.Listbox(
             found_wrap,
-            height=self._p2_list_height,
-            selectmode="extended",
+            height=self._p2_file_list_height,
+            selectmode="browse",
             font=("Consolas", 9),
+            exportselection=False,
         )
         found_sb = tk.Scrollbar(found_wrap, orient="vertical", command=self.found_list.yview)
         self.found_list.configure(yscrollcommand=found_sb.set)
-        self.found_list.pack(side="left", fill="x", expand=True)
+        self.found_list.pack(side="left", fill="both", expand=True)
         found_sb.pack(side="right", fill="y")
+        self.found_list.bind("<<ListboxSelect>>", self._on_found_select)
+        self.found_list.bind("<Double-Button-1>", lambda _e: self._add_found())
+        self.found_list.bind("<MouseWheel>", self._on_found_mousewheel)
+        self.found_list.bind("<Button-4>", self._on_found_mousewheel)
+        self.found_list.bind("<Button-5>", self._on_found_mousewheel)
         self._found_paths: list[str] = []
 
-        # 실행 버튼 — 2.보관목록 위에 가로 배치
+        # 실행 버튼
         actions = tk.LabelFrame(parent, text="실행", bg="#ffffff", padx=8, pady=6)
         actions.pack(fill="x", pady=(8, 0))
 
@@ -341,7 +358,7 @@ class BoardApp(tk.Tk):
         ).pack(side="left", padx=(0, 8))
         tk.Button(
             btn_row,
-            text="선택 파일로 수집 시작",
+            text="수집 시작",
             command=self._run_p2,
             bg="#2563eb",
             fg="white",
@@ -359,7 +376,7 @@ class BoardApp(tk.Tk):
             padx=10,
             pady=4,
         ).pack(side="left", padx=6)
-        tk.Button(btn_row, text="목록에서 제거", command=self._remove_lib).pack(
+        tk.Button(btn_row, text="파일 목록에서 제거", command=self._remove_lib).pack(
             side="left", padx=6
         )
         tk.Button(btn_row, text="새로고침", command=self._refresh_p2_list).pack(side="left")
@@ -385,29 +402,32 @@ class BoardApp(tk.Tk):
             font=("Malgun Gothic", 8),
         ).pack(fill="x", pady=(4, 0))
 
-        # 2. 보관 목록 — 1번 데이터 그리드와 동일 높이 + 스크롤
+        # 2. 카테고리URL목록 — 엑셀 전체 행 + 진행중 행 적색
         lib = tk.LabelFrame(
-            parent, text="2. 보관 목록 (재실행 시 여기서만 선택)", bg="#ffffff", padx=8, pady=4
+            parent, text="카테고리URL목록", bg="#ffffff", padx=8, pady=4
         )
         lib.pack(fill="x", pady=(8, 0))
 
         lib_wrap = tk.Frame(lib, bg="#ffffff")
-        lib_wrap.pack(fill="x")
+        lib_wrap.pack(fill="both", expand=True)
         self.lib_list = tk.Listbox(
             lib_wrap,
-            height=self._p2_list_height,
+            height=self._p2_url_list_height,
             font=("Malgun Gothic", 10),
             exportselection=False,
+            activestyle="none",
         )
         lib_sb = tk.Scrollbar(lib_wrap, orient="vertical", command=self.lib_list.yview)
         self.lib_list.configure(yscrollcommand=lib_sb.set)
-        self.lib_list.pack(side="left", fill="x", expand=True)
+        self.lib_list.pack(side="left", fill="both", expand=True)
         lib_sb.pack(side="right", fill="y")
-        self.lib_list.bind("<<ListboxSelect>>", self._on_lib_select)
         self.lib_list.bind("<MouseWheel>", self._on_lib_mousewheel)
         self.lib_list.bind("<Button-4>", self._on_lib_mousewheel)
         self.lib_list.bind("<Button-5>", self._on_lib_mousewheel)
-        self._lib_paths: list[str] = []
+        self._lib_paths: list[str] = []  # 하위호환(파일경로 1개 보관용)
+        self._excel_rows: list[dict] = []
+        self._current_excel_path: str = ""
+        self._active_ordinal: int = 0  # 1-based, 0=없음
 
         self.p2_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
         self.p2_sel.pack(fill="x", pady=(2, 0))
@@ -500,8 +520,10 @@ class BoardApp(tk.Tk):
         d = filedialog.askdirectory(initialdir=self.var_dir.get() or str(Path.home()))
         if d:
             self.var_dir.set(d)
+            self._search_xlsx()
 
     def _search_xlsx(self) -> None:
+        """디렉터리의 .xlsx 파일 목록을 리스트박스(+스크롤)에 표시."""
         self.found_list.delete(0, "end")
         self._found_paths = []
         try:
@@ -513,58 +535,144 @@ class BoardApp(tk.Tk):
             self._found_paths.append(f["path"])
             self.found_list.insert("end", f["name"])
         self.p2_status.configure(
-            text=f"검색 {len(files)}개" if files else "해당 폴더에서 .xlsx 없음",
+            text=f"파일 {len(files)}개" if files else "해당 폴더에서 .xlsx 없음",
             fg="#0f172a",
         )
+        # 마지막 선택 파일이 목록에 있으면 자동 선택·카테고리URL목록 로드
+        data = load()
+        last = str(data.get("last_selected") or "").strip()
+        if last and last in self._found_paths:
+            idx = self._found_paths.index(last)
+            self.found_list.selection_clear(0, "end")
+            self.found_list.selection_set(idx)
+            self.found_list.see(idx)
+            self._load_category_url_list(last)
+        elif self._found_paths and not self._current_excel_path:
+            self.found_list.selection_set(0)
+            self.found_list.see(0)
+
+    def _on_found_select(self, _evt=None) -> None:
+        sel = self.found_list.curselection()
+        if not sel:
+            return
+        path = self._found_paths[sel[0]]
+        self._load_category_url_list(path)
+
+    def _on_found_mousewheel(self, event) -> str:
+        if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
+            self.found_list.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0:
+            self.found_list.yview_scroll(1, "units")
+        return "break"
 
     def _add_found(self) -> None:
+        """선택한 디렉터리 파일을 열고 카테고리URL목록에 엑셀 전체 행을 표시."""
         sel = list(self.found_list.curselection())
         if not sel:
-            messagebox.showinfo("안내", "검색 결과에서 파일을 선택하세요.")
+            messagebox.showinfo("안내", "디렉터리 파일 목록에서 엑셀을 선택하세요.")
             return
-        paths = [self._found_paths[i] for i in sel]
-        add_paths(paths)
-        self._refresh_p2_list()
-        self.p2_status.configure(text=f"목록에 {len(paths)}개 추가", fg="#15803d")
+        path = self._found_paths[sel[0]]
+        add_paths([path])
+        self._load_category_url_list(path)
+        self.p2_status.configure(
+            text=f"카테고리URL목록 로드: {Path(path).name} ({len(self._excel_rows)}행)",
+            fg="#15803d",
+        )
+
+    def _format_category_row(self, row: dict, *, active: bool = False) -> str:
+        mark = "▶ " if active else "   "
+        return (
+            f"{mark}{row['ordinal']:03d} | {row.get('label', '')} | {row.get('url', '')}"
+        )
+
+    def _load_category_url_list(self, path: str) -> None:
+        """엑셀 전체 행을 카테고리URL목록 리스트박스에 표시."""
+        self.lib_list.delete(0, "end")
+        self._excel_rows = []
+        self._active_ordinal = 0
+        self._current_excel_path = ""
+        self._lib_paths = []
+        if not path or not os.path.isfile(path):
+            self.p2_sel.configure(text="(파일 없음 — 위에서 엑셀을 선택하세요)")
+            return
+        try:
+            rows = read_category_url_rows(path)
+        except Exception as e:
+            self.p2_sel.configure(text=f"(엑셀 읽기 실패: {e})")
+            messagebox.showerror("엑셀 읽기 실패", str(e))
+            return
+        self._excel_rows = rows
+        self._current_excel_path = path
+        self._lib_paths = [path]
+        for row in rows:
+            self.lib_list.insert("end", self._format_category_row(row, active=False))
+        set_selected(path)
+        self.p2_sel.configure(text=f"{path}  ·  총 {len(rows)}행")
+        if rows:
+            self.lib_list.see(0)
+
+    def _highlight_active_category_row(self, ordinal: int) -> None:
+        """현재 작업 진행중인 행을 적색으로 표시."""
+        try:
+            ord_i = int(ordinal or 0)
+        except (TypeError, ValueError):
+            ord_i = 0
+        if not self._excel_rows:
+            return
+        prev = self._active_ordinal
+        self._active_ordinal = ord_i
+        # 이전 활성 행 복원
+        if 1 <= prev <= len(self._excel_rows):
+            idx = prev - 1
+            self.lib_list.delete(idx)
+            self.lib_list.insert(
+                idx, self._format_category_row(self._excel_rows[idx], active=False)
+            )
+            self.lib_list.itemconfig(idx, foreground="#0f172a", background="#ffffff")
+        # 새 활성 행 적색
+        if 1 <= ord_i <= len(self._excel_rows):
+            idx = ord_i - 1
+            self.lib_list.delete(idx)
+            self.lib_list.insert(
+                idx, self._format_category_row(self._excel_rows[idx], active=True)
+            )
+            self.lib_list.itemconfig(idx, foreground="#b91c1c", background="#fee2e2")
+            self.lib_list.see(idx)
 
     def _refresh_p2_list(self) -> None:
-        self.lib_list.delete(0, "end")
-        self._lib_paths = []
-        items = entries_annotated()
-        data = load()
-        last = data.get("last_selected") or ""
-        select_idx = 0
-        for i, it in enumerate(items):
-            mark = "" if it["exists"] else "[없음] "
-            self.lib_list.insert("end", f"{mark}{it['name']}")
-            self._lib_paths.append(it["path"])
-            if it["path"] == last:
-                select_idx = i
-        if self._lib_paths:
-            self.lib_list.selection_clear(0, "end")
-            self.lib_list.selection_set(select_idx)
-            self.lib_list.see(select_idx)
-            self.p2_sel.configure(text=self._lib_paths[select_idx])
-        else:
-            self.p2_sel.configure(text="(비어 있음 — 위에서 검색 후 추가)")
-
-    def _on_lib_select(self, _evt=None) -> None:
-        sel = self.lib_list.curselection()
-        if not sel:
-            return
-        path = self._lib_paths[sel[0]]
-        self.p2_sel.configure(text=path)
-        set_selected(path)
+        """파일 목록 새로고침 + 현재 엑셀 카테고리URL목록 재로드."""
+        cur = self._current_excel_path
+        self._search_xlsx()
+        if cur and os.path.isfile(cur):
+            self._load_category_url_list(cur)
+            if self._active_ordinal:
+                self._highlight_active_category_row(self._active_ordinal)
+        elif not self._current_excel_path:
+            # 보관 라이브러리 last_selected 우선
+            data = load()
+            last = str(data.get("last_selected") or "").strip()
+            if last and os.path.isfile(last):
+                self._load_category_url_list(last)
 
     def _remove_lib(self) -> None:
-        sel = self.lib_list.curselection()
-        if not sel:
+        path = self._current_excel_path
+        if not path:
+            sel = self.found_list.curselection()
+            if sel:
+                path = self._found_paths[sel[0]]
+        if not path:
+            messagebox.showinfo("안내", "제거할 파일이 없습니다.")
             return
-        remove_path(self._lib_paths[sel[0]])
-        self._refresh_p2_list()
+        remove_path(path)
+        self._current_excel_path = ""
+        self._excel_rows = []
+        self._active_ordinal = 0
+        self.lib_list.delete(0, "end")
+        self.p2_sel.configure(text="(비어 있음 — 위에서 엑셀을 선택하세요)")
+        self._search_xlsx()
 
     def _on_lib_mousewheel(self, event) -> str:
-        """보관 목록 스크롤 (Windows/macOS/Linux)."""
+        """카테고리URL목록 스크롤 (Windows/macOS/Linux)."""
         if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
             self.lib_list.yview_scroll(-1, "units")
         elif getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0:
@@ -598,6 +706,15 @@ class BoardApp(tk.Tk):
         self._meta_item_id = tv.insert("", 0, values=("", "엑셀", line), tags=("meta",))
 
     def _update_meta_row(self, field: str, value: str) -> None:
+        # ★요건: 순번 META 삭제 — 진행행 적색은 내부필드 '진행'으로만
+        if field in META_INTERNAL_FIELDS:
+            try:
+                ord_i = int(str(value or "0").strip() or "0")
+            except ValueError:
+                ord_i = 0
+            if ord_i > 0:
+                self._highlight_active_category_row(ord_i)
+            return
         if field not in META_FIELDS:
             return
         self._meta_values[field] = str(value or "").strip()
@@ -749,19 +866,31 @@ class BoardApp(tk.Tk):
         self.after(0, lambda: self._handle_collect_line(message))
 
     def _run_p2(self) -> None:
-        sel = self.lib_list.curselection()
-        if not sel:
-            messagebox.showinfo("안내", "보관 목록에서 엑셀을 선택하세요.")
-            return
-        path = self._lib_paths[sel[0]]
-        if not is_in_library(path):
-            messagebox.showerror("오류", "목록에 없는 파일입니다.")
+        path = self._current_excel_path
+        if not path:
+            sel = self.found_list.curselection()
+            if sel:
+                path = self._found_paths[sel[0]]
+                self._load_category_url_list(path)
+        if not path:
+            messagebox.showinfo(
+                "안내", "디렉터리 파일 목록에서 엑셀을 선택한 뒤 실행하세요."
+            )
             return
         if not os.path.isfile(path):
             messagebox.showerror("오류", f"파일 없음:\n{path}")
             return
+        # 라이브러리에 없으면 자동 등록 (선택 파일로 바로 실행 가능)
+        if not is_in_library(path):
+            add_paths([path])
         if self._p2_proc and self._p2_proc.poll() is None:
             messagebox.showwarning("실행 중", "이미 수집이 진행 중입니다.")
+            return
+
+        # 실행 직전 카테고리URL목록 최신화
+        self._load_category_url_list(path)
+        if not self._excel_rows:
+            messagebox.showerror("오류", "엑셀에 처리할 카테고리URL 행이 없습니다.")
             return
 
         collect_py = ROOT / "P2" / "collect.py"
@@ -795,9 +924,13 @@ class BoardApp(tk.Tk):
 
         set_selected(path)
         self._clear_p2_log()
+        self._highlight_active_category_row(0)
         mode = "엑셀전체수집·1·2행샷" if verify else "엑셀전체수집"
         self.p2_status.configure(
-            text=f"수집 시작 ({mode}): {path} — 브라우저에서 직접 로그인하세요",
+            text=(
+                f"수집 시작 ({mode}): {Path(path).name} "
+                f"/ 총 {len(self._excel_rows)}행 — 브라우저에서 직접 로그인하세요"
+            ),
             fg="#15803d",
         )
 
