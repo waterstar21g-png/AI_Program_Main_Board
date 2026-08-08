@@ -16,7 +16,8 @@ BATCH 필수 순서 (딴 길로 빠지지 않음 — batch_steps.py):
 
 사용법:
     python collect.py 엑셀.xlsx              # 저장수 3
-    python collect.py 엑셀.xlsx 3 --verify   # 1행 검증(샷·재시도)
+    python collect.py 엑셀.xlsx 3 --verify   # 전체 처리 + 1·2행 단계 스크린샷
+    python collect.py 엑셀.xlsx 3 --max-rows 2   # 앞 2행만 처리(행 수 제한)
     python collect.py 엑셀.xlsx 3 --retries 3 --yes
     run-verify.bat 엑셀.xlsx
 """
@@ -3965,13 +3966,14 @@ def main() -> None:
     ap.add_argument(
         "--verify",
         action="store_true",
-        help="검증 모드: 앞 N행 처리(기본 2), 1·2행 단계 스크린샷, 재시도, 무중단",
+        help="검증 모드: 앞 1·2행 단계 스크린샷 + 무중단 "
+        "(★행 수는 제한하지 않음 — 엑셀 전체 처리)",
     )
     ap.add_argument(
         "--max-rows",
         type=int,
         default=None,
-        help="처리할 최대 행 수 (검증 모드 기본 2)",
+        help="처리할 최대 행 수 (기본: 제한 없음 = 엑셀 전체)",
     )
     ap.add_argument(
         "--shot-first",
@@ -4011,8 +4013,11 @@ def main() -> None:
     verify = bool(args.verify)
     max_rows = args.max_rows
     shot_first = max(0, int(args.shot_first))
-    if verify and max_rows is None:
-        max_rows = max(2, shot_first)  # 검증 기본: 1·2행
+    # ★2026-08-08: --verify 는 "스크린샷 범위"일 뿐 "처리 행 수"가 아니다.
+    # 예전에는 verify면 max_rows를 2로 강제해서, 보드 기본값(체크박스
+    # "1·2행 전과정 스크린샷" ON → --verify 전달)으로 실행하면 엑셀에 자료가
+    # 아무리 많아도 2행만 처리하고 정상 종료했다 — 사용자에게는 "엑셀 2번째
+    # 자료에서 중단"으로 보였다. 행 수 제한은 --max-rows 로만 건다.
 
     if args.tmg_id or args.tmg_pw:
         log("[안내] --id/--pw 는 더 이상 사용하지 않습니다. 브라우저에서 직접 로그인하세요.")
@@ -4176,6 +4181,22 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             pass
         sys.exit(130)
+    except Exception as e:  # noqa: BLE001
+        # 행 루프 밖(브라우저 연결·로그인·갤러리 등)에서 난 예외.
+        # 보드는 ##MAIN##/##SUB##/##META## 마커 없는 줄을 화면에서 버리므로
+        # (board.app._handle_collect_line) 파이썬 트레이스백만 남기면 화면에는
+        # 아무것도 안 보인 채 종료 = "조용히 죽음". 반드시 실행로그로 남긴다.
+        import traceback
+
+        ctx.info(f"[치명] 수집 중 예외로 종료 — {type(e).__name__}: {e}")
+        for tb_line in traceback.format_exc().rstrip().splitlines():
+            ctx.info(f"  {tb_line}")
+        ctx.info(f"[치명] 진행 상황: 성공 {ok} / 실패 {fail} / 대상 {len(rows)}행")
+        try:
+            ctx.write_gallery()
+        except Exception:  # noqa: BLE001
+            pass
+        sys.exit(3)
     finally:
         clear_stop_flag()
         ctx.close()
