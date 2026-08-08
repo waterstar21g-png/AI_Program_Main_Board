@@ -33,7 +33,7 @@ from library import (  # noqa: E402
 from log_protocol import parse_line, step_tag, strip_timestamp  # noqa: E402
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.50"
+VERSION = "2.0.51"
 APP_TITLE = "AI_Program_Main_Board"
 
 
