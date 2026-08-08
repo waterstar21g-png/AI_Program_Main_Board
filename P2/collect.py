@@ -1999,8 +1999,56 @@ def ensure_overlays_closed_before_next(
     return page
 
 
+_MODAL_FIELD_JS = """(root, args) => {
+    const [patSrc, tagId] = args;
+    // 주의: 이전 마커를 여기서 지우면 안 된다 — 필터/카운트를 순서대로
+    // 찾을 때 먼저 찍은 마커가 지워져 Locator가 그 사이에 대상을 잃는다
+    // (요소를 못 찾음 → count()==0 오류로 이어졌던 실제 버그).
+    const re = new RegExp(patSrc);
+    const cands = Array.from(
+        root.querySelectorAll('label, td, th, span, div, p, dt, dd')
+    ).filter((el) => re.test((el.textContent || '').trim()));
+    if (!cands.length) return false;
+    // 가장 짧은(=가장 안쪽) 매치를 우선 — 넓은 공용 div까지 안 올라가게
+    cands.sort(
+        (a, b) => (a.textContent || '').length - (b.textContent || '').length
+    );
+    const INPUTS = 'input[type="text"], input:not([type]), input[type="number"]';
+    for (const start of cands) {
+        let node = start;
+        for (let i = 0; i < 8 && node; i++) {
+            const inputs = node.querySelectorAll(INPUTS);
+            if (inputs.length >= 1) {
+                inputs[0].setAttribute('data-collect-mf', tagId);
+                return true;
+            }
+            node = node.parentElement;
+        }
+    }
+    return false;
+}"""
+
+
 def modal_field(page: Page, label_pattern: re.Pattern):
+    """레이블에 딸린 입력칸 — 넓은 div까지 매치해 다른 레이블의 입력칸을
+    잘못 집는 버그(검색필터명 칸에 저장상품수가 들어가거나 반대) 방지.
+
+    가장 안쪽(짧은 텍스트)에서 매치하는 레이블 노드부터, 입력칸이
+    나올 때까지만 조상을 좁게 타고 올라간다(넓은 공용 컨테이너까지
+    올라가서 다른 필드의 input을 집지 않도록). 찾은 엘리먼트에 임시
+    마커를 달아 진짜 Locator로 돌려준다(하위 호출들이 .first/.count()
+    등을 쓸 수 있어야 하므로 ElementHandle을 그대로 주지 않음).
+    """
     modal = save_modal(page)
+    tag_id = f"mf-{time.time_ns()}"
+    try:
+        ok = modal.evaluate(_MODAL_FIELD_JS, [label_pattern.pattern, tag_id])
+    except Exception:  # noqa: BLE001
+        ok = False
+    if ok:
+        return page.locator(f'[data-collect-mf="{tag_id}"]')
+
+    # 폴백(옛 방식) — 그래도 못 찾으면 넓게라도 시도
     return (
         modal.locator("tr, div, p, label")
         .filter(has_text=label_pattern)
@@ -2389,17 +2437,37 @@ def fill_save_modal_fields(
     save_count: int,
 ) -> None:
     """상품저장설정 모달에 검색필터명·저장상품수를 입력하고 샷 보관."""
+    filter_field = modal_field(page, FILTER_NAME_LABEL)
     ctx.info(f"2. 검색필터명 입력: {label}")
-    type_into(page, modal_field(page, FILTER_NAME_LABEL), label)
+    type_into(page, filter_field, label)
 
     count_field = modal_field(page, SAVE_COUNT_LABEL)
     if count_field.count() == 0:
         ctx.shot(page, "02_no_count_field", rn)
         raise RuntimeError(f"#{rn} 저장상품수 입력칸을 찾지 못함")
+
+    # 안전장치: 두 필드가 실제로 같은 엘리먼트로 잘못 잡히면 즉시 확정 실패
+    # (검색필터명 칸에 저장상품수를 쓰거나 반대로 쓰는 사고 방지)
+    try:
+        same_el = page.evaluate(
+            "([a, b]) => a === b",
+            [filter_field.element_handle(), count_field.element_handle()],
+        )
+    except Exception:  # noqa: BLE001
+        same_el = False
+    if same_el:
+        ctx.shot(page, "02_count_mismatch", rn)
+        raise RuntimeError(
+            f"#{rn} 검색필터명·저장상품수 입력칸이 같은 엘리먼트로 잘못 잡힘 — "
+            "필드 구분 실패"
+        )
+
     ctx.info(f"2. 저장상품수 입력: {save_count}")
     type_into(page, count_field, str(save_count))
-    # 필터명이 지워지는 UI 대비 — 저장 직전 한 번 더
-    type_into(page, modal_field(page, FILTER_NAME_LABEL), label)
+
+    # 필터명이 지워지는 UI 대비 — 저장 직전 한 번 더 (count_field와 다른
+    # 엘리먼트임을 위에서 확인했으므로 이 재입력이 count 값을 덮어쓰지 않음)
+    type_into(page, filter_field, label)
 
     got_count = ""
     try:

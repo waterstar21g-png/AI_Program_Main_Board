@@ -165,6 +165,33 @@ def test_buttons_are_distinct(browser):
     page.close()
 
 
+def test_fill_save_modal_does_not_mix_filter_and_count_fields(browser):
+    """8항: 검색필터명/저장상품수 입력칸이 서로 뒤바뀌면 안 됨.
+
+    회귀: modal_field()가 넓은 #settings div까지 매치해 저장상품수 칸에
+    검색필터명 값이 덮어써지던 버그 재현("저장상품수 불일치 — 실제 'xxx'").
+    """
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    assert C.save_modal_visible(page)
+
+    filter_loc = C.modal_field(page, C.FILTER_NAME_LABEL)
+    count_loc = C.modal_field(page, C.SAVE_COUNT_LABEL)
+    assert filter_loc.count() >= 1
+    assert count_loc.count() >= 1
+    same = page.evaluate(
+        "([a, b]) => a === b",
+        [filter_loc.element_handle(), count_loc.element_handle()],
+    )
+    assert not same, "검색필터명·저장상품수 입력칸이 같은 엘리먼트로 잡힘"
+
+    ctx = FakeCtx()
+    C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
+    assert page.locator("#filter").input_value() == "MEN 라이프스타일"
+    assert page.locator("#count").input_value() == "3"
+    page.close()
+
+
 def test_save_modal_visible_survives_icon_wrapped_button(browser):
     """저장하기 버튼에 아이콘/공백이 섞여 정확매치가 깨져도 모달을 인식해야 함.
 
@@ -774,6 +801,7 @@ if __name__ == "__main__":
             ("popup_blocking_flag", lambda _b: test_chrome_launch_disables_popup_blocking()),
             ("no_popup_block_hint", test_no_popup_no_layer_raises_with_popup_block_hint),
             ("batch_blocks_init", lambda _b: test_batch_step_blocks_init_when_save_awaiting_popup()),
+            ("fill_modal_no_field_mix", test_fill_save_modal_does_not_mix_filter_and_count_fields),
             ("modal_visible_icon_wrapped", test_save_modal_visible_survives_icon_wrapped_button),
             ("admin_host_popup_detected", test_save_popup_on_admin_host_is_detected),
             ("diag_overlay", test_diagnose_detects_overlay_interception),
