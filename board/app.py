@@ -1,10 +1,11 @@
 """
-AI_Program_Main_Board — Python B안 보드 (P1 / P2=구P3)
+AI_Program_Main_Board — Python B안 보드 (P1 / P1_ZARA_DE / P2=구P3)
 아주 단순한 UI, 필요한 기능만.
 """
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -14,18 +15,35 @@ import tkinter as tk
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from types import ModuleType
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "P1"))
 sys.path.insert(0, str(ROOT / "board"))
 
-from crawl import (  # noqa: E402
-    TOP_CELL_MAX_LEN,
-    TOP_GRID_COLS,
-    TOP_GRID_ROWS,
-    crawl_site,
-    save_excel,
-)
+
+def _load_crawl_module(mod_name: str, folder: str) -> ModuleType:
+    """P1 / P1_ZARA_DE 각각 crawl.py 를 충돌 없이 로드."""
+    path = ROOT / folder / "crawl.py"
+    spec = importlib.util.spec_from_file_location(mod_name, path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"crawl 모듈 로드 실패: {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[mod_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+p1_crawl = _load_crawl_module("p1_crawl", "P1")
+p1_zara_crawl = _load_crawl_module("p1_zara_de_crawl", "P1_ZARA_DE")
+
+TOP_CELL_MAX_LEN = p1_crawl.TOP_CELL_MAX_LEN
+TOP_GRID_COLS = p1_crawl.TOP_GRID_COLS
+TOP_GRID_ROWS = p1_crawl.TOP_GRID_ROWS
+crawl_site = p1_crawl.crawl_site
+save_excel = p1_crawl.save_excel
+zara_crawl_site = p1_zara_crawl.crawl_site
+zara_save_excel = p1_zara_crawl.save_excel
+
 from library import (  # noqa: E402
     add_paths,
     default_roots,
@@ -84,6 +102,7 @@ class BoardApp(tk.Tk):
         self.configure(bg="#1a4d5c")
 
         self._p1_result = None
+        self._p1_zara_result = None
         self._p2_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
         self._build()
@@ -102,7 +121,7 @@ class BoardApp(tk.Tk):
         ).pack()
         tk.Label(
             head,
-            text="P1 카테고리 URL 추출  ·  P2 더망고 대량수집",
+            text="P1 · P1_ZARA_DE 카테고리 URL  ·  P2 더망고 대량수집",
             fg="#cbd5e1",
             bg="#164a59",
             font=("Malgun Gothic", 9),
@@ -134,6 +153,16 @@ class BoardApp(tk.Tk):
         )
         self.btn_p1.pack(fill="x", padx=6, pady=6)
 
+        self.btn_p1_zara = tk.Button(
+            side,
+            text="P1_ZARA_DE\n독일자라 URL추출",
+            command=lambda: self._show("p1_zara"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p1_zara.pack(fill="x", padx=6, pady=6)
+
         self.btn_p2 = tk.Button(
             side,
             text="P2\n더망고 대량수집",
@@ -148,21 +177,28 @@ class BoardApp(tk.Tk):
         self.main.pack(side="left", fill="both", expand=True)
 
         self.frame_p1 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self.frame_p1_zara = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p2 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self._build_p1(self.frame_p1)
+        self._build_p1_zara(self.frame_p1_zara)
         self._build_p2(self.frame_p2)
 
     def _show(self, which: str) -> None:
         self.frame_p1.pack_forget()
+        self.frame_p1_zara.pack_forget()
         self.frame_p2.pack_forget()
+        self.btn_p1.configure(bg="#ececec")
+        self.btn_p1_zara.configure(bg="#ececec")
+        self.btn_p2.configure(bg="#ececec")
         if which == "p1":
             self.frame_p1.pack(fill="both", expand=True)
             self.btn_p1.configure(bg="#dbeafe")
-            self.btn_p2.configure(bg="#ececec")
+        elif which == "p1_zara":
+            self.frame_p1_zara.pack(fill="both", expand=True)
+            self.btn_p1_zara.configure(bg="#dbeafe")
         else:
             self.frame_p2.pack(fill="both", expand=True)
             self.btn_p2.configure(bg="#dbeafe")
-            self.btn_p1.configure(bg="#ececec")
 
     # ── P1 ─────────────────────────────────────────────
     def _build_p1(self, parent: tk.Frame) -> None:
@@ -348,6 +384,201 @@ class BoardApp(tk.Tk):
         self._refresh_p2_list()
         self._load_category_url_list(str(path))
         if messagebox.askyesno("P2로 이동", f"엑셀 저장·카테고리URL목록에 반영했습니다.\n\n{path}\n\nP2 화면으로 갈까요?"):
+            self._show("p2")
+
+    # ── P1_ZARA_DE ─────────────────────────────────────
+    def _build_p1_zara(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P1_ZARA_DE — 독일자라 카테고리 → 엑셀 (P2 입력용)",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        form = tk.Frame(parent, bg="#ffffff", padx=10, pady=10, relief="solid", bd=1)
+        form.pack(fill="x")
+
+        self.var_zara_site = tk.StringVar(value=p1_zara_crawl.DEFAULT_SITE)
+        self.var_zara_url = tk.StringVar(value=p1_zara_crawl.DEFAULT_URL)
+        self.var_zara_outdir = tk.StringVar(value=str(Path.home() / "Downloads"))
+
+        self._row(form, "사이트명", self.var_zara_site)
+        self._row(form, "사이트 URL", self.var_zara_url)
+
+        tops_wrap = tk.Frame(form, bg="#ffffff")
+        tops_wrap.pack(fill="x", pady=3)
+        tk.Label(
+            tops_wrap,
+            text="상위 카테고리",
+            width=16,
+            anchor="nw",
+            bg="#ffffff",
+        ).pack(side="left", anchor="n", pady=2)
+        tops_right = tk.Frame(tops_wrap, bg="#ffffff")
+        tops_right.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            tops_right,
+            text=(
+                f"{TOP_GRID_ROWS}행×{TOP_GRID_COLS}칸 · 칸당 {TOP_CELL_MAX_LEN}자 · "
+                "카테고리는 직접 입력 · 명1:명2 입력 시 엑셀 상위명을 명2로 출력"
+            ),
+            bg="#ffffff",
+            fg="#64748b",
+            anchor="w",
+            font=("Malgun Gothic", 8),
+        ).pack(fill="x", pady=(0, 2))
+        self._p1_zara_top_vars: list[tk.StringVar] = []
+        vcmd = (self.register(self._validate_p1_top_cell), "%P")
+        grid = tk.Frame(tops_right, bg="#ffffff")
+        grid.pack(fill="x")
+        # ★요건: 카테고리는 입력으로 지정 — 기본 프리필 없음
+        for _r in range(TOP_GRID_ROWS):
+            row_f = tk.Frame(grid, bg="#ffffff")
+            row_f.pack(fill="x", pady=1)
+            for _c in range(TOP_GRID_COLS):
+                var = tk.StringVar(value="")
+                self._p1_zara_top_vars.append(var)
+                tk.Entry(
+                    row_f,
+                    textvariable=var,
+                    width=TOP_CELL_MAX_LEN + 1,
+                    font=("Malgun Gothic", 9),
+                    justify="center",
+                    validate="key",
+                    validatecommand=vcmd,
+                ).pack(side="left", padx=1)
+
+        out_row = tk.Frame(form, bg="#ffffff")
+        out_row.pack(fill="x", pady=3)
+        tk.Label(out_row, text="저장 폴더", width=16, anchor="w", bg="#ffffff").pack(
+            side="left"
+        )
+        tk.Entry(out_row, textvariable=self.var_zara_outdir).pack(
+            side="left", fill="x", expand=True
+        )
+        tk.Button(out_row, text="…", width=3, command=self._pick_zara_outdir).pack(
+            side="left", padx=4
+        )
+
+        actions = tk.Frame(parent, bg="#f1f5f9")
+        actions.pack(fill="x", pady=10)
+        self.btn_zara_crawl = tk.Button(
+            actions,
+            text="1. 수집 시작",
+            command=self._run_p1_zara,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=6,
+        )
+        self.btn_zara_crawl.pack(side="left")
+        self.btn_zara_save = tk.Button(
+            actions,
+            text="2. 엑셀 저장",
+            command=self._save_p1_zara,
+            state="disabled",
+            padx=12,
+            pady=6,
+        )
+        self.btn_zara_save.pack(side="left", padx=8)
+        tk.Button(actions, text="독일자라 기본값", command=self._p1_zara_defaults).pack(
+            side="left"
+        )
+
+        self.p1_zara_status = tk.Label(
+            parent, text="", bg="#f1f5f9", anchor="w", justify="left"
+        )
+        self.p1_zara_status.pack(fill="x", pady=4)
+
+        self.p1_zara_preview = tk.Text(parent, height=14, font=("Consolas", 9), wrap="none")
+        self.p1_zara_preview.pack(fill="both", expand=True)
+
+    def _p1_zara_top_values(self) -> list[str]:
+        out: list[str] = []
+        for var in getattr(self, "_p1_zara_top_vars", []):
+            s = (var.get() or "").strip()
+            if s:
+                out.append(s)
+        return out
+
+    def _pick_zara_outdir(self) -> None:
+        d = filedialog.askdirectory(
+            initialdir=self.var_zara_outdir.get() or str(Path.home())
+        )
+        if d:
+            self.var_zara_outdir.set(d)
+
+    def _p1_zara_defaults(self) -> None:
+        self.var_zara_site.set(p1_zara_crawl.DEFAULT_SITE)
+        self.var_zara_url.set(p1_zara_crawl.DEFAULT_URL)
+        # 카테고리 칸은 비움 — 사용자가 입력으로 지정
+        for var in getattr(self, "_p1_zara_top_vars", []):
+            var.set("")
+
+    def _run_p1_zara(self) -> None:
+        self.btn_zara_crawl.configure(state="disabled")
+        self.btn_zara_save.configure(state="disabled")
+        self.p1_zara_status.configure(text="수집 중…", fg="#0f172a")
+        self.p1_zara_preview.delete("1.0", "end")
+        tops = self._p1_zara_top_values()
+
+        def work() -> None:
+            result = zara_crawl_site(
+                self.var_zara_site.get(), self.var_zara_url.get(), tops
+            )
+            self.after(0, lambda: self._p1_zara_done(result))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _p1_zara_done(self, result) -> None:
+        self.btn_zara_crawl.configure(state="normal")
+        self._p1_zara_result = result
+        if not result.ok:
+            self.p1_zara_status.configure(
+                text="실패: " + "; ".join(result.errors), fg="#b91c1c"
+            )
+            return
+        self.btn_zara_save.configure(state="normal")
+        msg = f"완료 · {result.platform} · {result.total}건"
+        if result.warnings:
+            msg += " · " + " / ".join(result.warnings)
+        self.p1_zara_status.configure(text=msg, fg="#15803d")
+        lines = ["상위 | 중위 | 하위 | 최종 | 상위최종 | URL", "-" * 80]
+        for r in result.rows[:80]:
+            lines.append(
+                f"{r.top} | {r.mid or '—'} | {r.low or '—'} | {r.final} | "
+                f"{r.top_final_label} | {r.final_category_url}"
+            )
+        if result.total > 80:
+            lines.append(f"… 외 {result.total - 80}행 (엑셀에 전체 포함)")
+        self.p1_zara_preview.insert("1.0", "\n".join(lines))
+
+    def _save_p1_zara(self) -> None:
+        if not self._p1_zara_result or not self._p1_zara_result.ok:
+            return
+        try:
+            path = zara_save_excel(
+                self._p1_zara_result.rows,
+                self._p1_zara_result.site_name,
+                self.var_zara_outdir.get(),
+            )
+        except Exception as e:
+            messagebox.showerror("저장 실패", str(e))
+            return
+        self.p1_zara_status.configure(text=f"저장됨: {path}", fg="#15803d")
+        add_paths([str(path)])
+        try:
+            self.var_dir.set(str(Path(path).parent))
+        except Exception:
+            pass
+        self._refresh_p2_list()
+        self._load_category_url_list(str(path))
+        if messagebox.askyesno(
+            "P2로 이동",
+            f"엑셀 저장·카테고리URL목록에 반영했습니다.\n\n{path}\n\nP2 화면으로 갈까요?",
+        ):
             self._show("p2")
 
     # ── P2 ─────────────────────────────────────────────

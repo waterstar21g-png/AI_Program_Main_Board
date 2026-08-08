@@ -1,0 +1,639 @@
+"""
+P1_ZARA_DE — ZARA Deutschland(zara.com/de) 카테고리 URL → 엑셀
+
+P1(ABC마트/A-RT)을 복제한 신규 프로젝트.
+엑셀 헤더·상위칸(명1:명2) 규칙은 P1과 동일 → P2 입력으로 사용 가능.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass, field
+from datetime import date
+from pathlib import Path
+from typing import Any
+from urllib.parse import urljoin, urlparse
+
+import requests
+from bs4 import BeautifulSoup
+from openpyxl import Workbook
+
+DEFAULT_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+DEFAULT_SITE = "독일자라"
+DEFAULT_URL = "https://www.zara.com/de/en/user/order"
+# 상위 카테고리는 보드/CLI 입력으로만 지정 (기본 프리필 없음)
+DEFAULT_TOPS: list[str] = []
+
+EXCEL_HEADERS = [
+    "상위 카테고리명",
+    "중위 카테고리명",
+    "하위 카테고리명",
+    "최종 카테고리명",
+    "상위 최종 카테고리명",
+    "최종 카테고리 URL주소",
+]
+
+# 보드 입력 그리드: 3행 × 10칸 = 최대 30개, 칸당 15자
+TOP_GRID_ROWS = 3
+TOP_GRID_COLS = 10
+MAX_TOP = TOP_GRID_ROWS * TOP_GRID_COLS
+TOP_CELL_MAX_LEN = 15
+
+# ZARA 카테고리 링크: /de/de|en/slug-l123.html 또는 -m123.html
+ZARA_CAT_HREF_RE = re.compile(
+    r"^https?://(?:www\.)?zara\.com/de/(?:de|en)/[^?\s#]+-[lm]\d+\.html",
+    re.I,
+)
+ZARA_CAT_PATH_RE = re.compile(r"/de/(?:de|en)/[^?\s#]+-[lm]\d+\.html", re.I)
+
+# 독일어·영문 섹션명 동의어 (필터 매칭용)
+TOP_ALIASES: dict[str, set[str]] = {
+    "DAMEN": {"DAMEN", "WOMAN", "WOMEN", "FRAUEN", "LADIES"},
+    "HERREN": {"HERREN", "MAN", "MEN", "MÄNNER", "MAENNER"},
+    "KINDER": {"KINDER", "KIDS", "CHILD", "CHILDREN", "NIÑO", "NINO"},
+}
+
+
+@dataclass
+class Leaf:
+    top: str
+    mid: str
+    low: str
+    final: str
+    category_url: str
+    cat_id: str | None = None
+
+
+@dataclass
+class HierarchyRow:
+    site_name: str
+    top: str
+    mid: str
+    low: str
+    final: str
+    top_final_label: str
+    final_category_url: str
+
+
+@dataclass
+class CrawlResult:
+    ok: bool
+    site_name: str
+    site_url: str
+    platform: str = ""
+    applied_tops: list[str] = field(default_factory=list)
+    rows: list[HierarchyRow] = field(default_factory=list)
+    total: int = 0
+    errors: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+
+def normalize_url(raw: str) -> str:
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError("사이트 URL이 비어 있습니다.")
+    return s if s.startswith("http") else f"https://{s}"
+
+
+def parse_top_cell(raw: str) -> tuple[str, str] | None:
+    """상위 카테고리 칸 1개 해석.
+
+    - ``카테고리명1`` → 사이트 매칭·엑셀 모두 동일
+    - ``카테고리명1:카테고리명2`` → 사이트는 명1로 매칭, 엑셀 출력은 명2로 치환
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if len(s) > TOP_CELL_MAX_LEN:
+        s = s[:TOP_CELL_MAX_LEN]
+    if ":" in s:
+        left, right = s.split(":", 1)
+        match = left.strip()
+        excel = right.strip()
+        if not match:
+            return None
+        if not excel:
+            excel = match
+        return match, excel
+    return s, s
+
+
+def parse_tops(
+    raw: list[str], max_n: int = MAX_TOP
+) -> tuple[list[str], dict[str, str]]:
+    seen: set[str] = set()
+    match_names: list[str] = []
+    rename: dict[str, str] = {}
+    for r in raw:
+        parsed = parse_top_cell(r)
+        if parsed is None:
+            continue
+        match, excel = parsed
+        key = match.upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        match_names.append(match)
+        rename[key] = excel
+        if len(match_names) >= max_n:
+            break
+    return match_names, rename
+
+
+def sanitize_tops(raw: list[str], max_n: int = MAX_TOP) -> list[str]:
+    names, _rename = parse_tops(raw, max_n=max_n)
+    return names
+
+
+def excel_top_name(site_top: str, rename: dict[str, str]) -> str:
+    key = (site_top or "").strip().upper()
+    if key in rename:
+        return rename[key]
+    return (site_top or "").strip()
+
+
+def top_final_label(top: str, final: str) -> str:
+    t, f = top.strip(), final.strip()
+    if not t:
+        return f
+    if not f:
+        return t
+    return f"{t} {f}"
+
+
+def clean_text(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "")).strip()
+
+
+def is_zara_de_platform(html: str, url: str) -> bool:
+    u = (url or "").lower()
+    h = (html or "").lower()
+    # /de/en/… (영문 UI) · /de/de/… (독문 UI) · /de/ 모두 DE 스토어
+    if "zara.com" in u and re.search(r"(^|/)de(/|$)", urlparse(u).path):
+        return True
+    if "zara.com/de" in h or "zara deutschland" in h:
+        return True
+    if "zara" in h and ("/de/de/" in h or "/de/en/" in h or 'lang="de"' in h):
+        return True
+    return False
+
+
+def zara_store_homes(site_url: str) -> list[str]:
+    """카테고리 수집용 스토어 홈 후보 (주문/계정 URL이어도 DE 스토어 루트로)."""
+    parsed = urlparse(normalize_url(site_url))
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    path = (parsed.path or "/").lower()
+    homes: list[str] = []
+    if "/de/en" in path:
+        homes.append(f"{origin}/de/en/")
+        homes.append(f"{origin}/de/de/")
+    elif "/de/de" in path:
+        homes.append(f"{origin}/de/de/")
+        homes.append(f"{origin}/de/en/")
+    homes.append(f"{origin}/de/")
+    # 중복 제거 순서 유지
+    out: list[str] = []
+    for h in homes:
+        if h not in out:
+            out.append(h)
+    return out
+
+
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update(
+        {
+            "User-Agent": DEFAULT_UA,
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+            "Accept-Language": "de-DE,de;q=0.9,en;q=0.8,ko;q=0.7",
+            "Cache-Control": "no-cache",
+        }
+    )
+    return s
+
+
+def fetch_text(url: str, session: requests.Session | None = None) -> str:
+    sess = session or _session()
+    res = sess.get(url, timeout=60, allow_redirects=True)
+    if res.status_code == 403:
+        raise RuntimeError(
+            f"ZARA 접속이 차단되었습니다 (HTTP 403): {url}\n"
+            "  · 로컬 PC 브라우저에서 열리는지 확인하세요.\n"
+            "  · VPN/사내망 차단이면 네트워크를 바꾼 뒤 다시 시도하세요."
+        )
+    if not res.ok:
+        raise RuntimeError(f"페이지 요청 실패 ({res.status_code}): {url}")
+    res.encoding = res.apparent_encoding or res.encoding or "utf-8"
+    return res.text
+
+
+def _abs_zara_url(origin: str, href: str) -> str | None:
+    if not href:
+        return None
+    abs_u = urljoin(origin + "/", href.strip())
+    if ZARA_CAT_HREF_RE.match(abs_u):
+        return abs_u.split("?")[0].split("#")[0]
+    if ZARA_CAT_PATH_RE.search(abs_u):
+        return abs_u.split("?")[0].split("#")[0]
+    return None
+
+
+def _cat_id_from_url(url: str) -> str | None:
+    m = re.search(r"-([lm])(\d+)\.html$", url or "", re.I)
+    return m.group(2) if m else None
+
+
+def _normalize_top_key(name: str) -> str:
+    return clean_text(name).upper()
+
+
+def _top_match_keys(name: str) -> set[str]:
+    """입력/사이트 상위명을 비교용 키 집합으로."""
+    key = _normalize_top_key(name)
+    keys = {key}
+    for canon, alts in TOP_ALIASES.items():
+        if key == canon or key in alts:
+            keys |= {canon} | set(alts)
+    return keys
+
+
+def filter_by_top(leaves: list[Leaf], tops: list[str]) -> list[Leaf]:
+    if not tops:
+        return []
+    allowed: set[str] = set()
+    for t in tops:
+        allowed |= _top_match_keys(t)
+    out: list[Leaf] = []
+    for leaf in leaves:
+        if _normalize_top_key(leaf.top) in allowed or (
+            _top_match_keys(leaf.top) & allowed
+        ):
+            out.append(leaf)
+    return out
+
+
+def _dedupe(leaves: list[Leaf]) -> list[Leaf]:
+    seen: set[str] = set()
+    out: list[Leaf] = []
+    for leaf in leaves:
+        key = "|".join(
+            [leaf.top, leaf.mid, leaf.low, leaf.final, leaf.cat_id or leaf.category_url]
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(leaf)
+    return out
+
+
+def _walk_zara_json(
+    node: Any,
+    *,
+    origin: str,
+    path: list[str],
+    leaves: list[Leaf],
+) -> None:
+    if not isinstance(node, dict):
+        if isinstance(node, list):
+            for child in node:
+                _walk_zara_json(child, origin=origin, path=path, leaves=leaves)
+        return
+
+    name = clean_text(
+        str(
+            node.get("name")
+            or node.get("categoryName")
+            or node.get("sectionName")
+            or ""
+        )
+    )
+    kids = (
+        node.get("subcategories")
+        or node.get("categories")
+        or node.get("children")
+        or []
+    )
+    href = str(node.get("url") or node.get("seoKeyword") or node.get("path") or "")
+    cat_id = node.get("id") or node.get("categoryId")
+    if href and not href.startswith("http"):
+        if href.startswith("/"):
+            href = urljoin(origin, href)
+        elif re.search(r"-[lm]\d+$", href, re.I):
+            href = f"{origin}/de/de/{href}.html"
+        else:
+            href = ""
+
+    abs_url = _abs_zara_url(origin, href) if href else None
+    new_path = path + ([name] if name else [])
+
+    if abs_url and name and not kids:
+        top = new_path[0] if new_path else name
+        mid = new_path[1] if len(new_path) > 2 else ""
+        low = new_path[2] if len(new_path) > 3 else ""
+        final = name
+        if len(new_path) == 2:
+            mid, low = "", ""
+        elif len(new_path) == 3:
+            mid, low = new_path[1], ""
+        leaves.append(
+            Leaf(
+                top=top,
+                mid=mid,
+                low=low,
+                final=final,
+                category_url=abs_url,
+                cat_id=str(cat_id) if cat_id else _cat_id_from_url(abs_url),
+            )
+        )
+    elif abs_url and name and kids:
+        # 중간 노드에도 자체 URL이 있으면 최종 후보로 포함
+        top = new_path[0] if new_path else name
+        mid = new_path[1] if len(new_path) > 2 else (new_path[1] if len(new_path) == 2 else "")
+        low = new_path[2] if len(new_path) > 3 else ""
+        if len(new_path) >= 2:
+            leaves.append(
+                Leaf(
+                    top=top,
+                    mid=mid if len(new_path) > 2 else "",
+                    low=low,
+                    final=name,
+                    category_url=abs_url,
+                    cat_id=str(cat_id) if cat_id else _cat_id_from_url(abs_url),
+                )
+            )
+
+    if isinstance(kids, list):
+        for child in kids:
+            _walk_zara_json(child, origin=origin, path=new_path, leaves=leaves)
+
+
+def parse_zara_categories_json(text: str, base_url: str) -> list[Leaf]:
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    origin = f"{urlparse(base_url).scheme}://{urlparse(base_url).netloc}"
+    leaves: list[Leaf] = []
+    root = data.get("categories") if isinstance(data, dict) else data
+    if root is None and isinstance(data, dict):
+        root = data
+    _walk_zara_json(root, origin=origin, path=[], leaves=leaves)
+    return _dedupe(leaves)
+
+
+def parse_zara_html_links(html: str, base_url: str) -> list[Leaf]:
+    """HTML 앵커에서 ZARA DE 카테고리 링크를 수집 (API 실패 시 폴백)."""
+    # html.parser 우선 (lxml 미설치 환경 대응)
+    soup = BeautifulSoup(html, "html.parser")
+    origin = f"{urlparse(base_url).scheme}://{urlparse(base_url).netloc}"
+    leaves: list[Leaf] = []
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        abs_url = _abs_zara_url(origin, href)
+        if not abs_url:
+            continue
+        name = clean_text(a.get_text()) or clean_text(a.get("title") or "")
+        if not name or len(name) > 80:
+            continue
+        # 상위 추정: 슬러그 토큰 기준 (damen 안의 men- 부분문자열 오탐 방지)
+        top = "DAMEN"
+        slug = urlparse(abs_url).path.rsplit("/", 1)[-1].lower()
+        if (
+            slug.startswith("herren")
+            or "-herren-" in f"-{slug}"
+            or slug.startswith("man-")
+            or slug.startswith("men-")
+            or "-man-" in f"-{slug}"
+            or "-men-" in f"-{slug}"
+        ):
+            top = "HERREN"
+        elif (
+            slug.startswith("kinder")
+            or slug.startswith("kids")
+            or "child" in slug
+        ):
+            top = "KINDER"
+        elif (
+            slug.startswith("damen")
+            or slug.startswith("woman")
+            or slug.startswith("women")
+        ):
+            top = "DAMEN"
+        leaves.append(
+            Leaf(
+                top=top,
+                mid="",
+                low="",
+                final=name,
+                category_url=abs_url,
+                cat_id=_cat_id_from_url(abs_url),
+            )
+        )
+    return _dedupe(leaves)
+
+
+def collect_zara_leaves(site_url: str) -> tuple[list[Leaf], list[str]]:
+    """카테고리 트리 수집. (leaves, warnings)
+
+    site_url 이 주문/계정 페이지여도 DE 스토어 홈·categories API 로 수집한다.
+    """
+    warnings: list[str] = []
+    sess = _session()
+    origin = f"{urlparse(site_url).scheme}://{urlparse(site_url).netloc}"
+    homes = zara_store_homes(site_url)
+
+    # 1) categories ajax (de/en · de/de)
+    ajax_urls: list[str] = []
+    for home in homes:
+        ajax_urls.append(urljoin(home, "categories?ajax=true"))
+    ajax_urls.extend(
+        [
+            f"{origin}/de/en/categories?ajax=true",
+            f"{origin}/de/de/categories?ajax=true",
+            "https://www.zara.com/de/en/categories?ajax=true",
+            "https://www.zara.com/de/de/categories?ajax=true",
+        ]
+    )
+    seen_ajax: set[str] = set()
+    for ajax in ajax_urls:
+        if ajax in seen_ajax:
+            continue
+        seen_ajax.add(ajax)
+        try:
+            text = fetch_text(ajax, sess)
+            if text.strip().startswith("{") or text.strip().startswith("["):
+                leaves = parse_zara_categories_json(text, homes[0])
+                if leaves:
+                    return leaves, warnings
+            warnings.append(f"카테고리 API 응답이 JSON이 아님: {ajax}")
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"카테고리 API 실패({ajax}): {e}")
+
+    # 2) HTML 폴백 — 스토어 홈부터
+    last_err: Exception | None = None
+    for home in homes:
+        try:
+            html = fetch_text(home, sess)
+            if not is_zara_de_platform(html, home):
+                raise RuntimeError("HTML이 ZARA DE 형식이 아닙니다.")
+            leaves = parse_zara_html_links(html, home)
+            if leaves:
+                warnings.append("카테고리 API 대신 HTML 링크 폴백으로 수집했습니다.")
+                return leaves, warnings
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            warnings.append(f"HTML 폴백 실패({home}): {e}")
+
+    if last_err is not None:
+        raise last_err
+    return [], warnings
+
+
+def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> CrawlResult:
+    name = (site_name or "").strip() or DEFAULT_SITE
+    try:
+        url = normalize_url(site_url or DEFAULT_URL)
+    except ValueError as e:
+        return CrawlResult(ok=False, site_name=name, site_url=site_url or "", errors=[str(e)])
+
+    tops, rename = parse_tops(top_categories)
+    if not tops:
+        return CrawlResult(
+            ok=False,
+            site_name=name,
+            site_url=url,
+            applied_tops=[],
+            errors=[f"상위 카테고리를 1개 이상 입력하세요. (최대 {MAX_TOP}개)"],
+        )
+
+    if not is_zara_de_platform("", url):
+        # URL만으로도 DE 스토어인지 1차 확인
+        return CrawlResult(
+            ok=False,
+            site_name=name,
+            site_url=url,
+            applied_tops=tops,
+            errors=[
+                "지원하지 않는 사이트 형식입니다. "
+                "P1_ZARA_DE는 zara.com/de (독일자라)만 지원합니다."
+            ],
+        )
+
+    try:
+        leaves, warn_collect = collect_zara_leaves(url)
+    except Exception as e:  # noqa: BLE001
+        return CrawlResult(
+            ok=False,
+            site_name=name,
+            site_url=url,
+            applied_tops=tops,
+            errors=[str(e)],
+        )
+
+    if not leaves:
+        return CrawlResult(
+            ok=False,
+            site_name=name,
+            site_url=url,
+            applied_tops=tops,
+            errors=[
+                "카테고리 메뉴를 찾지 못했습니다. "
+                "로컬 PC에서 ZARA DE 접속·수집을 다시 시도하세요."
+            ],
+            warnings=warn_collect,
+        )
+
+    filtered = filter_by_top(leaves, tops)
+    if not filtered:
+        return CrawlResult(
+            ok=False,
+            site_name=name,
+            site_url=url,
+            applied_tops=tops,
+            errors=[
+                f"지정한 상위 카테고리({', '.join(tops)})에 해당하는 메뉴를 찾지 못했습니다."
+            ],
+            warnings=warn_collect,
+        )
+
+    warnings = list(warn_collect)
+    if len(filtered) < len(leaves):
+        warnings.append(
+            f"상위 필터: 전체 {len(leaves)}건 중 {len(filtered)}건 ({', '.join(tops)})"
+        )
+    aliased = [f"{m}→{rename[m.upper()]}" for m in tops if rename.get(m.upper(), m) != m]
+    if aliased:
+        warnings.append("엑셀 상위명 치환: " + ", ".join(aliased))
+
+    rows = [
+        HierarchyRow(
+            site_name=name,
+            top=excel_top_name(leaf.top, rename),
+            mid=leaf.mid,
+            low=leaf.low,
+            final=leaf.final,
+            top_final_label=top_final_label(
+                excel_top_name(leaf.top, rename), leaf.final
+            ),
+            final_category_url=leaf.category_url,
+        )
+        for leaf in filtered
+    ]
+    return CrawlResult(
+        ok=True,
+        site_name=name,
+        site_url=url,
+        platform="ZARA Deutschland (zara.com/de)",
+        applied_tops=tops,
+        rows=rows,
+        total=len(rows),
+        warnings=warnings,
+    )
+
+
+def save_excel(rows: list[HierarchyRow], site_name: str, out_dir: Path | str) -> Path:
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r'[\\/:*?"<>|]', "_", site_name or "ZARA_DE")[:40]
+    stamp = date.today().strftime("%Y%m%d")
+    path = out / f"{safe}_카테고리URL_LIST_{stamp}.xlsx"
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "카테고리표"
+    ws.append(list(EXCEL_HEADERS))
+    for r in rows:
+        ws.append([r.top, r.mid, r.low, r.final, r.top_final_label, r.final_category_url])
+    wb.save(path)
+    return path
+
+
+def main() -> None:
+    import argparse
+
+    p = argparse.ArgumentParser(description="P1_ZARA_DE 카테고리 URL 추출")
+    p.add_argument("--site", default=DEFAULT_SITE)
+    p.add_argument("--url", default=DEFAULT_URL)
+    p.add_argument(
+        "--tops",
+        default="",
+        help="쉼표 구분 상위 카테고리(필수 입력). 명1:명2 = 사이트명1→엑셀명2 치환",
+    )
+    p.add_argument("--out", default=".", help="엑셀 저장 폴더")
+    args = p.parse_args()
+    tops = [t.strip() for t in args.tops.split(",") if t.strip()]
+    result = crawl_site(args.site, args.url, tops)
+    if not result.ok:
+        print("실패:", "; ".join(result.errors))
+        raise SystemExit(1)
+    path = save_excel(result.rows, result.site_name, args.out)
+    print(f"완료 {result.total}행 → {path}")
+
+
+if __name__ == "__main__":
+    main()
