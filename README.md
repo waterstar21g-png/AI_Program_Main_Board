@@ -32,10 +32,11 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
 
 - **바탕화면/작업표시줄 아이콘** → `boot-from-icon.ps1`  
   1) **기존 보드 종료** (`stop-board.ps1`)  
-  2) GitHub에서 부트 스크립트 최신본 수신  
-  3) `update-if-newer.ps1` → `VERSION`이 **다를 때만** `git pull origin main`  
-  4) `run.bat --noupdate` → pip + **보드 재시작**  
+  2) `update-if-newer.ps1` → `VERSION`이 **다를 때만** `git pull origin main`  
+  3) `run.bat --noupdate` → pip + **보드 재시작**  
 - `.\run.bat` / `.\start.bat` 도 동일 체인. `--noupdate`면 갱신 생략.
+- (v2.0.58부터) 파일 하나하나를 GitHub에서 개별로 다시 받는 단계는 없앴습니다
+  — `git pull` 한 번이 모든 스크립트를 이미 갱신하기 때문입니다.
 
 아이콘이 옛 `run.bat`만 가리키면 반영이 안 됩니다. **한 번** 아래로 갱신하세요:
 
@@ -46,6 +47,13 @@ git pull origin main
 ```
 
 또는 `.\make-desktop-icon.cmd` / `.\바로가기만들기.bat` (동일 — 바탕화면+작업표시줄 새 아이콘).
+
+### `git pull`이 계속 실패하는 PC (사내망/방화벽 등)
+
+`git fetch`/`git pull`이 네트워크 문제로 계속 실패하면, 저장소 폴더에서
+`update-by-zip.bat`을 더블클릭하세요. GitHub에서 최신 소스를 **ZIP으로
+통째로** 받아 현재 폴더에 덮어쓴 뒤 자동으로 보드를 시작합니다(브라우저로
+"Download ZIP" 받아 직접 덮어쓰는 것과 동일한 효과를 자동화한 것).
 
 ### P2 더망고 로그인 · 1·2행 스크린샷
 
