@@ -103,6 +103,7 @@ class FakeCtx:
         self.save_popup_ui_latched = False
         self.row_deadline = time.time() + 120
         self.save_count = 3
+        self.verify = False
 
     def info(self, msg: str) -> None:
         self.msgs.append(msg)
@@ -162,6 +163,71 @@ def test_buttons_are_distinct(browser):
     label = (btn2.get_attribute("value") or btn2.inner_text() or "").strip()
     assert label == "저장하기"
     assert "모두" not in label
+    page.close()
+
+
+def test_find_save_complete_signal_detects_exact_phrase(browser):
+    """'신규상품의 저장이 완료되었습니다' 문구를 최우선으로 즉시 감지해야 함."""
+    page = _open(browser, "nopopup")
+    page.evaluate(
+        """() => {
+            const d = document.createElement('div');
+            d.textContent = '신규상품의 저장이 완료되었습니다';
+            document.body.appendChild(d);
+        }"""
+    )
+    found = C.find_save_complete_signal(page, [])
+    assert found is not None
+    kind, hit, _ = found
+    assert kind == "complete_msg"
+    assert "신규상품의 저장이 완료되었습니다" in hit
+    page.close()
+
+
+def test_wait_for_save_complete_signal_is_immediate_not_blind(browser):
+    """요건: 120초 무행동 대기 없이, 메세지가 뜨면 즉시(짧게) 반환해야 함.
+
+    파이썬 스레드로 페이지를 건드리면 Playwright sync API가 크로스스레드
+    호출을 거부하므로(greenlet 오류), 지연 주입은 브라우저 쪽 setTimeout
+    으로 한다(같은 스레드에서 안전하게 폴링만 반복).
+    """
+    page = _open(browser, "nopopup")
+    ctx = FakeCtx()
+    page.evaluate(
+        """() => {
+            setTimeout(() => {
+                const d = document.createElement('div');
+                d.id = 'complete';
+                d.textContent = '신규상품의 저장이 완료되었습니다';
+                document.body.appendChild(d);
+            }, 400);
+        }"""
+    )
+    start = time.time()
+    found = C.wait_for_save_complete_signal(
+        page, ctx, 1, dialog_msgs=[], timeout_sec=10.0  # type: ignore[arg-type]
+    )
+    elapsed = time.time() - start
+    assert found is not None
+    assert elapsed < 5.0, f"120초류 무행동 대기가 남아있음 (elapsed={elapsed:.1f}s)"
+    page.close()
+
+
+def test_run_save_submit_and_verify_full_flow_is_fast_and_shoots_10_11_12(browser):
+    """9→10→11→12 전체 흐름이 빠르게 끝나고, 10·11·12 각각 스크린샷을 남겨야 함."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    page.fill("#filter", "MEN 라이프스타일")
+    page.fill("#count", "3")
+    ctx = FakeCtx()
+    start = time.time()
+    C.run_save_submit_and_verify(page, ctx, 1, 3)  # type: ignore[arg-type]
+    elapsed = time.time() - start
+    assert ctx.server_save_ok is True
+    assert elapsed < 15.0, f"즉시탐지가 아니라 오래 걸림 (elapsed={elapsed:.1f}s)"
+    assert any("[SHOT] 10_popup_open" in m for m in ctx.msgs), ctx.msgs
+    assert any("[SHOT] 11_popup_closed" in m for m in ctx.msgs), ctx.msgs
+    assert any("[SHOT] 12_count_logged" in m for m in ctx.msgs), ctx.msgs
     page.close()
 
 
@@ -836,6 +902,9 @@ if __name__ == "__main__":
             ("fill_modal_only_filter", test_fill_save_modal_only_touches_filter_field),
             ("fill_modal_no_redundant_retype", test_fill_save_modal_no_redundant_retype_when_filter_already_correct),
             ("fill_modal_fallback_save_count", test_fill_save_modal_falls_back_to_save_count_when_field_empty),
+            ("complete_signal_exact_phrase", test_find_save_complete_signal_detects_exact_phrase),
+            ("complete_signal_immediate", test_wait_for_save_complete_signal_is_immediate_not_blind),
+            ("full_flow_fast_shots_10_11_12", test_run_save_submit_and_verify_full_flow_is_fast_and_shoots_10_11_12),
             ("modal_visible_icon_wrapped", test_save_modal_visible_survives_icon_wrapped_button),
             ("admin_host_popup_detected", test_save_popup_on_admin_host_is_detected),
             ("diag_overlay", test_diagnose_detects_overlay_interception),
