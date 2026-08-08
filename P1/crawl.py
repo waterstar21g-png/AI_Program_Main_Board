@@ -29,7 +29,11 @@ EXCEL_HEADERS = [
     "최종 카테고리 URL주소",
 ]
 
-MAX_TOP = 15
+# 보드 입력 그리드: 3행 × 10칸 = 최대 30개, 칸당 한글 15자
+TOP_GRID_ROWS = 3
+TOP_GRID_COLS = 10
+MAX_TOP = TOP_GRID_ROWS * TOP_GRID_COLS
+TOP_CELL_MAX_LEN = 15
 
 
 @dataclass
@@ -75,21 +79,64 @@ def normalize_url(raw: str) -> str:
     return s if s.startswith("http") else f"https://{s}"
 
 
-def sanitize_tops(raw: list[str], max_n: int = MAX_TOP) -> list[str]:
+def parse_top_cell(raw: str) -> tuple[str, str] | None:
+    """상위 카테고리 칸 1개 해석.
+
+    - ``카테고리명1`` → 사이트 매칭·엑셀 모두 동일
+    - ``카테고리명1:카테고리명2`` → 사이트는 명1로 매칭, 엑셀 출력은 명2로 치환
+    """
+    s = (raw or "").strip()
+    if not s:
+        return None
+    if len(s) > TOP_CELL_MAX_LEN:
+        s = s[:TOP_CELL_MAX_LEN]
+    if ":" in s:
+        left, right = s.split(":", 1)
+        match = left.strip()
+        excel = right.strip()
+        if not match:
+            return None
+        if not excel:
+            excel = match
+        return match, excel
+    return s, s
+
+
+def parse_tops(
+    raw: list[str], max_n: int = MAX_TOP
+) -> tuple[list[str], dict[str, str]]:
+    """입력 칸 목록 → (사이트 매칭용 상위명 목록, 대문자키→엑셀명 맵)."""
     seen: set[str] = set()
-    out: list[str] = []
+    match_names: list[str] = []
+    rename: dict[str, str] = {}
     for r in raw:
-        name = (r or "").strip()
-        if not name:
+        parsed = parse_top_cell(r)
+        if parsed is None:
             continue
-        key = name.upper()
+        match, excel = parsed
+        key = match.upper()
         if key in seen:
             continue
         seen.add(key)
-        out.append(name)
-        if len(out) >= max_n:
+        match_names.append(match)
+        rename[key] = excel
+        if len(match_names) >= max_n:
             break
-    return out
+    return match_names, rename
+
+
+def sanitize_tops(raw: list[str], max_n: int = MAX_TOP) -> list[str]:
+    """하위 호환 — 사이트 매칭용 상위명만 반환."""
+    names, _rename = parse_tops(raw, max_n=max_n)
+    return names
+
+
+def excel_top_name(site_top: str, rename: dict[str, str]) -> str:
+    """사이트 상위명 → 엑셀에 쓸 상위명(별칭 있으면 치환)."""
+    key = (site_top or "").strip().upper()
+    if key in rename:
+        return rename[key]
+    return (site_top or "").strip()
 
 
 def top_final_label(top: str, final: str) -> str:
@@ -297,14 +344,14 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
     except ValueError as e:
         return CrawlResult(ok=False, site_name=name, site_url=site_url or "", errors=[str(e)])
 
-    tops = sanitize_tops(top_categories)
+    tops, rename = parse_tops(top_categories)
     if not tops:
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
             applied_tops=[],
-            errors=["상위 카테고리를 1개 이상 입력하세요. (최대 15개)"],
+            errors=[f"상위 카테고리를 1개 이상 입력하세요. (최대 {MAX_TOP}개)"],
         )
 
     try:
@@ -348,15 +395,20 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
         warnings.append(
             f"상위 필터: 전체 {len(all_leaves)}건 중 {len(leaves)}건 ({', '.join(tops)})"
         )
+    aliased = [f"{m}→{rename[m.upper()]}" for m in tops if rename.get(m.upper(), m) != m]
+    if aliased:
+        warnings.append("엑셀 상위명 치환: " + ", ".join(aliased))
 
     rows = [
         HierarchyRow(
             site_name=name,
-            top=leaf.top,
+            top=excel_top_name(leaf.top, rename),
             mid=leaf.mid,
             low=leaf.low,
             final=leaf.final,
-            top_final_label=top_final_label(leaf.top, leaf.final),
+            top_final_label=top_final_label(
+                excel_top_name(leaf.top, rename), leaf.final
+            ),
             final_category_url=leaf.category_url,
         )
         for leaf in leaves
@@ -396,7 +448,11 @@ def main() -> None:
     p = argparse.ArgumentParser(description="P1 카테고리 URL 추출")
     p.add_argument("--site", default="ABC마트")
     p.add_argument("--url", default="https://abcmart.a-rt.com/?track=W0009")
-    p.add_argument("--tops", default="MEN,WOMEN,KIDS", help="쉼표 구분 상위 카테고리")
+    p.add_argument(
+        "--tops",
+        default="MEN,WOMEN,KIDS",
+        help="쉼표 구분 상위 카테고리 (명1:명2 = 사이트명1→엑셀명2 치환)",
+    )
     p.add_argument("--out", default=".", help="엑셀 저장 폴더")
     args = p.parse_args()
     tops = [t.strip() for t in args.tops.split(",") if t.strip()]
