@@ -42,7 +42,7 @@ if (Test-Path -LiteralPath $bootPs1) {
 
 $sc.WorkingDirectory = $projectRoot
 $sc.WindowStyle = 1
-$sc.Description = "AI_Program_Main_Board (update if VERSION changed)"
+$sc.Description = "AI_Program_Main_Board (stop+update+restart on click)"
 $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,21"
 $sc.Save()
 

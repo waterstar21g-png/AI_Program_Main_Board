@@ -31,6 +31,11 @@ echo   AI_Program_Main_Board  (Python B)
 echo   P1 카테고리URL  /  P2 더망고수집(구P3)
 echo ========================================
 
+if exist "%~dp0stop-board.ps1" (
+  echo [INFO] Ensuring no duplicate board process...
+  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-board.ps1"
+)
+
 where py >nul 2>nul
 if errorlevel 1 goto trypython
 set "PY=py -3"

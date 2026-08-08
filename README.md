@@ -31,10 +31,11 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
 ## 실행
 
 - **바탕화면/작업표시줄 아이콘** → `boot-from-icon.ps1`  
-  1) GitHub에서 `update-if-newer.ps1` 최신본 수신  
-  2) 로컬/원격 `VERSION`이 **다를 때만** `git pull`  
-  3) 보드 실행  
-- `.\run.bat` 도 동일(버전 같을 때 pull 생략). `--noupdate`면 검사 생략.
+  1) **기존 보드 종료** (`stop-board.ps1`)  
+  2) GitHub에서 부트 스크립트 최신본 수신  
+  3) `update-if-newer.ps1` → `VERSION`이 **다를 때만** `git pull origin main`  
+  4) `run.bat --noupdate` → pip + **보드 재시작**  
+- `.\run.bat` / `.\start.bat` 도 동일 체인. `--noupdate`면 갱신 생략.
 
 아이콘이 옛 `run.bat`만 가리키면 반영이 안 됩니다. **한 번** 아래로 갱신하세요:
 
