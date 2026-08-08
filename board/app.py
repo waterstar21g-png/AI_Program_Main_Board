@@ -487,14 +487,76 @@ class BoardApp(tk.Tk):
         tk.Button(actions, text="독일자라 기본값", command=self._p1_zara_defaults).pack(
             side="left"
         )
+        tk.Button(
+            actions,
+            text="로그 지우기",
+            command=self._clear_p1_zara_log,
+        ).pack(side="left", padx=6)
+        tk.Button(
+            actions,
+            text="스크린샷 보기",
+            command=self._show_p1_zara_shot,
+            bg="#0f766e",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=8,
+            pady=4,
+        ).pack(side="left", padx=6)
 
         self.p1_zara_status = tk.Label(
             parent, text="", bg="#f1f5f9", anchor="w", justify="left"
         )
         self.p1_zara_status.pack(fill="x", pady=4)
 
-        self.p1_zara_preview = tk.Text(parent, height=14, font=("Consolas", 9), wrap="none")
-        self.p1_zara_preview.pack(fill="both", expand=True)
+        # 1) 실행로그 그리드 — 2) 실시간 표시
+        log_frame = tk.LabelFrame(
+            parent,
+            text="실행 로그 (실시간)",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
+        )
+        log_frame.pack(fill="both", expand=True, pady=(0, 6))
+        self.p1_zara_log = ttk.Treeview(
+            log_frame,
+            columns=("time", "step", "message"),
+            show="headings",
+            height=10,
+        )
+        self.p1_zara_log.heading("time", text="시각")
+        self.p1_zara_log.heading("step", text="단계")
+        self.p1_zara_log.heading("message", text="내용")
+        self.p1_zara_log.column("time", width=90, minwidth=70, stretch=False, anchor="center")
+        self.p1_zara_log.column("step", width=70, minwidth=50, stretch=False, anchor="center")
+        self.p1_zara_log.column("message", width=640, minwidth=200, stretch=True, anchor="w")
+        zlog_sb = tk.Scrollbar(log_frame, orient="vertical", command=self.p1_zara_log.yview)
+        self.p1_zara_log.configure(yscrollcommand=zlog_sb.set)
+        self.p1_zara_log.pack(side="left", fill="both", expand=True)
+        zlog_sb.pack(side="right", fill="y")
+        self.p1_zara_log.tag_configure("err", foreground="#b91c1c")
+        self.p1_zara_log.tag_configure("ok", foreground="#166534")
+        self.p1_zara_log.tag_configure("shot", foreground="#0f766e")
+
+        # 3) 최종 스크린샷
+        shot_frame = tk.LabelFrame(
+            parent,
+            text="최종 스크린샷",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
+        )
+        shot_frame.pack(fill="both", expand=False)
+        self.p1_zara_shot_label = tk.Label(
+            shot_frame,
+            text="(수집 완료 후 최종 스크린샷이 여기에 표시됩니다)",
+            bg="#f8fafc",
+            fg="#64748b",
+            anchor="center",
+            height=8,
+        )
+        self.p1_zara_shot_label.pack(fill="both", expand=True)
+        self._p1_zara_shot_photo: tk.PhotoImage | None = None
+        self._p1_zara_shot_path: str = ""
 
     def _p1_zara_top_values(self) -> list[str]:
         out: list[str] = []
@@ -518,16 +580,109 @@ class BoardApp(tk.Tk):
         for var in getattr(self, "_p1_zara_top_vars", []):
             var.set("")
 
+    def _clear_p1_zara_log(self) -> None:
+        tv = getattr(self, "p1_zara_log", None)
+        if tv is not None:
+            for item in tv.get_children():
+                tv.delete(item)
+        self._p1_zara_shot_photo = None
+        self._p1_zara_shot_path = ""
+        if getattr(self, "p1_zara_shot_label", None) is not None:
+            self.p1_zara_shot_label.configure(
+                image="",
+                text="(수집 완료 후 최종 스크린샷이 여기에 표시됩니다)",
+                fg="#64748b",
+            )
+
+    def _append_p1_zara_log(self, step: str, message: str) -> None:
+        """크롤 스레드 → UI 스레드 실행로그 1행 추가."""
+        tv = getattr(self, "p1_zara_log", None)
+        if tv is None:
+            return
+        ts = time.strftime("%H:%M:%S")
+        tag = ()
+        s = (step or "").upper()
+        if s in ("오류", "ERROR", "FAIL"):
+            tag = ("err",)
+        elif s in ("완료", "OK", "결과") and "완료" in (message or ""):
+            tag = ("ok",)
+        elif s in ("SHOT", "샷"):
+            tag = ("shot",)
+        item = tv.insert("", "end", values=(ts, step, message), tags=tag)
+        tv.see(item)
+
+    def _p1_zara_progress(self, step: str, message: str) -> None:
+        self.after(0, lambda s=step, m=message: self._append_p1_zara_log(s, m))
+
+    def _show_p1_zara_shot_image(self, path: str) -> None:
+        """최종 스크린샷 PNG를 패널에 표시."""
+        self._p1_zara_shot_path = path or ""
+        label = getattr(self, "p1_zara_shot_label", None)
+        if label is None:
+            return
+        p = Path(path) if path else None
+        if p is None or not p.is_file():
+            label.configure(
+                image="",
+                text="(최종 스크린샷 없음)",
+                fg="#b91c1c",
+            )
+            self._p1_zara_shot_photo = None
+            return
+        try:
+            img = tk.PhotoImage(file=str(p))
+            # 패널에 맞게 축소
+            w, h = img.width(), img.height()
+            max_w, max_h = 720, 220
+            factor = 1
+            while (w // factor) > max_w or (h // factor) > max_h:
+                factor += 1
+                if factor > 20:
+                    break
+            if factor > 1:
+                img = img.subsample(factor, factor)
+            self._p1_zara_shot_photo = img
+            label.configure(image=img, text="", compound="center")
+        except tk.TclError:
+            label.configure(
+                image="",
+                text=f"미리보기 불가 — 파일: {p}\n(스크린샷 보기 버튼으로 열기)",
+                fg="#0f766e",
+            )
+            self._p1_zara_shot_photo = None
+
+    def _show_p1_zara_shot(self) -> None:
+        path = self._p1_zara_shot_path
+        if not path or not Path(path).is_file():
+            result = getattr(self, "_p1_zara_result", None)
+            if result and getattr(result, "final_shot_path", ""):
+                path = result.final_shot_path
+        if not path or not Path(path).is_file():
+            messagebox.showinfo("안내", "표시할 최종 스크린샷이 없습니다. 먼저 수집을 실행하세요.")
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(path)  # type: ignore[attr-defined]
+            else:
+                webbrowser.open(Path(path).resolve().as_uri())
+        except Exception as e:
+            messagebox.showerror("열기 실패", str(e))
+
     def _run_p1_zara(self) -> None:
         self.btn_zara_crawl.configure(state="disabled")
         self.btn_zara_save.configure(state="disabled")
         self.p1_zara_status.configure(text="수집 중…", fg="#0f172a")
-        self.p1_zara_preview.delete("1.0", "end")
+        self._clear_p1_zara_log()
         tops = self._p1_zara_top_values()
 
         def work() -> None:
             result = zara_crawl_site(
-                self.var_zara_site.get(), self.var_zara_url.get(), tops
+                self.var_zara_site.get(),
+                self.var_zara_url.get(),
+                tops,
+                progress=self._p1_zara_progress,
+                take_screenshot=True,
+                run_root=ROOT / "P1_ZARA_DE",
             )
             self.after(0, lambda: self._p1_zara_done(result))
 
@@ -536,6 +691,8 @@ class BoardApp(tk.Tk):
     def _p1_zara_done(self, result) -> None:
         self.btn_zara_crawl.configure(state="normal")
         self._p1_zara_result = result
+        if getattr(result, "final_shot_path", ""):
+            self._show_p1_zara_shot_image(result.final_shot_path)
         if not result.ok:
             self.p1_zara_status.configure(
                 text="실패: " + "; ".join(result.errors), fg="#b91c1c"
@@ -545,16 +702,9 @@ class BoardApp(tk.Tk):
         msg = f"완료 · {result.platform} · {result.total}건"
         if result.warnings:
             msg += " · " + " / ".join(result.warnings)
+        if getattr(result, "final_shot_path", ""):
+            msg += f" · 샷: {Path(result.final_shot_path).name}"
         self.p1_zara_status.configure(text=msg, fg="#15803d")
-        lines = ["상위 | 중위 | 하위 | 최종 | 상위최종 | URL", "-" * 80]
-        for r in result.rows[:80]:
-            lines.append(
-                f"{r.top} | {r.mid or '—'} | {r.low or '—'} | {r.final} | "
-                f"{r.top_final_label} | {r.final_category_url}"
-            )
-        if result.total > 80:
-            lines.append(f"… 외 {result.total - 80}행 (엑셀에 전체 포함)")
-        self.p1_zara_preview.insert("1.0", "\n".join(lines))
 
     def _save_p1_zara(self) -> None:
         if not self._p1_zara_result or not self._p1_zara_result.ok:
