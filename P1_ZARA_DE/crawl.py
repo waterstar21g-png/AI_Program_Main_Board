@@ -9,15 +9,19 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
 from openpyxl import Workbook
+
+# step, message — 보드 실행로그 그리드 실시간 콜백
+ProgressFn = Callable[[str, str], None]
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -95,6 +99,8 @@ class CrawlResult:
     total: int = 0
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    final_shot_path: str = ""
+    run_log_dir: str = ""
 
 
 def normalize_url(raw: str) -> str:
@@ -439,11 +445,17 @@ def parse_zara_html_links(html: str, base_url: str) -> list[Leaf]:
     return _dedupe(leaves)
 
 
-def collect_zara_leaves(site_url: str) -> tuple[list[Leaf], list[str]]:
+def collect_zara_leaves(
+    site_url: str, progress: ProgressFn | None = None
+) -> tuple[list[Leaf], list[str]]:
     """카테고리 트리 수집 — 영어 UI(/de/en)만 사용.
 
     site_url 이 주문/계정 페이지여도 독일자라 영어 홈·categories API 로 수집한다.
     """
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
     warnings: list[str] = []
     sess = _session()
     origin = f"{urlparse(site_url).scheme}://{urlparse(site_url).netloc}"
@@ -461,6 +473,7 @@ def collect_zara_leaves(site_url: str) -> tuple[list[Leaf], list[str]]:
         if ajax in seen_ajax:
             continue
         seen_ajax.add(ajax)
+        log("API", f"카테고리 API 요청: {ajax}")
         try:
             text = fetch_text(ajax, sess)
             if text.strip().startswith("{") or text.strip().startswith("["):
@@ -468,12 +481,16 @@ def collect_zara_leaves(site_url: str) -> tuple[list[Leaf], list[str]]:
                 if leaves:
                     for leaf in leaves:
                         leaf.category_url = to_english_locale_url(leaf.category_url)
+                    log("API", f"카테고리 API 성공 — {len(leaves)}건")
                     return leaves, warnings
             warnings.append(f"카테고리 API 응답이 JSON이 아님: {ajax}")
+            log("API", f"JSON 아님 — 다음 URL 시도")
         except Exception as e:  # noqa: BLE001
             warnings.append(f"카테고리 API 실패({ajax}): {e}")
+            log("API", f"실패: {e}")
 
     # 2) HTML 폴백 — 영어 스토어 홈만
+    log("HTML", f"HTML 폴백: {en_home}")
     try:
         html = fetch_text(en_home, sess)
         if not is_zara_de_platform(html, en_home):
@@ -481,79 +498,173 @@ def collect_zara_leaves(site_url: str) -> tuple[list[Leaf], list[str]]:
         leaves = parse_zara_html_links(html, en_home)
         if leaves:
             warnings.append("카테고리 API 대신 HTML 링크 폴백으로 수집했습니다. (영어 /de/en)")
+            log("HTML", f"HTML 링크 수집 — {len(leaves)}건")
             return leaves, warnings
     except Exception as e:  # noqa: BLE001
         warnings.append(f"HTML 폴백 실패({en_home}): {e}")
+        log("HTML", f"실패: {e}")
         raise
 
     return [], warnings
 
 
-def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> CrawlResult:
+def new_run_log_dir(root: Path | None = None) -> Path:
+    base = (root or Path(__file__).resolve().parent) / "run-logs"
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = base / stamp
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def capture_final_screenshot(
+    page_url: str,
+    out_dir: Path,
+    progress: ProgressFn | None = None,
+) -> Path | None:
+    """독일자라 영어 페이지 최종 스크린샷 (Playwright)."""
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    shot_path = out_dir / "final.png"
+    # 주문 URL이어도 영어 스토어 홈을 찍어 카테고리 UI를 보여 줌
+    homes = zara_store_homes(page_url)
+    target = homes[0] if homes else to_english_locale_url(page_url)
+    log("SHOT", f"최종 스크린샷 촬영 시작: {target}")
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as e:  # noqa: BLE001
+        log("SHOT", f"Playwright 미설치/로드 실패: {e}")
+        return None
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(
+                locale="en-GB",
+                user_agent=DEFAULT_UA,
+                viewport={"width": 1440, "height": 900},
+            )
+            page = context.new_page()
+            page.goto(target, wait_until="domcontentloaded", timeout=90_000)
+            time.sleep(2.0)
+            page.screenshot(path=str(shot_path), full_page=False)
+            browser.close()
+        if shot_path.is_file():
+            log("SHOT", f"최종 스크린샷 저장: {shot_path}")
+            return shot_path
+        log("SHOT", "스크린샷 파일이 생성되지 않았습니다.")
+        return None
+    except Exception as e:  # noqa: BLE001
+        log("SHOT", f"스크린샷 실패: {e}")
+        return None
+
+
+def crawl_site(
+    site_name: str,
+    site_url: str,
+    top_categories: list[str],
+    progress: ProgressFn | None = None,
+    take_screenshot: bool = True,
+    run_root: Path | None = None,
+) -> CrawlResult:
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
     name = (site_name or "").strip() or DEFAULT_SITE
+    run_dir = new_run_log_dir(run_root)
+    log("시작", f"독일자라 수집 시작 — {name}")
+    log("시작", f"사이트 URL: {site_url}")
+    log("시작", f"로그 폴더: {run_dir}")
+
     try:
         url = normalize_url(site_url or DEFAULT_URL)
     except ValueError as e:
-        return CrawlResult(ok=False, site_name=name, site_url=site_url or "", errors=[str(e)])
+        log("오류", str(e))
+        return CrawlResult(
+            ok=False,
+            site_name=name,
+            site_url=site_url or "",
+            errors=[str(e)],
+            run_log_dir=str(run_dir),
+        )
 
     tops, rename = parse_tops(top_categories)
     if not tops:
+        err = f"상위 카테고리를 1개 이상 입력하세요. (최대 {MAX_TOP}개)"
+        log("오류", err)
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
             applied_tops=[],
-            errors=[f"상위 카테고리를 1개 이상 입력하세요. (최대 {MAX_TOP}개)"],
+            errors=[err],
+            run_log_dir=str(run_dir),
         )
+    log("입력", f"상위 카테고리: {', '.join(tops)}")
 
     if not is_zara_de_platform("", url):
-        # URL만으로도 DE 스토어인지 1차 확인
+        err = (
+            "지원하지 않는 사이트 형식입니다. "
+            "P1_ZARA_DE는 zara.com/de (독일자라)만 지원합니다."
+        )
+        log("오류", err)
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
             applied_tops=tops,
-            errors=[
-                "지원하지 않는 사이트 형식입니다. "
-                "P1_ZARA_DE는 zara.com/de (독일자라)만 지원합니다."
-            ],
+            errors=[err],
+            run_log_dir=str(run_dir),
         )
 
     try:
-        leaves, warn_collect = collect_zara_leaves(url)
+        leaves, warn_collect = collect_zara_leaves(url, progress=progress)
     except Exception as e:  # noqa: BLE001
+        log("오류", str(e))
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
             applied_tops=tops,
             errors=[str(e)],
+            run_log_dir=str(run_dir),
         )
 
     if not leaves:
+        err = (
+            "카테고리 메뉴를 찾지 못했습니다. "
+            "로컬 PC에서 ZARA DE 접속·수집을 다시 시도하세요."
+        )
+        log("오류", err)
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
             applied_tops=tops,
-            errors=[
-                "카테고리 메뉴를 찾지 못했습니다. "
-                "로컬 PC에서 ZARA DE 접속·수집을 다시 시도하세요."
-            ],
+            errors=[err],
             warnings=warn_collect,
+            run_log_dir=str(run_dir),
         )
 
+    log("필터", f"수집 원본 {len(leaves)}건 → 상위 필터 적용")
     filtered = filter_by_top(leaves, tops)
     if not filtered:
+        err = (
+            f"지정한 상위 카테고리({', '.join(tops)})에 해당하는 메뉴를 찾지 못했습니다."
+        )
+        log("오류", err)
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
             applied_tops=tops,
-            errors=[
-                f"지정한 상위 카테고리({', '.join(tops)})에 해당하는 메뉴를 찾지 못했습니다."
-            ],
+            errors=[err],
             warnings=warn_collect,
+            run_log_dir=str(run_dir),
         )
 
     warnings = list(warn_collect)
@@ -579,6 +690,21 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
         )
         for leaf in filtered
     ]
+    log("결과", f"필터 후 {len(rows)}건 확정")
+    for i, r in enumerate(rows[:30], start=1):
+        log("결과", f"{i}. {r.top_final_label} | {r.final_category_url}")
+    if len(rows) > 30:
+        log("결과", f"… 외 {len(rows) - 30}건")
+
+    shot_path = ""
+    if take_screenshot:
+        shot = capture_final_screenshot(url, run_dir, progress=progress)
+        if shot is not None:
+            shot_path = str(shot)
+        else:
+            warnings.append("최종 스크린샷 촬영에 실패했습니다.")
+
+    log("완료", f"수집 완료 — {len(rows)}건 · 영어(/de/en)")
     return CrawlResult(
         ok=True,
         site_name=name,
@@ -588,6 +714,8 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
         rows=rows,
         total=len(rows),
         warnings=warnings,
+        final_shot_path=shot_path,
+        run_log_dir=str(run_dir),
     )
 
 

@@ -16,6 +16,9 @@ ZARA Deutschland 카테고리 URL 리스트 추출 → 엑셀
 
 좌측 **P1_ZARA_DE** → 카테고리 칸에 상위명을 입력 후 수집
 
+- **실행 로그** 그리드에 단계별 로그 실시간 표시
+- 수집 종료 시 **최종 스크린샷** (`P1_ZARA_DE/run-logs/<시각>/final.png`) 표시
+
 ## CLI
 
 ```bat
