@@ -40,7 +40,30 @@ from log_protocol import (  # noqa: E402
 )
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.55"
+import re  # noqa: E402
+
+
+def _read_version() -> str:
+    """VERSION.txt(저장소 루트)를 단일 소스로 읽는다.
+
+    ★2026-08-08: 여기 하드코딩된 문자열이 VERSION.txt와 따로 놀아서,
+    실제 코드는 최신으로 갱신됐는데도 화면 제목의 버전 숫자만 옛날
+    그대로 보이는 문제가 있었다 — 다시는 두 값이 따로 놀지 않도록
+    VERSION.txt를 직접 읽어온다.
+    """
+    try:
+        text = (ROOT / "VERSION.txt").read_text(encoding="utf-8")
+        m = re.search(r"(?:버전|version)\s*([0-9]+(?:\.[0-9]+)+)", text, re.I)
+        if not m:
+            m = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", text)
+        if m:
+            return m.group(1)
+    except OSError:
+        pass
+    return "?"
+
+
+VERSION = _read_version()
 APP_TITLE = "AI_Program_Main_Board"
 
 
