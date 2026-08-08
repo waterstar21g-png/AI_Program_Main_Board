@@ -357,7 +357,7 @@ class BoardApp(tk.Tk):
         ).pack(side="left", padx=(0, 8))
         tk.Button(
             btn_row,
-            text="선택 파일로 수집 시작",
+            text="수집 시작",
             command=self._run_p2,
             bg="#2563eb",
             fg="white",
