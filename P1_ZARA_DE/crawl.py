@@ -46,11 +46,13 @@ EXCEL_HEADERS = [
     "최종 카테고리 URL주소",
 ]
 
-# 보드 입력 그리드: 3행 × 10칸 = 최대 30개, 칸당 15자
-TOP_GRID_ROWS = 3
-TOP_GRID_COLS = 10
-MAX_TOP = TOP_GRID_ROWS * TOP_GRID_COLS
+# 보드 입력 그리드: 3계층(행) × 20칸(열) — 열마다 1계층>2계층>3계층 경로
+TOP_GRID_LEVELS = 3
+TOP_GRID_COLS = 20
+TOP_GRID_ROWS = TOP_GRID_LEVELS  # 하위 호환
+MAX_TOP = TOP_GRID_COLS
 TOP_CELL_MAX_LEN = 15
+LEVEL_LABELS = ("1계층(상위)", "2계층(중위)", "3계층(하위)")
 
 # ZARA 카테고리 링크: /de/de|en/slug-l123.html 또는 -m123.html
 ZARA_CAT_HREF_RE = re.compile(
@@ -88,6 +90,27 @@ class HierarchyRow:
     final: str
     top_final_label: str
     final_category_url: str
+
+
+@dataclass
+class CategorySpec:
+    """입력 1열 = 3계층 경로 (매칭명 + 엑셀 출력명)."""
+
+    match1: str = ""
+    match2: str = ""
+    match3: str = ""
+    excel1: str = ""
+    excel2: str = ""
+    excel3: str = ""
+
+    def match_levels(self) -> list[str]:
+        return [x for x in (self.match1, self.match2, self.match3) if x]
+
+    def excel_levels(self) -> tuple[str, str, str]:
+        return (self.excel1 or "", self.excel2 or "", self.excel3 or "")
+
+    def label(self) -> str:
+        return " > ".join(self.match_levels())
 
 
 @dataclass
@@ -162,6 +185,71 @@ def sanitize_tops(raw: list[str], max_n: int = MAX_TOP) -> list[str]:
     return names
 
 
+def fill_hierarchy_from_previous(
+    raw_paths: list[tuple[str, str, str]],
+) -> list[tuple[str, str, str]]:
+    """1·2계층 생략 시 바로 이전 열(위 입력)의 1·2계층을 그대로 복사.
+
+    3계층은 열마다 입력. 완전히 빈 열은 건너뛰며 이전 값은 유지.
+    """
+    prev1, prev2 = "", ""
+    out: list[tuple[str, str, str]] = []
+    for raw1, raw2, raw3 in raw_paths:
+        a1 = (raw1 or "").strip()
+        a2 = (raw2 or "").strip()
+        a3 = (raw3 or "").strip()
+        if not (a1 or a2 or a3):
+            continue
+        if not a1:
+            a1 = prev1
+        if not a2:
+            a2 = prev2
+        out.append((a1, a2, a3))
+        if a1:
+            prev1 = a1
+        if a2:
+            prev2 = a2
+    return out
+
+
+def parse_category_specs(
+    raw_paths: list[tuple[str, str, str]], max_n: int = MAX_TOP
+) -> list[CategorySpec]:
+    """(1계층, 2계층, 3계층) 원시 입력 → CategorySpec 목록.
+
+    ★요건: 1·2계층 생략 시 이전 열 값을 복사한 뒤 파싱한다.
+    """
+    filled = fill_hierarchy_from_previous(raw_paths)
+    out: list[CategorySpec] = []
+    for raw1, raw2, raw3 in filled:
+        cells = [parse_top_cell(raw1), parse_top_cell(raw2), parse_top_cell(raw3)]
+        if all(c is None for c in cells):
+            continue
+        m1 = e1 = m2 = e2 = m3 = e3 = ""
+        if cells[0] is not None:
+            m1, e1 = cells[0]
+        if cells[1] is not None:
+            m2, e2 = cells[1]
+        if cells[2] is not None:
+            m3, e3 = cells[2]
+        if not (m1 or m2 or m3):
+            continue
+        out.append(
+            CategorySpec(
+                match1=m1, match2=m2, match3=m3, excel1=e1, excel2=e2, excel3=e3
+            )
+        )
+        if len(out) >= max_n:
+            break
+    return out
+
+
+def specs_from_flat_names(names: list[str], max_n: int = MAX_TOP) -> list[CategorySpec]:
+    """하위 호환: 단일 카테고리명 목록 → 1계층만 채운 스펙."""
+    paths = [(n, "", "") for n in names if (n or "").strip()]
+    return parse_category_specs(paths, max_n=max_n)
+
+
 def excel_top_name(site_top: str, rename: dict[str, str]) -> str:
     key = (site_top or "").strip().upper()
     if key in rename:
@@ -176,6 +264,15 @@ def top_final_label(top: str, final: str) -> str:
     if not f:
         return t
     return f"{t} {f}"
+
+
+def hierarchy_output_label(excel_levels: tuple[str, str, str], final: str) -> str:
+    """입력 계층 + 사이트 최종명을 계층 표기로 합친다."""
+    parts = [x.strip() for x in excel_levels if (x or "").strip()]
+    f = (final or "").strip()
+    if f and (not parts or _normalize_top_key(f) != _normalize_top_key(parts[-1])):
+        parts.append(f)
+    return " > ".join(parts)
 
 
 def clean_text(s: str) -> str:
@@ -297,30 +394,73 @@ def levels_from_path(path: list[str] | tuple[str, ...]) -> tuple[str, str, str, 
     return parts[0], parts[1], parts[2], parts[-1]
 
 
-def filter_subcategories_of(leaves: list[Leaf], names: list[str]) -> list[Leaf]:
-    """입력 카테고리명과 일치하는 노드의 하위 카테고리를 전부 반환.
+def path_matches_hierarchy(path: tuple[str, ...], levels: list[str]) -> bool:
+    """경로가 입력 계층(순서 유지 부분열)과 일치하는지."""
+    if not levels:
+        return False
+    idx = 0
+    for level in levels:
+        found = -1
+        for i in range(idx, len(path)):
+            if category_name_matches(path[i], level):
+                found = i
+                break
+        if found < 0:
+            return False
+        idx = found + 1
+    return True
 
-    경로(top/mid/low/final) 중 하나라도 입력명과 일치하면
-    그 노드 자신·하위(해당 leaf)를 포함한다.
-    """
-    if not names:
+
+def filter_subcategories_of(leaves: list[Leaf], names: list[str]) -> list[Leaf]:
+    """하위 호환 — 단일 카테고리명 목록으로 하위 전부 수집."""
+    specs = specs_from_flat_names(names)
+    return [leaf for leaf, _spec in filter_by_hierarchy_specs(leaves, specs)]
+
+
+def filter_by_hierarchy_specs(
+    leaves: list[Leaf], specs: list[CategorySpec]
+) -> list[tuple[Leaf, CategorySpec]]:
+    """3계층 입력 스펙과 일치하는 하위 카테고리 전부 (leaf, 매칭스펙)."""
+    if not specs:
         return []
-    queries = [n for n in names if (n or "").strip()]
-    if not queries:
-        return []
-    out: list[Leaf] = []
+    out: list[tuple[Leaf, CategorySpec]] = []
+    seen: set[str] = set()
     for leaf in leaves:
         path = leaf_path(leaf)
-        if any(
-            category_name_matches(seg, q) for seg in path for q in queries
-        ):
-            out.append(leaf)
+        key = "|".join([*path, leaf.cat_id or leaf.category_url])
+        for spec in specs:
+            levels = spec.match_levels()
+            if not levels:
+                continue
+            if path_matches_hierarchy(path, levels):
+                if key in seen:
+                    break
+                seen.add(key)
+                out.append((leaf, spec))
+                break
     return out
 
 
 def filter_by_top(leaves: list[Leaf], tops: list[str]) -> list[Leaf]:
     """하위 호환 — 카테고리명 일치 시 하위 전부 수집."""
     return filter_subcategories_of(leaves, tops)
+
+
+def hierarchy_row_from_match(
+    site_name: str, leaf: Leaf, spec: CategorySpec
+) -> HierarchyRow:
+    """입력 계층명을 엑셀 상위·중위·하위에 반영하고 최종·URL은 사이트 값."""
+    e1, e2, e3 = spec.excel_levels()
+    final = leaf.final
+    return HierarchyRow(
+        site_name=site_name,
+        top=e1,
+        mid=e2,
+        low=e3,
+        final=final,
+        top_final_label=hierarchy_output_label((e1, e2, e3), final),
+        final_category_url=leaf.category_url,
+    )
 
 
 def _dedupe(leaves: list[Leaf]) -> list[Leaf]:
@@ -592,10 +732,11 @@ def capture_final_screenshot(
 def crawl_site(
     site_name: str,
     site_url: str,
-    top_categories: list[str],
+    top_categories: list[str] | None = None,
     progress: ProgressFn | None = None,
     take_screenshot: bool = True,
     run_root: Path | None = None,
+    category_paths: list[tuple[str, str, str]] | None = None,
 ) -> CrawlResult:
     def log(step: str, msg: str) -> None:
         if progress:
@@ -619,9 +760,13 @@ def crawl_site(
             run_log_dir=str(run_dir),
         )
 
-    tops, rename = parse_tops(top_categories)
-    if not tops:
-        err = f"카테고리명을 1개 이상 입력하세요. (최대 {MAX_TOP}개)"
+    if category_paths is not None:
+        specs = parse_category_specs(category_paths)
+    else:
+        specs = specs_from_flat_names(list(top_categories or []))
+    applied = [s.label() for s in specs]
+    if not specs:
+        err = f"카테고리 계층을 1열 이상 입력하세요. (최대 {MAX_TOP}열 × 3계층)"
         log("오류", err)
         return CrawlResult(
             ok=False,
@@ -631,7 +776,7 @@ def crawl_site(
             errors=[err],
             run_log_dir=str(run_dir),
         )
-    log("입력", f"상위 카테고리: {', '.join(tops)}")
+    log("입력", "카테고리 계층: " + " · ".join(applied))
 
     if not is_zara_de_platform("", url):
         err = (
@@ -643,7 +788,7 @@ def crawl_site(
             ok=False,
             site_name=name,
             site_url=url,
-            applied_tops=tops,
+            applied_tops=applied,
             errors=[err],
             run_log_dir=str(run_dir),
         )
@@ -656,7 +801,7 @@ def crawl_site(
             ok=False,
             site_name=name,
             site_url=url,
-            applied_tops=tops,
+            applied_tops=applied,
             errors=[str(e)],
             run_log_dir=str(run_dir),
         )
@@ -671,56 +816,46 @@ def crawl_site(
             ok=False,
             site_name=name,
             site_url=url,
-            applied_tops=tops,
+            applied_tops=applied,
             errors=[err],
             warnings=warn_collect,
             run_log_dir=str(run_dir),
         )
 
-    log("필터", f"수집 원본 {len(leaves)}건 → 입력 카테고리명 일치 시 하위 전부 수집")
-    filtered = filter_subcategories_of(leaves, tops)
-    if not filtered:
+    log("필터", f"수집 원본 {len(leaves)}건 → 3계층 입력 경로의 하위 전부 수집")
+    matched = filter_by_hierarchy_specs(leaves, specs)
+    if not matched:
         err = (
-            f"지정한 카테고리명({', '.join(tops)})과 일치하는 하위 카테고리를 찾지 못했습니다."
+            f"지정한 계층({', '.join(applied)})과 일치하는 하위 카테고리를 찾지 못했습니다."
         )
         log("오류", err)
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
-            applied_tops=tops,
+            applied_tops=applied,
             errors=[err],
             warnings=warn_collect,
             run_log_dir=str(run_dir),
         )
 
     warnings = list(warn_collect)
-    if len(filtered) < len(leaves):
+    if len(matched) < len(leaves):
         warnings.append(
-            f"카테고리명 매칭: 전체 {len(leaves)}건 중 하위 {len(filtered)}건 "
-            f"({', '.join(tops)})"
+            f"계층 매칭: 전체 {len(leaves)}건 중 하위 {len(matched)}건"
         )
-    aliased = [f"{m}→{rename[m.upper()]}" for m in tops if rename.get(m.upper(), m) != m]
-    if aliased:
-        warnings.append("엑셀 상위명 치환: " + ", ".join(aliased))
 
+    # ★요건: 입력 카테고리명을 엑셀에 계층화 반영 (상위/중위/하위)
     rows = [
-        HierarchyRow(
-            site_name=name,
-            top=excel_top_name(leaf.top, rename),
-            mid=leaf.mid,
-            low=leaf.low,
-            final=leaf.final,
-            top_final_label=top_final_label(
-                excel_top_name(leaf.top, rename), leaf.final
-            ),
-            final_category_url=leaf.category_url,
-        )
-        for leaf in filtered
+        hierarchy_row_from_match(name, leaf, spec) for leaf, spec in matched
     ]
-    log("결과", f"필터 후 {len(rows)}건 확정")
+    log("결과", f"필터 후 {len(rows)}건 확정 (입력 계층 반영)")
     for i, r in enumerate(rows[:30], start=1):
-        log("결과", f"{i}. {r.top_final_label} | {r.final_category_url}")
+        log(
+            "결과",
+            f"{i}. [{r.top} | {r.mid or '—'} | {r.low or '—'}] "
+            f"{r.final} | {r.final_category_url}",
+        )
     if len(rows) > 30:
         log("결과", f"… 외 {len(rows) - 30}건")
 
@@ -738,7 +873,7 @@ def crawl_site(
         site_name=name,
         site_url=url,
         platform="독일자라 영어 (zara.com/de/en)",
-        applied_tops=tops,
+        applied_tops=applied,
         rows=rows,
         total=len(rows),
         warnings=warnings,
