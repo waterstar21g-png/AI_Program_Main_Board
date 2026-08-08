@@ -71,8 +71,12 @@ def test_parse_meta_line():
 
 
 def test_meta_fields_order():
-    assert len(META_FIELDS) == 5
+    # ★요건: 완료건→완료, 순번 삭제 → 4항목
+    assert len(META_FIELDS) == 4
     assert "총건수" in META_FIELDS
+    assert "완료" in META_FIELDS
+    assert "완료건" not in META_FIELDS
+    assert "순번" not in META_FIELDS
     assert "카테고리 URL" in META_FIELDS
 
 
@@ -80,18 +84,18 @@ def test_format_meta_line_one_row():
     line = format_meta_line(
         {
             "총건수": "2",
-            "완료건": "0",
-            "순번": "2",
+            "완료": "0",
             "수집 필드": "MEN 스니커즈",
             "카테고리 URL": "https://example.com/cat",
         }
     )
     assert "총건수 2" in line
-    assert "완료건 0" in line
-    assert "순번 2" in line
+    assert "완료 0" in line
+    assert "완료건" not in line
+    assert "순번" not in line
     assert "MEN 스니커즈" in line
     assert "https://example.com/cat" in line
-    assert line.count(" | ") == 4
+    assert line.count(" | ") == 3
 
 
 def test_strip_timestamp_range():

@@ -33,6 +33,7 @@ from library import (  # noqa: E402
 )
 from log_protocol import (  # noqa: E402
     META_FIELDS,
+    META_INTERNAL_FIELDS,
     format_meta_line,
     parse_line,
     step_tag,
@@ -705,6 +706,15 @@ class BoardApp(tk.Tk):
         self._meta_item_id = tv.insert("", 0, values=("", "엑셀", line), tags=("meta",))
 
     def _update_meta_row(self, field: str, value: str) -> None:
+        # ★요건: 순번 META 삭제 — 진행행 적색은 내부필드 '진행'으로만
+        if field in META_INTERNAL_FIELDS:
+            try:
+                ord_i = int(str(value or "0").strip() or "0")
+            except ValueError:
+                ord_i = 0
+            if ord_i > 0:
+                self._highlight_active_category_row(ord_i)
+            return
         if field not in META_FIELDS:
             return
         self._meta_values[field] = str(value or "").strip()
@@ -712,14 +722,6 @@ class BoardApp(tk.Tk):
             return
         line = format_meta_line(self._meta_values)
         self.p2_main_log.item(self._meta_item_id, values=("", "엑셀", line))
-        # ★요건: 현재 작업 진행중 행을 카테고리URL목록에서 적색 표시
-        if field == "순번":
-            try:
-                ord_i = int(str(value or "0").strip() or "0")
-            except ValueError:
-                ord_i = 0
-            if ord_i > 0:
-                self._highlight_active_category_row(ord_i)
 
     def _setup_p2_log_tags(self) -> None:
         """main 실행로그 — 단계 성격별 색상 태그."""

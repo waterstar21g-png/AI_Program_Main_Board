@@ -229,6 +229,9 @@ def read_category_url_rows(path: str) -> list[dict]:
             url = str(raw_url or "").strip()
             if not url:
                 continue
+            # ★총건수·목록: 목차 행 제외 (헤더 1행은 위에서 이미 제외)
+            if label == "목차" or label.startswith("목차") or label.upper() == "TOC":
+                continue
             ordinal += 1
             out.append(
                 {
