@@ -35,18 +35,22 @@ def test_doc_mentions_failure_cause():
 
 
 def test_step06_no_settle_noise():
-    """요건: 6단계 후 안정화/검색결과준비/샷 로그 액션 제거."""
+    """요건: 6단계 후 안정화/검색결과준비/샷 로그 액션 제거(호출 금지)."""
     src = Path(B.__file__).read_text(encoding="utf-8")
-    # run_row_batch 본문(함수 시작~step02_init 직전)에서 6→7 불필요 액션 금지
+    # run_row_batch 본문(함수 시작~step02_init 직전) — 주석 제외한 활성 코드만
     start = src.index("def run_row_batch")
     end = src.index("def step02_init")
     body = src[start:end]
-    assert "망고 검색결과 안정화" not in body
-    assert "검색결과 준비" not in body
-    assert "01_results_ready" not in body
-    assert "prepare_product_view_for_shot" not in body
-    assert "step06b_quick_check" in body
-    assert "step07_save_range" in body
+    active = "\n".join(
+        ln for ln in body.splitlines() if not ln.lstrip().startswith("#")
+    )
+    assert "망고 검색결과 안정화" not in active
+    assert "검색결과 준비" not in active
+    assert "01_results_ready" not in active
+    assert "wait_mango_search_settle(" not in active
+    assert "prepare_product_view_for_shot(" not in active
+    assert "step06b_quick_check" in active
+    assert "step07_save_range" in active
 
 
 def test_extract_mango_save_log_lines():

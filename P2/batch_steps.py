@@ -59,8 +59,12 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
         step04_click_search(page, ctx, rn)
         step05_popup_open(page, ctx, rn, try_i)
         step06_popup_close(page, ctx, rn, try_i)
-        # ★요건: 6단계 후 (6→7) 안정화·검색결과준비·샷 등 불필요 액션 제거.
-        # 팝업 닫힘 확인만으로 6항 완료 — 바로 결과 유무만 짧게 판별.
+        # ★삭제(2026-08-08 사용자 지시): 아래 6→7 불필요 액션 전부 제거/주석
+        #   ctx.info("  (6→7) 망고 검색결과 안정화")
+        #   wait_mango_search_settle(...) / prepare_product_view_for_shot(...)
+        #   ctx.info(f"  검색결과 준비 (상품이미지 약 {N}개)")
+        #   ctx.shot(page, "01_results_ready", rn)  # [샷] 1. 검색 결과 준비
+        # 팝업 닫힘(6항) 후 무결과 여부만 짧게 보고 즉시 7항.
         ok, last_state, last_count = step06b_quick_check(
             page, ctx, rn, label, url, try_i, max_search
         )
@@ -74,7 +78,7 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
             f"(state={last_state}, hint={last_count})"
         )
 
-    # ── 7. 저장범위 (6항 직후 즉시 — 이미지대기/안정화/샷 없음) ──
+    # ── 7. 저장범위 (6항 직후 즉시) ──
     step07_save_range(page, ctx, rn)
 
     # ★요건: 9·10·11 합산 180초 이내 — 초과 시 다음 입력으로.

@@ -281,7 +281,8 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "01_popup_opened": "1. 검색 팝업 열림",
     "01_popup_closed": "1. 검색 팝업 닫힘",
     "01_mango_no_results": "1. 망고 검색결과 없음(자체메세지)",
-    "01_results_ready": "1. 검색 결과 준비",
+    # ★삭제(2026-08-08): 6→7 "검색 결과 준비" 샷 — 더 이상 촬영하지 않음
+    # "01_results_ready": "1. 검색 결과 준비",
     "02_save_modal": "2. 모두저장 모달",
     "02_no_count_field": "2. 저장수 필드 없음(오류)",
     "02_count_mismatch": "2. 저장수 불일치(오류)",
@@ -2540,54 +2541,16 @@ def wait_mango_search_settle(
     *,
     timeout_sec: float = 45.0,
 ) -> tuple[str, int]:
-    """URL 검색 후 망고 화면이 안정될 때까지 대기.
+    """★삭제/비활성(2026-08-08 사용자 지시).
 
-    반환: (상태, 상품힌트수)
-      - "products": 검색 상품이 보임
-      - "no_results": 망고 자체 '검색결과가 없습니다' 메세지
-      - "unknown": 로딩은 끝났으나 판별 어려움
+    예전 6→7 '(6→7) 망고 검색결과 안정화' 액션 — 더 이상 호출하지 않음.
+    하위 호환용 스텁: 즉시 unknown/0 반환 (긴 대기·로그 없음).
     """
-    end = time.time() + max(10.0, float(timeout_sec))
-    # 1) 로딩 종료 대기
-    while time.time() < end:
-        check_stop("망고 검색 안정화")
-        if not is_mango_loading(page):
-            break
-        page.wait_for_timeout(350)
-    else:
-        log("  [경고] 망고 로딩 대기 시간 초과")
-
-    # 2) 결과 렌더 안정화 (로딩 직후 결과없음이 잠깐 뜨는 경우 대비)
-    stable_need = 3
-    stable = 0
-    last_state = "unknown"
-    last_count = 0
-    while time.time() < end:
-        check_stop("망고 검색 안정화")
-        if is_mango_loading(page):
-            stable = 0
-            page.wait_for_timeout(300)
-            continue
-        no_res = is_mango_no_results(page)
-        cnt = count_mango_result_products(page)
-        if cnt >= 1 and not no_res:
-            state = "products"
-        elif no_res and cnt < 1:
-            state = "no_results"
-        elif cnt >= 1:
-            state = "products"
-        else:
-            state = "unknown"
-        if state == last_state and state != "unknown":
-            stable += 1
-        else:
-            stable = 1 if state != "unknown" else 0
-        last_state, last_count = state, cnt
-        if stable >= stable_need:
-            return state, last_count
-        page.wait_for_timeout(400)
-
-    return last_state, last_count
+    # 아래 본문은 의도적으로 실행하지 않음 (주석 처리와 동일 효과).
+    # end = time.time() + max(10.0, float(timeout_sec))
+    # while ...: check_stop("망고 검색 안정화"); wait loading; stabilize...
+    _ = (page, timeout_sec)  # unused — stub
+    return "unknown", 0
 
 
 def _process_row_once(page: Page, row: dict, ctx: RunCtx) -> None:
