@@ -1,5 +1,8 @@
 #Requires -Version 5.1
-# Pull from GitHub main ONLY when VERSION differs from origin/main.
+# Icon / run.bat updater:
+#   - Compare local VERSION vs GitHub main
+#   - If different: git pull origin main (reset hard on failure)
+#   - If git still fails: ZIP overwrite from codeload (same as update-by-zip.bat)
 # ASCII-only (PS 5.1 safe). Called by run.bat / boot-from-icon.ps1.
 $ErrorActionPreference = "Continue"
 try {
@@ -25,10 +28,8 @@ if (-not $env:AI_BOARD_UPDATER_REFRESHED) {
   $cb = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
   $selfUrls = @(
     "https://raw.githubusercontent.com/$Repo/main/update-if-newer.ps1?t=$cb",
-    "https://raw.githubusercontent.com/$Repo/main/update-if-newer.ps1?t=$cb",
     "https://cdn.jsdelivr.net/gh/$Repo@main/update-if-newer.ps1?t=$cb"
   )
-  $refreshed = $false
   $lastErr = $null
   foreach ($url in $selfUrls) {
     try {
@@ -48,12 +49,11 @@ if (-not $env:AI_BOARD_UPDATER_REFRESHED) {
       Start-Sleep -Milliseconds 300
     }
   }
-  if (-not $refreshed) {
+  if ($lastErr) {
     Write-Host "[WARN] updater self-refresh skipped (local copy used): $lastErr"
   }
 }
 
-# git progress goes to stderr; run via cmd so PS 5.1 does not show NativeCommandError.
 function Invoke-GitHost {
   param(
     [Parameter(Mandatory = $true)]
@@ -75,7 +75,6 @@ function Get-VersionFromText([string]$text) {
 }
 
 function Compare-VersionStrings([string]$a, [string]$b) {
-  # return: 1 if a>b, 0 if equal, -1 if a<b, 2 if unparsable
   if (-not $a -and -not $b) { return 0 }
   if (-not $a) { return -1 }
   if (-not $b) { return 1 }
@@ -142,12 +141,47 @@ function Get-RemoteVersionViaHttp {
   return ""
 }
 
+function Update-FromZip {
+  # Same effect as update-by-zip.bat, but do NOT start the board (caller starts it).
+  Write-Host "[ZIP] git failed or incomplete - forcing ZIP overwrite from GitHub main ..."
+  $zipUrl = "https://codeload.github.com/$Repo/zip/refs/heads/main"
+  $zipFile = Join-Path $env:TEMP "AI_Program_Main_Board_main_auto.zip"
+  $extractDir = Join-Path $env:TEMP ("AI_Program_Main_Board_extract_" + [Guid]::NewGuid().ToString("N"))
+  try {
+    if (Test-Path -LiteralPath $zipFile) { Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue }
+    $wc = New-Object System.Net.WebClient
+    $wc.Headers.Add("User-Agent", "AI_Program_Main_Board-zip-fallback")
+    $wc.Headers.Add("Cache-Control", "no-cache")
+    $wc.DownloadFile($zipUrl, $zipFile)
+    if (-not (Test-Path -LiteralPath $zipFile)) {
+      Write-Host "[WARN] ZIP download failed"
+      return $false
+    }
+    if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+    Expand-Archive -Path $zipFile -DestinationPath $extractDir -Force
+    $src = Join-Path $extractDir "AI_Program_Main_Board-main"
+    if (-not (Test-Path -LiteralPath $src)) {
+      Write-Host "[WARN] ZIP extract layout unexpected"
+      return $false
+    }
+    # Overwrite project files; local-only paths (.gitignore) usually absent from ZIP
+    Copy-Item -Path (Join-Path $src "*") -Destination $Root -Recurse -Force
+    Write-Host "[OK] ZIP overwrite complete"
+    return $true
+  } catch {
+    Write-Host "[WARN] ZIP update failed: $($_.Exception.Message)"
+    return $false
+  } finally {
+    try { if (Test-Path -LiteralPath $extractDir) { Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue } } catch {}
+    try { if (Test-Path -LiteralPath $zipFile) { Remove-Item -LiteralPath $zipFile -Force -ErrorAction SilentlyContinue } } catch {}
+  }
+}
+
 Write-Host "[VERSION-CHECK] root=$Root"
 
 $local = Get-LocalVersion
 
 # Always check BOTH git and HTTP; use the newer one.
-# (Stale origin/main after failed fetch used to keep remote stuck on old VERSION.)
 $remoteGit = Get-RemoteVersionViaGit
 $remoteHttp = Get-RemoteVersionViaHttp
 $remote = ""
@@ -156,14 +190,8 @@ $remoteSrc = ""
 if ($remoteGit -and $remoteHttp) {
   $cmp = Compare-VersionStrings $remoteHttp $remoteGit
   if ($cmp -ge 0) {
-    # http newer or equal - prefer http when equal too (fresher path)
-    if ($cmp -eq 1) {
-      $remote = $remoteHttp
-      $remoteSrc = "http(newer)"
-    } else {
-      $remote = $remoteHttp
-      $remoteSrc = "http+git"
-    }
+    $remote = $remoteHttp
+    $remoteSrc = if ($cmp -eq 1) { "http(newer)" } else { "http+git" }
   } else {
     $remote = $remoteGit
     $remoteSrc = "git(newer)"
@@ -184,46 +212,60 @@ if (-not $remote) {
 }
 
 if ($local -and ($local -eq $remote)) {
-  Write-Host "[SKIP] Same version ($local) - no git pull"
+  Write-Host "[SKIP] Same version ($local) - no update needed"
   exit 0
 }
 
 Write-Host "[UPDATE] Version changed ($local -> $remote). Applying source..."
 
-if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-  Write-Host "[WARN] git not found - start with local source"
-  exit 0
-}
+$updated = $false
 
-if (-not (Test-Path -LiteralPath (Join-Path $Root ".git"))) {
-  Write-Host "[WARN] Not a git repo - start with local source"
-  exit 0
-}
-
-# Prefer main branch so pull applies published VERSION
-$branch = ""
-try {
-  $branch = (cmd.exe /c "git rev-parse --abbrev-ref HEAD 2>NUL").Trim()
-} catch {}
-if ($branch -and ($branch -ne "main")) {
-  Write-Host "[INFO] checkout main (was: $branch)"
-  [void](Invoke-GitHost "git checkout main")
-}
-
-$pullCode = Invoke-GitHost "git pull origin main"
-if ($pullCode -ne 0) {
-  Write-Host "[WARN] git pull failed - try reset to origin/main"
-  [void](Invoke-GitHost "git fetch origin main --prune")
-  $resetCode = Invoke-GitHost "git reset --hard origin/main"
-  if ($resetCode -ne 0) {
-    Write-Host "[WARN] update failed - start with local source"
-    exit 0
+# 1) Prefer git pull / hard reset to origin/main
+$hasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
+$isRepo = Test-Path -LiteralPath (Join-Path $Root ".git")
+if ($hasGit -and $isRepo) {
+  $branch = ""
+  try {
+    $branch = (cmd.exe /c "git rev-parse --abbrev-ref HEAD 2>NUL").Trim()
+  } catch {}
+  if ($branch -and ($branch -ne "main")) {
+    Write-Host "[INFO] checkout main (was: $branch)"
+    [void](Invoke-GitHost "git checkout -f main")
   }
+
+  $pullCode = Invoke-GitHost "git pull origin main"
+  if ($pullCode -ne 0) {
+    Write-Host "[WARN] git pull failed - try reset to origin/main"
+    [void](Invoke-GitHost "git fetch origin main --prune")
+    $resetCode = Invoke-GitHost "git reset --hard origin/main"
+    if ($resetCode -eq 0) {
+      $updated = $true
+    }
+  } else {
+    $updated = $true
+  }
+} else {
+  Write-Host "[WARN] git/repo unavailable - will try ZIP"
 }
 
-$after = Get-LocalVersion
-Write-Host "[OK] Source updated. VERSION=$after (was $local)"
-if ($after -and $remote -and ($after -ne $remote)) {
-  Write-Host "[WARN] After pull local=$after still != remote=$remote"
+# 2) Verify VERSION after git; if still behind remote -> ZIP force
+$afterGit = Get-LocalVersion
+if ($updated -and $afterGit -and $remote -and ($afterGit -eq $remote)) {
+  Write-Host "[OK] Source updated via git. VERSION=$afterGit (was $local)"
+  exit 2
 }
-exit 2
+
+Write-Host "[WARN] git path incomplete (local=$afterGit remote=$remote) - ZIP fallback"
+
+# 3) ZIP fallback (git blocked / incomplete)
+if (Update-FromZip) {
+  $afterZip = Get-LocalVersion
+  Write-Host "[OK] Source updated via ZIP. VERSION=$afterZip (was $local)"
+  if ($afterZip -and $remote -and ($afterZip -ne $remote)) {
+    Write-Host "[WARN] After ZIP local=$afterZip still != remote=$remote"
+  }
+  exit 2
+}
+
+Write-Host "[WARN] update failed - start with local source"
+exit 0

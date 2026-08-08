@@ -1,13 +1,11 @@
 #Requires -Version 5.1
-# Desktop / taskbar icon entry (single chain):
+# Desktop / taskbar icon entry (single chain) - NO manual pull needed:
 #   1) Stop previous board (if running)
-#   2) update-if-newer.ps1  -> git pull origin main when VERSION changed
-#      (git pull already syncs every script in this repo, including this
-#      file itself, stop-board.ps1, run.bat, etc. - a SEPARATE per-file
-#      raw.githubusercontent.com download loop used to run here too, but
-#      it only duplicated what git pull already does and was the direct
-#      cause of the "(404) not found" warning wall some PCs saw on every
-#      single icon click. Removed in v2.0.58 - do not re-add it.)
+#   2) update-if-newer.ps1 when VERSION on GitHub main differs:
+#        - git pull origin main (reset --hard on failure)
+#        - if git still incomplete -> ZIP overwrite (codeload)
+#      Do NOT re-add per-file raw.githubusercontent.com downloads
+#      (that caused the 404 warning wall; removed in v2.0.58).
 #   3) run.bat --noupdate    -> pip + board restart
 # ASCII-only (PS 5.1 safe)
 $ErrorActionPreference = "Continue"
@@ -80,9 +78,11 @@ $afterVer = Get-VersionLabel
 Write-Host "[BOOT] Local VERSION (after update)  = $afterVer"
 
 if ($updateExit -eq 2) {
-  Write-Host "[BOOT] Source updated ($beforeVer -> $afterVer)" -ForegroundColor Green
+  Write-Host "[BOOT] Auto-updated ($beforeVer -> $afterVer) — no manual pull needed" -ForegroundColor Green
 } elseif ($beforeVer -eq $afterVer) {
   Write-Host "[BOOT] Already up to date (VERSION $afterVer)" -ForegroundColor Cyan
+} else {
+  Write-Host "[BOOT] Update attempted (exit=$updateExit) local=$afterVer" -ForegroundColor Yellow
 }
 
 # 3) Start board (pip + python board\app.py) — no duplicate update pass
