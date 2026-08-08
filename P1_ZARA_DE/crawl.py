@@ -75,6 +75,8 @@ class Leaf:
     final: str
     category_url: str
     cat_id: str | None = None
+    # 루트→최종 전체 경로 (입력 카테고리명 매칭·하위 전부 수집용)
+    path: tuple[str, ...] = ()
 
 
 @dataclass
@@ -259,7 +261,7 @@ def _normalize_top_key(name: str) -> str:
 
 
 def _top_match_keys(name: str) -> set[str]:
-    """입력/사이트 상위명을 비교용 키 집합으로."""
+    """입력/사이트 카테고리명을 비교용 키 집합으로."""
     key = _normalize_top_key(name)
     keys = {key}
     for canon, alts in TOP_ALIASES.items():
@@ -268,19 +270,57 @@ def _top_match_keys(name: str) -> set[str]:
     return keys
 
 
-def filter_by_top(leaves: list[Leaf], tops: list[str]) -> list[Leaf]:
-    if not tops:
+def category_name_matches(candidate: str, query: str) -> bool:
+    """카테고리명 일치 (대소문자 무시 + WOMAN/DAMEN 등 동의어)."""
+    if not (candidate or "").strip() or not (query or "").strip():
+        return False
+    return bool(_top_match_keys(candidate) & _top_match_keys(query))
+
+
+def leaf_path(leaf: Leaf) -> tuple[str, ...]:
+    if leaf.path:
+        return leaf.path
+    return tuple(p for p in (leaf.top, leaf.mid, leaf.low, leaf.final) if p)
+
+
+def levels_from_path(path: list[str] | tuple[str, ...]) -> tuple[str, str, str, str]:
+    """경로 → (top, mid, low, final)."""
+    parts = [p for p in path if p]
+    if not parts:
+        return "", "", "", ""
+    if len(parts) == 1:
+        return parts[0], "", "", parts[0]
+    if len(parts) == 2:
+        return parts[0], "", "", parts[1]
+    if len(parts) == 3:
+        return parts[0], parts[1], "", parts[2]
+    return parts[0], parts[1], parts[2], parts[-1]
+
+
+def filter_subcategories_of(leaves: list[Leaf], names: list[str]) -> list[Leaf]:
+    """입력 카테고리명과 일치하는 노드의 하위 카테고리를 전부 반환.
+
+    경로(top/mid/low/final) 중 하나라도 입력명과 일치하면
+    그 노드 자신·하위(해당 leaf)를 포함한다.
+    """
+    if not names:
         return []
-    allowed: set[str] = set()
-    for t in tops:
-        allowed |= _top_match_keys(t)
+    queries = [n for n in names if (n or "").strip()]
+    if not queries:
+        return []
     out: list[Leaf] = []
     for leaf in leaves:
-        if _normalize_top_key(leaf.top) in allowed or (
-            _top_match_keys(leaf.top) & allowed
+        path = leaf_path(leaf)
+        if any(
+            category_name_matches(seg, q) for seg in path for q in queries
         ):
             out.append(leaf)
     return out
+
+
+def filter_by_top(leaves: list[Leaf], tops: list[str]) -> list[Leaf]:
+    """하위 호환 — 카테고리명 일치 시 하위 전부 수집."""
+    return filter_subcategories_of(leaves, tops)
 
 
 def _dedupe(leaves: list[Leaf]) -> list[Leaf]:
@@ -288,13 +328,34 @@ def _dedupe(leaves: list[Leaf]) -> list[Leaf]:
     out: list[Leaf] = []
     for leaf in leaves:
         key = "|".join(
-            [leaf.top, leaf.mid, leaf.low, leaf.final, leaf.cat_id or leaf.category_url]
+            [
+                *leaf_path(leaf),
+                leaf.cat_id or leaf.category_url,
+            ]
         )
         if key in seen:
             continue
         seen.add(key)
         out.append(leaf)
     return out
+
+
+def _make_leaf(
+    path: list[str],
+    *,
+    category_url: str,
+    cat_id: str | None,
+) -> Leaf:
+    top, mid, low, final = levels_from_path(path)
+    return Leaf(
+        top=top,
+        mid=mid,
+        low=low,
+        final=final,
+        category_url=category_url,
+        cat_id=cat_id,
+        path=tuple(p for p in path if p),
+    )
 
 
 def _walk_zara_json(
@@ -338,42 +399,11 @@ def _walk_zara_json(
     if abs_url:
         abs_url = to_english_locale_url(abs_url)
     new_path = path + ([name] if name else [])
+    cid = str(cat_id) if cat_id else (_cat_id_from_url(abs_url) if abs_url else None)
 
-    if abs_url and name and not kids:
-        top = new_path[0] if new_path else name
-        mid = new_path[1] if len(new_path) > 2 else ""
-        low = new_path[2] if len(new_path) > 3 else ""
-        final = name
-        if len(new_path) == 2:
-            mid, low = "", ""
-        elif len(new_path) == 3:
-            mid, low = new_path[1], ""
-        leaves.append(
-            Leaf(
-                top=top,
-                mid=mid,
-                low=low,
-                final=final,
-                category_url=abs_url,
-                cat_id=str(cat_id) if cat_id else _cat_id_from_url(abs_url),
-            )
-        )
-    elif abs_url and name and kids:
-        # 중간 노드에도 자체 URL이 있으면 최종 후보로 포함
-        top = new_path[0] if new_path else name
-        mid = new_path[1] if len(new_path) > 2 else (new_path[1] if len(new_path) == 2 else "")
-        low = new_path[2] if len(new_path) > 3 else ""
-        if len(new_path) >= 2:
-            leaves.append(
-                Leaf(
-                    top=top,
-                    mid=mid if len(new_path) > 2 else "",
-                    low=low,
-                    final=name,
-                    category_url=abs_url,
-                    cat_id=str(cat_id) if cat_id else _cat_id_from_url(abs_url),
-                )
-            )
+    # URL이 있는 노드는 모두 후보로 쌓음 — 이후 입력명 매칭 시 하위 전부 필터
+    if abs_url and name:
+        leaves.append(_make_leaf(new_path, category_url=abs_url, cat_id=cid))
 
     if isinstance(kids, list):
         for child in kids:
@@ -433,11 +463,8 @@ def parse_zara_html_links(html: str, base_url: str) -> list[Leaf]:
         ):
             top = "WOMAN"
         leaves.append(
-            Leaf(
-                top=top,
-                mid="",
-                low="",
-                final=name,
+            _make_leaf(
+                [top, name],
                 category_url=to_english_locale_url(abs_url),
                 cat_id=_cat_id_from_url(abs_url),
             )
@@ -594,7 +621,7 @@ def crawl_site(
 
     tops, rename = parse_tops(top_categories)
     if not tops:
-        err = f"상위 카테고리를 1개 이상 입력하세요. (최대 {MAX_TOP}개)"
+        err = f"카테고리명을 1개 이상 입력하세요. (최대 {MAX_TOP}개)"
         log("오류", err)
         return CrawlResult(
             ok=False,
@@ -650,11 +677,11 @@ def crawl_site(
             run_log_dir=str(run_dir),
         )
 
-    log("필터", f"수집 원본 {len(leaves)}건 → 상위 필터 적용")
-    filtered = filter_by_top(leaves, tops)
+    log("필터", f"수집 원본 {len(leaves)}건 → 입력 카테고리명 일치 시 하위 전부 수집")
+    filtered = filter_subcategories_of(leaves, tops)
     if not filtered:
         err = (
-            f"지정한 상위 카테고리({', '.join(tops)})에 해당하는 메뉴를 찾지 못했습니다."
+            f"지정한 카테고리명({', '.join(tops)})과 일치하는 하위 카테고리를 찾지 못했습니다."
         )
         log("오류", err)
         return CrawlResult(
@@ -670,7 +697,8 @@ def crawl_site(
     warnings = list(warn_collect)
     if len(filtered) < len(leaves):
         warnings.append(
-            f"상위 필터: 전체 {len(leaves)}건 중 {len(filtered)}건 ({', '.join(tops)})"
+            f"카테고리명 매칭: 전체 {len(leaves)}건 중 하위 {len(filtered)}건 "
+            f"({', '.join(tops)})"
         )
     aliased = [f"{m}→{rename[m.upper()]}" for m in tops if rename.get(m.upper(), m) != m]
     if aliased:

@@ -421,8 +421,8 @@ class BoardApp(tk.Tk):
             tops_right,
             text=(
                 f"{TOP_GRID_ROWS}행×{TOP_GRID_COLS}칸 · 칸당 {TOP_CELL_MAX_LEN}자 · "
-                "영어 사이트(/de/en) 기준 · 카테고리 직접 입력(예: WOMAN, MAN, KIDS) · "
-                "명1:명2 → 엑셀 상위명 치환"
+                "영어(/de/en) · 입력 카테고리명과 일치하는 항목의 하위 카테고리 전부 수집 · "
+                "예: WOMAN / Dresses · 명1:명2 → 엑셀 상위명 치환"
             ),
             bg="#ffffff",
             fg="#64748b",
