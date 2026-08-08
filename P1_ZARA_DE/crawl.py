@@ -46,13 +46,20 @@ EXCEL_HEADERS = [
     "최종 카테고리 URL주소",
 ]
 
-# 보드 입력 그리드: 3계층(행) × 20칸(열) — 열마다 1계층>2계층>3계층 경로
-TOP_GRID_LEVELS = 3
-TOP_GRID_COLS = 20
-TOP_GRID_ROWS = TOP_GRID_LEVELS  # 하위 호환
-MAX_TOP = TOP_GRID_COLS
+# 보드 입력 그리드: 3행 × 12열
+# 한 행 = 상위 카테고리, 중위 카테고리, 하위 카테고리1 … 하위 카테고리10
+TOP_GRID_ROWS = 3
+TOP_GRID_COLS = 12
+LOW_SLOT_COUNT = 10  # 하위 카테고리1~10
+TOP_GRID_LEVELS = 3  # 상위·중위·하위 (계층 수)
+MAX_TOP = TOP_GRID_ROWS * LOW_SLOT_COUNT  # 최대 경로 수
 TOP_CELL_MAX_LEN = 15
-LEVEL_LABELS = ("1계층(상위)", "2계층(중위)", "3계층(하위)")
+COL_LABELS: tuple[str, ...] = (
+    "상위 카테고리",
+    "중위 카테고리",
+    *(f"하위 카테고리{i}" for i in range(1, LOW_SLOT_COUNT + 1)),
+)
+LEVEL_LABELS = COL_LABELS  # 보드 열 헤더
 
 # ZARA 카테고리 링크: /de/de|en/slug-l123.html 또는 -m123.html
 ZARA_CAT_HREF_RE = re.compile(
@@ -188,9 +195,9 @@ def sanitize_tops(raw: list[str], max_n: int = MAX_TOP) -> list[str]:
 def fill_hierarchy_from_previous(
     raw_paths: list[tuple[str, str, str]],
 ) -> list[tuple[str, str, str]]:
-    """1·2계층 생략 시 바로 이전 열(위 입력)의 1·2계층을 그대로 복사.
+    """상위·중위 생략 시 바로 이전 경로의 상위·중위를 그대로 복사.
 
-    3계층은 열마다 입력. 완전히 빈 열은 건너뛰며 이전 값은 유지.
+    하위는 경로마다 입력. 완전히 빈 경로는 건너뛰며 이전 값은 유지.
     """
     prev1, prev2 = "", ""
     out: list[tuple[str, str, str]] = []
@@ -212,12 +219,49 @@ def fill_hierarchy_from_previous(
     return out
 
 
+def expand_grid_rows_to_paths(
+    raw_rows: list[tuple[str, ...] | list[str]],
+) -> list[tuple[str, str, str]]:
+    """3행×12열 그리드 → (상위, 중위, 하위) 경로 목록.
+
+    한 행 구조: 상위 카테고리, 중위 카테고리, 하위1 … 하위10.
+    - 상위/중위 생략 시 이전 행 값을 복사.
+    - 하위 칸이 하나 이상이면 칸마다 경로 생성.
+    - 하위가 모두 비어 있으면 (상위, 중위, '') 한 경로로 해당 노드 하위 전부 수집.
+    """
+    prev1, prev2 = "", ""
+    paths: list[tuple[str, str, str]] = []
+    for row in raw_rows[:TOP_GRID_ROWS]:
+        cells = [(c or "").strip() for c in list(row)[:TOP_GRID_COLS]]
+        if len(cells) < TOP_GRID_COLS:
+            cells.extend([""] * (TOP_GRID_COLS - len(cells)))
+        a1, a2 = cells[0], cells[1]
+        lows = cells[2 : 2 + LOW_SLOT_COUNT]
+        if not (a1 or a2 or any(lows)):
+            continue
+        if not a1:
+            a1 = prev1
+        if not a2:
+            a2 = prev2
+        if a1:
+            prev1 = a1
+        if a2:
+            prev2 = a2
+        filled_lows = [x for x in lows if x]
+        if filled_lows:
+            for low in filled_lows:
+                paths.append((a1, a2, low))
+        else:
+            paths.append((a1, a2, ""))
+    return paths
+
+
 def parse_category_specs(
     raw_paths: list[tuple[str, str, str]], max_n: int = MAX_TOP
 ) -> list[CategorySpec]:
-    """(1계층, 2계층, 3계층) 원시 입력 → CategorySpec 목록.
+    """(상위, 중위, 하위) 원시 입력 → CategorySpec 목록.
 
-    ★요건: 1·2계층 생략 시 이전 열 값을 복사한 뒤 파싱한다.
+    ★요건: 상위·중위 생략 시 이전 경로 값을 복사한 뒤 파싱한다.
     """
     filled = fill_hierarchy_from_previous(raw_paths)
     out: list[CategorySpec] = []
@@ -244,8 +288,15 @@ def parse_category_specs(
     return out
 
 
+def parse_grid_category_specs(
+    raw_rows: list[tuple[str, ...] | list[str]], max_n: int = MAX_TOP
+) -> list[CategorySpec]:
+    """3행×12열(상위·중위·하위1~10) → CategorySpec 목록."""
+    return parse_category_specs(expand_grid_rows_to_paths(raw_rows), max_n=max_n)
+
+
 def specs_from_flat_names(names: list[str], max_n: int = MAX_TOP) -> list[CategorySpec]:
-    """하위 호환: 단일 카테고리명 목록 → 1계층만 채운 스펙."""
+    """하위 호환: 단일 카테고리명 목록 → 상위만 채운 스펙."""
     paths = [(n, "", "") for n in names if (n or "").strip()]
     return parse_category_specs(paths, max_n=max_n)
 
@@ -737,6 +788,7 @@ def crawl_site(
     take_screenshot: bool = True,
     run_root: Path | None = None,
     category_paths: list[tuple[str, str, str]] | None = None,
+    category_grid_rows: list[tuple[str, ...] | list[str]] | None = None,
 ) -> CrawlResult:
     def log(step: str, msg: str) -> None:
         if progress:
@@ -760,13 +812,19 @@ def crawl_site(
             run_log_dir=str(run_dir),
         )
 
-    if category_paths is not None:
+    if category_grid_rows is not None:
+        specs = parse_grid_category_specs(category_grid_rows)
+    elif category_paths is not None:
         specs = parse_category_specs(category_paths)
     else:
         specs = specs_from_flat_names(list(top_categories or []))
     applied = [s.label() for s in specs]
     if not specs:
-        err = f"카테고리 계층을 1열 이상 입력하세요. (최대 {MAX_TOP}열 × 3계층)"
+        err = (
+            f"카테고리 계층을 1행 이상 입력하세요. "
+            f"({TOP_GRID_ROWS}행 × {TOP_GRID_COLS}열: "
+            f"상위·중위·하위1~{LOW_SLOT_COUNT})"
+        )
         log("오류", err)
         return CrawlResult(
             ok=False,

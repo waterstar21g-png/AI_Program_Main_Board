@@ -406,11 +406,12 @@ class BoardApp(tk.Tk):
         self._row(form, "사이트명", self.var_zara_site)
         self._row(form, "사이트 URL", self.var_zara_url)
 
-        # ★요건: 카테고리 입력 = 3계층 × 20칸 (열=한 경로), 출력 시 계층화
-        z_levels = p1_zara_crawl.TOP_GRID_LEVELS
+        # ★요건: 3행 × 12열 — 한 행 = 상위, 중위, 하위1…하위10
+        z_rows = p1_zara_crawl.TOP_GRID_ROWS
         z_cols = p1_zara_crawl.TOP_GRID_COLS
         z_cell = p1_zara_crawl.TOP_CELL_MAX_LEN
-        z_labels = p1_zara_crawl.LEVEL_LABELS
+        z_labels = p1_zara_crawl.COL_LABELS
+        z_lows = p1_zara_crawl.LOW_SLOT_COUNT
 
         tops_wrap = tk.Frame(form, bg="#ffffff")
         tops_wrap.pack(fill="x", pady=3)
@@ -426,53 +427,58 @@ class BoardApp(tk.Tk):
         tk.Label(
             tops_right,
             text=(
-                f"{z_cols}열 × {z_levels}계층 · 칸당 {z_cell}자 · "
-                "같은 열의 1·2·3계층=한 경로 · 1·2계층 생략 시 이전 열 값 복사 · "
-                "엑셀 상위/중위/하위에 계층 반영 · 명1:명2 치환 가능"
+                f"{z_rows}행 × {z_cols}열 · 칸당 {z_cell}자 · "
+                f"한 행=상위·중위·하위1~{z_lows} · "
+                "상위/중위 생략 시 이전 행 값 복사 · "
+                "이름이 있는 상위·중위·하위 노드의 하위 전부 수집 · "
+                "엑셀은 입력 계층에 맞춰 출력 · 명1:명2 치환 가능"
             ),
             bg="#ffffff",
             fg="#64748b",
             anchor="w",
             font=("Malgun Gothic", 8),
+            wraplength=720,
+            justify="left",
         ).pack(fill="x", pady=(0, 2))
 
-        # 가로 스크롤 (20칸)
-        canvas = tk.Canvas(tops_right, bg="#ffffff", height=92, highlightthickness=0)
+        # 가로 스크롤 (12칸 헤더·입력)
+        canvas = tk.Canvas(tops_right, bg="#ffffff", height=118, highlightthickness=0)
         h_sb = tk.Scrollbar(tops_right, orient="horizontal", command=canvas.xview)
         canvas.configure(xscrollcommand=h_sb.set)
         h_sb.pack(side="bottom", fill="x")
         canvas.pack(side="top", fill="x", expand=True)
         grid = tk.Frame(canvas, bg="#ffffff")
-        grid_id = canvas.create_window((0, 0), window=grid, anchor="nw")
+        canvas.create_window((0, 0), window=grid, anchor="nw")
 
         def _on_grid_configure(_e=None) -> None:
             canvas.configure(scrollregion=canvas.bbox("all"))
 
         grid.bind("<Configure>", _on_grid_configure)
 
-        self._p1_zara_level_vars: list[list[tk.StringVar]] = []
+        self._p1_zara_grid_vars: list[list[tk.StringVar]] = []
+        self._p1_zara_level_vars = []  # 하위 호환 비움
         vcmd = (self.register(self._validate_p1_top_cell), "%P")
-        # 열 번호 헤더
+        # 열 헤더: 상위 / 중위 / 하위1 … 하위10
         hdr = tk.Frame(grid, bg="#ffffff")
         hdr.pack(fill="x")
-        tk.Label(hdr, text="", width=12, bg="#ffffff").pack(side="left")
-        for c in range(z_cols):
+        tk.Label(hdr, text="행", width=4, bg="#ffffff", fg="#94a3b8").pack(side="left")
+        for label in z_labels:
             tk.Label(
                 hdr,
-                text=str(c + 1),
-                width=8,
+                text=label.replace(" 카테고리", ""),
+                width=9,
                 bg="#ffffff",
-                fg="#94a3b8",
+                fg="#64748b",
                 font=("Malgun Gothic", 7),
             ).pack(side="left", padx=1)
-        for level_i in range(z_levels):
+        for row_i in range(z_rows):
             row_f = tk.Frame(grid, bg="#ffffff")
             row_f.pack(fill="x", pady=1)
             tk.Label(
                 row_f,
-                text=z_labels[level_i],
-                width=12,
-                anchor="w",
+                text=str(row_i + 1),
+                width=4,
+                anchor="center",
                 bg="#ffffff",
                 font=("Malgun Gothic", 8),
             ).pack(side="left")
@@ -483,14 +489,13 @@ class BoardApp(tk.Tk):
                 tk.Entry(
                     row_f,
                     textvariable=var,
-                    width=8,
+                    width=9,
                     font=("Malgun Gothic", 8),
                     justify="center",
                     validate="key",
                     validatecommand=vcmd,
                 ).pack(side="left", padx=1)
-            self._p1_zara_level_vars.append(row_vars)
-        # 하위 호환: 평탄 목록이 필요하면 쓰지 않음
+            self._p1_zara_grid_vars.append(row_vars)
         self._p1_zara_top_vars = []
 
         out_row = tk.Frame(form, bg="#ffffff")
@@ -602,14 +607,15 @@ class BoardApp(tk.Tk):
         self._p1_zara_shot_path: str = ""
 
     def _p1_zara_top_values(self) -> list[str]:
-        """하위 호환 — 1계층에 입력된 값만 평탄 목록으로."""
+        """하위 호환 — 각 행의 상위 칸 값만 평탄 목록으로."""
         out: list[str] = []
-        levels = getattr(self, "_p1_zara_level_vars", None)
-        if levels:
-            for var in levels[0]:
-                s = (var.get() or "").strip()
-                if s:
-                    out.append(s)
+        grid = getattr(self, "_p1_zara_grid_vars", None)
+        if grid:
+            for row in grid:
+                if row:
+                    s = (row[0].get() or "").strip()
+                    if s:
+                        out.append(s)
             return out
         for var in getattr(self, "_p1_zara_top_vars", []):
             s = (var.get() or "").strip()
@@ -617,22 +623,16 @@ class BoardApp(tk.Tk):
                 out.append(s)
         return out
 
-    def _p1_zara_hierarchy_paths(self) -> list[tuple[str, str, str]]:
-        """20열 × 3계층 원시 입력. 1·2계층 빈칸은 crawl에서 이전 열 값으로 채움."""
-        levels = getattr(self, "_p1_zara_level_vars", None)
-        if not levels or len(levels) < 3:
+    def _p1_zara_grid_rows(self) -> list[tuple[str, ...]]:
+        """3행 × 12열 원시 입력 (상위·중위·하위1~10)."""
+        grid = getattr(self, "_p1_zara_grid_vars", None)
+        if not grid:
             return []
-        cols = len(levels[0])
-        paths: list[tuple[str, str, str]] = []
-        for c in range(cols):
-            paths.append(
-                (
-                    levels[0][c].get(),
-                    levels[1][c].get(),
-                    levels[2][c].get(),
-                )
-            )
-        return paths
+        return [tuple(var.get() for var in row) for row in grid]
+
+    def _p1_zara_hierarchy_paths(self) -> list[tuple[str, str, str]]:
+        """그리드 → (상위, 중위, 하위) 경로. crawl.expand_grid_rows_to_paths와 동일."""
+        return p1_zara_crawl.expand_grid_rows_to_paths(self._p1_zara_grid_rows())
 
     def _pick_zara_outdir(self) -> None:
         d = filedialog.askdirectory(
@@ -645,6 +645,9 @@ class BoardApp(tk.Tk):
         self.var_zara_site.set(p1_zara_crawl.DEFAULT_SITE)
         self.var_zara_url.set(p1_zara_crawl.DEFAULT_URL)
         # 카테고리 칸은 비움 — 사용자가 입력으로 지정
+        for row in getattr(self, "_p1_zara_grid_vars", []):
+            for var in row:
+                var.set("")
         for row in getattr(self, "_p1_zara_level_vars", []):
             for var in row:
                 var.set("")
@@ -744,7 +747,7 @@ class BoardApp(tk.Tk):
         self.btn_zara_save.configure(state="disabled")
         self.p1_zara_status.configure(text="수집 중…", fg="#0f172a")
         self._clear_p1_zara_log()
-        paths = self._p1_zara_hierarchy_paths()
+        grid_rows = self._p1_zara_grid_rows()
 
         def work() -> None:
             result = zara_crawl_site(
@@ -754,7 +757,7 @@ class BoardApp(tk.Tk):
                 progress=self._p1_zara_progress,
                 take_screenshot=True,
                 run_root=ROOT / "P1_ZARA_DE",
-                category_paths=paths,
+                category_grid_rows=grid_rows,
             )
             self.after(0, lambda: self._p1_zara_done(result))
 
