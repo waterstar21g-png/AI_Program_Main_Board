@@ -96,7 +96,11 @@ CHROME_CANDIDATES = [
     "/usr/bin/chromium",
 ]
 
-POPUP_WAIT_SEC = 40  # 검색 팝업(6항) 닫힘 대기(초) — 초과 시 다음단계 금지·실패
+POPUP_WAIT_SEC = 90  # 검색 팝업(6항) 닫힘 대기(초) — 초과 시 다음단계 금지·실패
+# ★근본원인(2026-08-08): 상품이 많은 카테고리는 확장프로그램의 임시메모리
+# 적재(스크래핑)가 40초를 넘기는 경우가 있어 자동화가 사람보다 먼저
+# 포기했다("수동으로 하면 문제없음"). 90초로 늘리고, 확인/닫기 보조 클릭도
+# 1회가 아니라 주기적으로 재시도한다.
 MODAL_WAIT_SEC = 60
 # 저장하기 클릭 직후 "뭔가 반응했나"만 빠르게 보는 짧은 확인(초) — 요건 3의
 # 120초 무행동 대기와는 다른, 클릭 실패 여부만 가르는 용도.
@@ -110,7 +114,7 @@ SAVE_POPUP_CONFIRM_WAIT_SEC = 300.0
 # 평소엔 메세지가 보이는 즉시 훨씬 짧게 끝난다.
 SAVE_COMPLETE_WAIT_SEC = 60.0
 DEFAULT_SAVE_COUNT = 3
-DEFAULT_ROW_RETRIES = 2
+DEFAULT_ROW_RETRIES = 1  # ★요건(2026-08-08): 엑셀 각 행은 1번 시도로 끝냄 — 재시도 없음
 SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
 ROW_BUDGET_SEC = 240  # 한 입력 행(2~7항 검색단계)에 쓸 수 있는 최대 시간(초)
 
@@ -1084,7 +1088,7 @@ def wait_popups_close(page: Page, timeout_sec: int = POPUP_WAIT_SEC) -> None:
     # 5항(수집 실행) 중 너무 빨리 확인을 누르면 안 됨 — 일정 시간 후 보조
     help_after = time.time() + min(15.0, wait_sec * 0.4)
     last_beat = 0.0
-    helped = False
+    last_help = 0.0
     while popups(page):
         check_stop("6항 검색 팝업 닫힘 대기")
         if time.time() > end:
@@ -1098,13 +1102,15 @@ def wait_popups_close(page: Page, timeout_sec: int = POPUP_WAIT_SEC) -> None:
                 f"{timeout_sec}초 대기 후에도 닫힘 미확인 — "
                 "강제 닫고 모두저장/다음단계로 진행 불가."
             )
-        # 확인/닫기 버튼이 있으면 눌러 정상 종료 보조 (강제 종료 아님)
-        if not helped and time.time() >= help_after:
+        # 확인/닫기 버튼이 있으면 눌러 정상 종료 보조 (강제 종료 아님) —
+        # 1회만 시도하면 버튼이 늦게 나타나는 경우 놓치므로, 남아있는 동안
+        # ~8초 간격으로 계속 재시도한다.
+        if time.time() >= help_after and (time.time() - last_help) >= 8.0:
             try:
                 dismiss_mango_alert_ui(page)
             except Exception:  # noqa: BLE001
                 pass
-            helped = True
+            last_help = time.time()
         if time.time() - last_beat > 10:
             last_beat = time.time()
             cur = popups(page)

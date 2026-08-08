@@ -757,7 +757,7 @@ class BoardApp(tk.Tk):
             path,
             "3",
             "--retries",
-            "2",
+            "1",  # ★요건: 엑셀 각 행은 1번 시도로 끝냄(재시도 없음)
             "--yes",
             "--shot-first",
             "2",
