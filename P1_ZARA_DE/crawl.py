@@ -823,6 +823,205 @@ def collect_zara_leaves(
     return [], warnings
 
 
+def _slug_name_from_url(url: str) -> str:
+    """URL slug 에서 대략적인 카테고리명 추출."""
+    path = urlparse(url).path.rsplit("/", 1)[-1]
+    slug = re.sub(r"-[lm]\d+\.html$", "", path, flags=re.I)
+    slug = slug.replace("-", " ").strip()
+    return clean_text(slug).title() if slug else ""
+
+
+def page_category_name(html: str, page_url: str) -> str:
+    """페이지에서 하위(앵커) 카테고리명 추출."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    for sel in ("h1", "[data-qa-qualifier='product-list-title']", "title"):
+        el = soup.select_one(sel)
+        if not el:
+            continue
+        text = clean_text(el.get_text())
+        if not text:
+            continue
+        # title 태그: "Name | Zara Germany" 형태
+        if sel == "title":
+            text = text.split("|")[0].strip()
+        if text and len(text) <= 80 and "zara" not in text.lower():
+            return text
+        if text and len(text) <= 80 and sel != "title":
+            return text
+    return _slug_name_from_url(page_url)
+
+
+def parse_final_category_links(
+    html: str, page_url: str
+) -> list[tuple[str, str]]:
+    """페이지 HTML에서 최종(하위) 카테고리 (이름, URL) 목록."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    origin = f"{urlparse(page_url).scheme}://{urlparse(page_url).netloc}"
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for a in soup.select("a[href]"):
+        href = a.get("href") or ""
+        abs_url = _abs_zara_url(origin, href)
+        if not abs_url:
+            continue
+        if category_urls_equivalent(abs_url, page_url):
+            continue
+        name = clean_text(a.get_text()) or clean_text(a.get("title") or "")
+        if not name or len(name) > 80:
+            continue
+        key = abs_url.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((name, abs_url))
+    return out
+
+
+def fetch_html_playwright(url: str, progress: ProgressFn | None = None) -> str:
+    """사용자 URL을 Playwright로 열어 HTML 반환 (요청 차단 시 폴백)."""
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"Playwright 미설치/로드 실패: {e}") from e
+
+    log("경로", f"Playwright로 최종 경로 열기: {url}")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            locale="en-GB",
+            user_agent=DEFAULT_UA,
+            viewport={"width": 1440, "height": 900},
+        )
+        page = context.new_page()
+        page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+        time.sleep(2.0)
+        html = page.content()
+        browser.close()
+    return html or ""
+
+
+def fetch_user_category_html(
+    url: str, progress: ProgressFn | None = None
+) -> tuple[str, list[str]]:
+    """사용자 하위 URL HTML 가져오기 — HTTP 우선, 실패 시 Playwright."""
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
+    warnings: list[str] = []
+    sess = _session()
+    try:
+        log("경로", f"사용자 URL 접속(HTTP): {url}")
+        html = fetch_text(url, sess)
+        if html and len(html) > 500:
+            return html, warnings
+        warnings.append(f"HTTP 응답이 짧음 — Playwright 재시도: {url}")
+    except Exception as e:  # noqa: BLE001
+        warnings.append(f"HTTP 접속 실패({url}): {e}")
+        log("경로", f"HTTP 실패 → Playwright: {e}")
+
+    html = fetch_html_playwright(url, progress=progress)
+    if not html:
+        raise RuntimeError(f"사용자 URL을 열 수 없습니다: {url}")
+    return html, warnings
+
+
+def leaves_from_user_category_page(
+    spec: CategorySpec,
+    html: str,
+    page_url: str,
+) -> list[Leaf]:
+    """사용자 하위 URL 페이지 → 최종 카테고리 Leaf 목록.
+
+    경로 = [입력상위, 입력중위, 페이지명, (자식명)] — 엑셀 계층용.
+    """
+    top = (spec.excel1 or spec.match1 or "").strip()
+    mid = (spec.excel2 or spec.match2 or "").strip()
+    page_name = page_category_name(html, page_url)
+    if not (spec.excel3 or "").strip():
+        spec.excel3 = page_name
+    if not (spec.match3 or "").strip():
+        spec.match3 = page_name
+
+    base_path = [p for p in (top, mid, page_name) if p]
+    leaves: list[Leaf] = []
+    # 페이지 자체도 최종 후보
+    leaves.append(
+        _make_leaf(
+            base_path or [page_name or "Category"],
+            category_url=page_url,
+            cat_id=_cat_id_from_url(page_url),
+        )
+    )
+    for child_name, child_url in parse_final_category_links(html, page_url):
+        leaves.append(
+            _make_leaf(
+                base_path + [child_name],
+                category_url=child_url,
+                cat_id=_cat_id_from_url(child_url),
+            )
+        )
+    return _dedupe(leaves)
+
+
+def collect_user_driven_matches(
+    specs: list[CategorySpec],
+    progress: ProgressFn | None = None,
+) -> tuple[list[tuple[Leaf, CategorySpec]], list[str], str]:
+    """★사용자 DRIVEN: 입력 하위 URL로 최종 경로에 직접 접근해 리스트업.
+
+    Returns: (matched, warnings, last_opened_url)
+    """
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
+    out: list[tuple[Leaf, CategorySpec]] = []
+    warnings: list[str] = []
+    seen: set[str] = set()
+    last_url = ""
+
+    url_specs = [s for s in specs if (s.low_url or "").strip()]
+    log("경로", f"사용자 DRIVEN 최종경로 접근 — {len(url_specs)}개 URL")
+
+    for i, spec in enumerate(url_specs, start=1):
+        page_url = to_english_locale_url(spec.low_url)
+        last_url = page_url
+        log("경로", f"[{i}/{len(url_specs)}] {spec.label()}")
+        try:
+            html, w = fetch_user_category_html(page_url, progress=progress)
+            warnings.extend(w)
+        except Exception as e:  # noqa: BLE001
+            warnings.append(f"URL 접근 실패: {page_url} — {e}")
+            log("오류", f"URL 접근 실패: {e}")
+            continue
+
+        leaves = leaves_from_user_category_page(spec, html, page_url)
+        if not leaves:
+            warnings.append(f"최종 카테고리 없음: {page_url}")
+            log("경로", f"최종 카테고리 없음: {page_url}")
+            continue
+
+        # 페이지 자신 + 하위 링크 전부 리스트업 (필터는 URL 단위로 이미 확정)
+        added = 0
+        for leaf in leaves:
+            key = "|".join(
+                [*leaf_path(leaf), leaf.cat_id or leaf.category_url, spec.low_url]
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((leaf, spec))
+            added += 1
+        log("경로", f"최종 카테고리 {added}건 확보 — {page_url}")
+
+    return out, warnings, last_url
+
+
 def new_run_log_dir(root: Path | None = None) -> Path:
     base = (root or Path(__file__).resolve().parent) / "run-logs"
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -835,6 +1034,7 @@ def capture_final_screenshot(
     page_url: str,
     out_dir: Path,
     progress: ProgressFn | None = None,
+    target_url: str | None = None,
 ) -> Path | None:
     """독일자라 영어 페이지 최종 스크린샷 (Playwright)."""
     def log(step: str, msg: str) -> None:
@@ -844,9 +1044,12 @@ def capture_final_screenshot(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     shot_path = out_dir / "final.png"
-    # 주문 URL이어도 영어 스토어 홈을 찍어 카테고리 UI를 보여 줌
-    homes = zara_store_homes(page_url)
-    target = homes[0] if homes else to_english_locale_url(page_url)
+    # 사용자 DRIVEN: 입력 하위 URL 우선. 없으면 영어 스토어 홈.
+    if target_url:
+        target = to_english_locale_url(target_url)
+    else:
+        homes = zara_store_homes(page_url)
+        target = homes[0] if homes else to_english_locale_url(page_url)
     log("SHOT", f"최종 스크린샷 촬영 시작: {target}")
     try:
         from playwright.sync_api import sync_playwright
@@ -948,44 +1151,59 @@ def crawl_site(
             run_log_dir=str(run_dir),
         )
 
-    try:
-        leaves, warn_collect = collect_zara_leaves(url, progress=progress)
-    except Exception as e:  # noqa: BLE001
-        log("오류", str(e))
-        return CrawlResult(
-            ok=False,
-            site_name=name,
-            site_url=url,
-            applied_tops=applied,
-            errors=[str(e)],
-            run_log_dir=str(run_dir),
-        )
+    url_specs = [s for s in specs if (s.low_url or "").strip()]
+    name_specs = [s for s in specs if not (s.low_url or "").strip()]
+    matched: list[tuple[Leaf, CategorySpec]] = []
+    warnings: list[str] = []
+    shot_target = ""
 
-    if not leaves:
-        err = (
-            "카테고리 메뉴를 찾지 못했습니다. "
-            "로컬 PC에서 ZARA DE 접속·수집을 다시 시도하세요."
+    # ★요건: 사용자 DRIVEN — 입력 하위 URL로 최종 경로 직접 접근
+    if url_specs:
+        log(
+            "경로",
+            "사용자 DRIVEN 모드 — 전체 메뉴가 아니라 입력 URL로 최종경로 접근",
         )
-        log("오류", err)
-        return CrawlResult(
-            ok=False,
-            site_name=name,
-            site_url=url,
-            applied_tops=applied,
-            errors=[err],
-            warnings=warn_collect,
-            run_log_dir=str(run_dir),
+        ud_matched, ud_warn, last_url = collect_user_driven_matches(
+            url_specs, progress=progress
         )
+        matched.extend(ud_matched)
+        warnings.extend(ud_warn)
+        shot_target = last_url
 
-    log(
-        "필터",
-        f"수집 원본 {len(leaves)}건 → 하위 URL 노드의 최종 카테고리 리스트업",
-    )
-    matched = filter_by_hierarchy_specs(leaves, specs)
+    # 하위 URL 없이 이름만 있는 행은 기존 메뉴 수집 후 계층 매칭
+    if name_specs:
+        log("필터", f"이름 계층 {len(name_specs)}건 — 스토어 메뉴 수집")
+        try:
+            leaves, warn_collect = collect_zara_leaves(url, progress=progress)
+        except Exception as e:  # noqa: BLE001
+            warnings.append(str(e))
+            log("오류", str(e))
+            leaves = []
+            warn_collect = [str(e)]
+        warnings.extend(warn_collect)
+        if leaves:
+            matched.extend(filter_by_hierarchy_specs(leaves, name_specs))
+        elif not url_specs:
+            err = (
+                "카테고리 메뉴를 찾지 못했습니다. "
+                "하위 카테고리 URL을 입력하면 사용자 DRIVEN으로 "
+                "최종 경로에 직접 접근합니다."
+            )
+            log("오류", err)
+            return CrawlResult(
+                ok=False,
+                site_name=name,
+                site_url=url,
+                applied_tops=applied,
+                errors=[err],
+                warnings=warnings,
+                run_log_dir=str(run_dir),
+            )
+
     if not matched:
         err = (
-            f"지정한 하위 URL/계층({', '.join(applied)})과 일치하는 "
-            f"최종 카테고리를 찾지 못했습니다."
+            "입력한 하위 URL/계층에서 최종 카테고리를 찾지 못했습니다. "
+            "하위 카테고리 URL이 브라우저에서 열리는지 확인하세요."
         )
         log("오류", err)
         return CrawlResult(
@@ -994,21 +1212,15 @@ def crawl_site(
             site_url=url,
             applied_tops=applied,
             errors=[err],
-            warnings=warn_collect,
+            warnings=warnings,
             run_log_dir=str(run_dir),
-        )
-
-    warnings = list(warn_collect)
-    if len(matched) < len(leaves):
-        warnings.append(
-            f"계층 매칭: 전체 {len(leaves)}건 중 하위 {len(matched)}건"
         )
 
     # ★요건: 입력 카테고리명을 엑셀에 계층화 반영 (상위/중위/하위)
     rows = [
         hierarchy_row_from_match(name, leaf, spec) for leaf, spec in matched
     ]
-    log("결과", f"필터 후 {len(rows)}건 확정 (입력 계층 반영)")
+    log("결과", f"최종 카테고리 {len(rows)}건 확정 (입력 계층 반영)")
     for i, r in enumerate(rows[:30], start=1):
         log(
             "결과",
@@ -1020,18 +1232,24 @@ def crawl_site(
 
     shot_path = ""
     if take_screenshot:
-        shot = capture_final_screenshot(url, run_dir, progress=progress)
+        shot = capture_final_screenshot(
+            url,
+            run_dir,
+            progress=progress,
+            target_url=shot_target or None,
+        )
         if shot is not None:
             shot_path = str(shot)
         else:
             warnings.append("최종 스크린샷 촬영에 실패했습니다.")
 
-    log("완료", f"수집 완료 — {len(rows)}건 · 영어(/de/en)")
+    mode = "사용자DRIVEN" if url_specs else "메뉴매칭"
+    log("완료", f"수집 완료 — {len(rows)}건 · {mode} · 영어(/de/en)")
     return CrawlResult(
         ok=True,
         site_name=name,
         site_url=url,
-        platform="독일자라 영어 (zara.com/de/en)",
+        platform=f"독일자라 영어 (zara.com/de/en) · {mode}",
         applied_tops=applied,
         rows=rows,
         total=len(rows),
