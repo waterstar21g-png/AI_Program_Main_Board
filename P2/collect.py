@@ -4176,6 +4176,22 @@ def main() -> None:
         except Exception:  # noqa: BLE001
             pass
         sys.exit(130)
+    except Exception as e:  # noqa: BLE001
+        # 행 루프 밖(브라우저 연결·로그인·갤러리 등)에서 난 예외.
+        # 보드는 ##MAIN##/##SUB##/##META## 마커 없는 줄을 화면에서 버리므로
+        # (board.app._handle_collect_line) 파이썬 트레이스백만 남기면 화면에는
+        # 아무것도 안 보인 채 종료 = "조용히 죽음". 반드시 실행로그로 남긴다.
+        import traceback
+
+        ctx.info(f"[치명] 수집 중 예외로 종료 — {type(e).__name__}: {e}")
+        for tb_line in traceback.format_exc().rstrip().splitlines():
+            ctx.info(f"  {tb_line}")
+        ctx.info(f"[치명] 진행 상황: 성공 {ok} / 실패 {fail} / 대상 {len(rows)}행")
+        try:
+            ctx.write_gallery()
+        except Exception:  # noqa: BLE001
+            pass
+        sys.exit(3)
     finally:
         clear_stop_flag()
         ctx.close()
