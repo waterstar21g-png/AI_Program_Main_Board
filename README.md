@@ -41,11 +41,11 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
 
 ```powershell
 Set-Location D:\My_Project\AI_Program_Main_Board
-git fetch origin main
-git checkout main
 git pull origin main
-.\make-desktop-icon.cmd
+.\아이콘새로만들기.bat
 ```
+
+또는 `.\make-desktop-icon.cmd` / `.\바로가기만들기.bat` (동일 — 바탕화면+작업표시줄 새 아이콘).
 
 ### P2 더망고 로그인 · 1·2행 스크린샷
 

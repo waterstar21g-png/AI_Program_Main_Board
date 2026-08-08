@@ -56,7 +56,7 @@ if (-not (Test-Path -LiteralPath $runBat)) {
 }
 
 # Refresh shortcut helpers (UTF-8 no BOM)
-foreach ($name in @("create-shortcut.ps1", "boot-from-icon.ps1", "update-if-newer.ps1", "stop-board.ps1")) {
+foreach ($name in @("create-shortcut.ps1", "boot-from-icon.ps1", "update-if-newer.ps1", "stop-board.ps1", "refresh-icons.ps1", "pin-taskbar.ps1")) {
   try {
     Save-Utf8NoBom (Join-Path $PreferredRoot $name) (Get-RawText "$RepoRaw/$name")
   } catch {

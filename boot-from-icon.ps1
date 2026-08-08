@@ -60,6 +60,7 @@ $refreshNames = @(
   "update-if-newer.ps1",
   "boot-from-icon.ps1",
   "stop-board.ps1",
+  "refresh-icons.ps1",
   "start.bat",
   "run.bat"
 )

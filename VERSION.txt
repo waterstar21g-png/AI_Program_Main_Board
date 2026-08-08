@@ -1,2 +1,2 @@
-버전 2.0.54 (Python B안)
-업데이트: 실행아이콘 클릭시 stop+update-if-newer+git pull+보드재시작 일괄처리
+버전 2.0.55 (Python B안)
+업데이트: 바탕화면+작업표시줄 아이콘 새로생성(refresh-icons.ps1)
