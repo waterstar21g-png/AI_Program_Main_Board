@@ -93,11 +93,11 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
         C.SAVE_POPUP_BLIND_WAIT_SEC + C.SAVE_POPUP_CONFIRM_WAIT_SEC + 200.0
     )
 
-    # ── 8. 필터·건수 ──
-    step08_filter_count(page, ctx, rn, label, save_count)
+    # ── 8. 필터 입력(저장상품수는 원래 세팅값 유지·미변경) ──
+    effective_count = step08_filter_count(page, ctx, rn, label, save_count)
 
-    # ── 9~12. 저장하기 → 팝업열림 → 닫힘 → 건수 ──
-    step09_to_12_db_save(page, ctx, rn, save_count)
+    # ── 9~12. 저장하기 → 팝업열림 → 닫힘 → 건수 (저장상품수 원래값 기준) ──
+    step09_to_12_db_save(page, ctx, rn, effective_count)
 
     if not (
         ctx.server_save_ok
@@ -279,15 +279,16 @@ def step07_save_range(page, ctx, rn: int) -> None:
 
 def step08_filter_count(
     page, ctx, rn: int, label: str, save_count: int
-) -> None:
+) -> int:
     """8항 발표(step)·필드값(info)은 fill_save_modal_fields 내부에서 남긴다.
 
-    입력 후 다른 필드가 값을 덮어쓰는 사고를 막기 위해 그 함수가 직접
-    두 값을 반복 확인하므로, 여기서 미리 찍어두지 않는다(중복 방지).
+    ★요건: 검색필터명에만 엑셀 데이터를 입력하고, 저장상품수는 절대
+    건드리지 않는다(원래 세팅값 유지). 반환값은 그 원래 세팅값(정수) —
+    이후 9~12항의 저장건수 확인은 이 값을 기대값으로 쓴다.
     """
     import collect as C
 
-    C.fill_save_modal_fields(page, ctx, rn, label, save_count)
+    return C.fill_save_modal_fields(page, ctx, rn, label, save_count)
 
 
 def step09_to_12_db_save(page, ctx, rn: int, save_count: int) -> None:
