@@ -280,11 +280,13 @@ def step07_save_range(page, ctx, rn: int) -> None:
 def step08_filter_count(
     page, ctx, rn: int, label: str, save_count: int
 ) -> None:
+    """8항 발표(step)·필드값(info)은 fill_save_modal_fields 내부에서 남긴다.
+
+    입력 후 다른 필드가 값을 덮어쓰는 사고를 막기 위해 그 함수가 직접
+    두 값을 반복 확인하므로, 여기서 미리 찍어두지 않는다(중복 방지).
+    """
     import collect as C
 
-    ctx.step(8, "수집 상품 필터·수집상품갯수 입력")
-    ctx.info(f"검색필터명: {label}")
-    ctx.info(f"저장상품수: {save_count}")
     C.fill_save_modal_fields(page, ctx, rn, label, save_count)
 
 

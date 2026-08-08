@@ -192,6 +192,46 @@ def test_fill_save_modal_does_not_mix_filter_and_count_fields(browser):
     page.close()
 
 
+def test_fill_save_modal_recovers_when_one_field_clears_the_other(browser):
+    """한 필드를 입력하면 사이트 JS가 다른 필드를 지우는 상황에서도,
+    최종적으로는 두 값 다 맞아야 한다 (이미 맞는 값을 이유없이
+    재입력해 덮어쓰던 사고의 재발 방지 — 회귀).
+    """
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    # 사이트 버그 시뮬레이션: 필터를 채우면 카운트가 1회 지워짐
+    page.evaluate(
+        """() => {
+            const filter = document.getElementById('filter');
+            const count = document.getElementById('count');
+            let cleared = false;
+            filter.addEventListener('input', () => {
+                if (!cleared && filter.value.trim() !== '') {
+                    cleared = true;
+                    count.value = '';
+                }
+            });
+        }"""
+    )
+    ctx = FakeCtx()
+    C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
+    assert page.locator("#filter").input_value() == "MEN 라이프스타일"
+    assert page.locator("#count").input_value() == "3"
+    page.close()
+
+
+def test_fill_save_modal_no_redundant_retype_when_already_correct(browser):
+    """이미 맞는 값이면 재입력(덮어쓰기) 로그가 없어야 한다."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    ctx = FakeCtx()
+    C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
+    assert page.locator("#filter").input_value() == "MEN 라이프스타일"
+    assert page.locator("#count").input_value() == "3"
+    assert not any("재입력" in m for m in ctx.msgs), ctx.msgs
+    page.close()
+
+
 def test_save_modal_visible_survives_icon_wrapped_button(browser):
     """저장하기 버튼에 아이콘/공백이 섞여 정확매치가 깨져도 모달을 인식해야 함.
 
@@ -802,6 +842,8 @@ if __name__ == "__main__":
             ("no_popup_block_hint", test_no_popup_no_layer_raises_with_popup_block_hint),
             ("batch_blocks_init", lambda _b: test_batch_step_blocks_init_when_save_awaiting_popup()),
             ("fill_modal_no_field_mix", test_fill_save_modal_does_not_mix_filter_and_count_fields),
+            ("fill_modal_recovers_clear", test_fill_save_modal_recovers_when_one_field_clears_the_other),
+            ("fill_modal_no_redundant_retype", test_fill_save_modal_no_redundant_retype_when_already_correct),
             ("modal_visible_icon_wrapped", test_save_modal_visible_survives_icon_wrapped_button),
             ("admin_host_popup_detected", test_save_popup_on_admin_host_is_detected),
             ("diag_overlay", test_diagnose_detects_overlay_interception),
