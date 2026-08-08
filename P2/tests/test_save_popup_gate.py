@@ -108,6 +108,10 @@ class FakeCtx:
         self.msgs.append(msg)
         print("[CTX]", msg)
 
+    def step(self, n: int, msg: str) -> None:
+        self.msgs.append(f"[STEP {n}] {msg}")
+        print(f"[CTX-STEP {n}]", msg)
+
     def check_budget(self, where: str = "") -> None:
         if time.time() > self.row_deadline:
             raise C.RowBudgetExceeded("budget")
