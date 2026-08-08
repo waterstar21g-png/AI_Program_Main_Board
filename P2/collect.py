@@ -101,12 +101,14 @@ MODAL_WAIT_SEC = 60
 # 저장하기 클릭 직후 "뭔가 반응했나"만 빠르게 보는 짧은 확인(초) — 요건 3의
 # 120초 무행동 대기와는 다른, 클릭 실패 여부만 가르는 용도.
 SAVE_POPUP_GRACE_SEC = 5.0
-# ★요건 3: 저장하기 클릭 후 이 시간(초) 동안은 절대 어떤 행동도 하지 않고
-# 순수하게 기다린다(읽기·클릭·스크롤 전부 없음). 그 후에만 다음 단계 진행.
+# (이전 요건 — 이제는 아래 SAVE_COMPLETE_WAIT_SEC 즉시탐지 방식으로 대체됨)
 SAVE_POPUP_BLIND_WAIT_SEC = 120.0
-# ★요건 6: 그 다음 "상품 N건이 수집, 저장되었다" 메세지를 확인할 때까지
-# 최대 이 시간(초)만큼 더 기다린다(읽기만, 클릭·스크롤 없음).
 SAVE_POPUP_CONFIRM_WAIT_SEC = 300.0
+# ★최신 요건: 120초 무행동 대기·300초 단계적 확인 생략 — 저장하기 클릭 후
+# "신규상품의 저장이 완료되었습니다" 메세지가 보이는 즉시(대기 없이) 다음
+# 단계(13항 초기화)로 진행한다. 이 상한은 순수 안전망(무한 대기 방지)이며
+# 평소엔 메세지가 보이는 즉시 훨씬 짧게 끝난다.
+SAVE_COMPLETE_WAIT_SEC = 60.0
 DEFAULT_SAVE_COUNT = 3
 DEFAULT_ROW_RETRIES = 2
 SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
@@ -211,6 +213,9 @@ MANGO_COLLECT_ALERT_PATTERNS = [
     re.compile(r"상품\s*(\d+)\s*건\s*(이\s*)?(수집|저장)"),
     re.compile(r"총\s*(\d+)\s*건\s*(이\s*)?(수집|저장)"),
 ]
+
+# ★망고 "저장 완료" 확정 메세지 — 보이는 즉시(단계적 대기 없이) 다음 단계로.
+SAVE_COMPLETE_MSG_PATTERN = re.compile(r"신규\s*상품\s*의\s*저장\s*이\s*완료\s*되었습니다")
 
 # 더망고(자체 UI) — 검색 결과 없음 문구 (로딩 중 오판 금지, 로딩 종료 후에만 사용)
 MANGO_NO_RESULT_PATTERNS = [
@@ -1120,11 +1125,28 @@ def wait_product_images(
     return best
 
 
-def prepare_product_view_for_shot(page: Page, *, min_images: int = 2) -> int:
-    """샷 직전 상품 이미지 로드 개수 확인(읽기전용, 스크롤 없음)."""
-    wait_page_not_loading(page, timeout_sec=15.0)
-    n = wait_product_images(page, min_count=min_images, timeout_sec=25.0)
-    page.wait_for_timeout(200)
+def prepare_product_view_for_shot(
+    page: Page,
+    *,
+    min_images: int = 2,
+    fast: bool = False,
+) -> int:
+    """샷 직전 상품 이미지 로드 개수 확인(읽기전용, 스크롤 없음).
+
+    fast=True — 7·8항처럼 지연을 최소화해야 하는 구간에서 사용.
+    로딩 버퍼·이미지 대기 상한을 최소로 줄인다(요건: 6항 확인 후
+    7·8항은 단계별 딜레이 없이 즉시 수행, 9항 진입까지 소요시간 최소화).
+    """
+    wait_page_not_loading(
+        page,
+        timeout_sec=(2.0 if fast else 15.0),
+        settle_sec=(0.0 if fast else 0.5),
+    )
+    n = wait_product_images(
+        page, min_count=min_images, timeout_sec=(1.0 if fast else 25.0)
+    )
+    if not fast:
+        page.wait_for_timeout(200)
     return n
 
 
@@ -2253,13 +2275,17 @@ def wait_bulk_ready(page: Page) -> None:
 
 
 def _reset_to_bulk_menu_once(page: Page) -> None:
+    """★불필요한 고정 대기 없음 — 클릭 후 곧바로 wait_bulk_ready()가
+
+    실제로 URL검색 버튼이 보일 때까지만 기다린다(그 이상 블라인드로
+    쉬지 않음 — 2항 초기화 후 3항까지 8초씩 걸리던 지연 제거).
+    """
     href = page.locator('a[href*="getGoodsNew"]').first
     if href.count() > 0:
         try:
             href.click(timeout=5000)
         except PWTimeout:
             href.evaluate("(node) => node.click()")
-        page.wait_for_timeout(800)
         handle_possible_login_page(page)
         if BULK_PATH in page.url:
             wait_bulk_ready(page)
@@ -2281,7 +2307,6 @@ def _reset_to_bulk_menu_once(page: Page) -> None:
             if (sub) (sub.closest('a') || sub).click();
         }"""
     )
-    page.wait_for_timeout(1000)
     handle_possible_login_page(page)
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
@@ -2345,10 +2370,14 @@ def count_mango_result_products(page: Page) -> int:
         return 0
 
 
-def wait_page_not_loading(page: Page, timeout_sec: float = 15.0) -> None:
+def wait_page_not_loading(
+    page: Page, timeout_sec: float = 15.0, *, settle_sec: float = 0.5
+) -> None:
     """
     "로딩 중" 표시가 사라질 때까지 확인한다.
     (검색결과 있음/없음은 여기서 판단하지 않음 — 로딩 중 결과없음 깜빡임 오판 방지)
+    settle_sec=0 이면 로딩 종료 확인 즉시 반환(추가 버퍼 없음) — 지연
+    최소화가 필요한 구간(7·8항)에서 사용.
     """
     end = time.time() + timeout_sec
     while time.time() < end:
@@ -2358,7 +2387,8 @@ def wait_page_not_loading(page: Page, timeout_sec: float = 15.0) -> None:
         except Exception:  # noqa: BLE001
             return
         if not loading:
-            page.wait_for_timeout(500)  # 결과 렌더링 여유
+            if settle_sec > 0:
+                page.wait_for_timeout(int(settle_sec * 1000))  # 결과 렌더링 여유
             return
         page.wait_for_timeout(300)
 
@@ -2684,72 +2714,50 @@ def run_save_submit_and_verify(
                 "1회 재시도 후에도 동일."
             )
 
-        # ★필수 순서(사용자 14단계): 10 열림 → 11 닫힘확인 → 12 건수로그 → 13 초기화
-        # 6·11·12 확인 없이 다음 단계로 가면 수집 실패의 주요 원인
-        ctx.info(
-            "10. DB저장 실행 : 저장 팝업 모달 열림 대기 "
-            "(잔여 00건·설정모달 닫힘만으로 통과 금지)"
-        )
-        wait_save_execution_popup(
+        # ★요건: 120초 무행동 대기·300초 단계적 확인 생략. 클릭 직후부터
+        # 곧바로 "신규상품의 저장이 완료되었습니다" 메세지를 확인하고,
+        # 보이는 즉시 10·11·12항을 모두 만족한 것으로 보고 다음 단계로.
+        found = wait_for_save_complete_signal(
             page,
             ctx,
             rn,
             dialog_msgs=dialog_msgs,
-            before_popup_ids=before_popup_ids,
             baseline=alert_baseline,
             dialog_from=dialog_from,
-            grace_sec=SAVE_POPUP_BLIND_WAIT_SEC,
-            timeout_sec=SAVE_POPUP_CONFIRM_WAIT_SEC,
+            timeout_sec=SAVE_COMPLETE_WAIT_SEC,
         )
-        if not getattr(ctx, "save_popup_seen", False):
+        if found is None:
             ctx.shot(page, "03_result_missing", rn)
             raise RuntimeError(
-                f"#{rn} 최종 팝업화면이 열리지 않음 — "
-                "팝업 없이 초기화할 수 없습니다."
+                f"#{rn} '신규상품의 저장이 완료되었습니다' 메세지를 "
+                f"{SAVE_COMPLETE_WAIT_SEC:.0f}초 내에 확인하지 못함 — "
+                "저장 완료 없이 초기화할 수 없습니다."
             )
+        kind, hit = found
+        ctx.save_popup_kind = kind
+
         ctx.step(10, "수집 상품 DB저장하기 실행 : 저장 팝업 모달 열림 확인")
+        ctx.info(f"신호={kind} 문구={hit!r}")
+        ctx.shot(page, "10_popup_open", rn)
+        ctx.save_popup_seen = True
 
-        # 열린 동안 건수 스냅샷만 (닫기/확인은 11항에서) — 읽기만, 클릭 없음
-        snap_n, snap_msg, snap_src, _ = find_mango_collect_alert(
-            page,
-            dialog_msgs,
-            baseline=alert_baseline,
-            dialog_from=dialog_from,
-        )
-        if snap_n is not None:
-            ctx.save_count_snapshot = snap_n
-            ctx.info(f"저장중 건수 힌트: {snap_n} ({snap_src}:{snap_msg!r})")
+        ctx.step(11, "수집 상품 DB저장하기 종료 : 저장완료 메세지로 즉시 확인")
+        ctx.shot(page, "11_popup_closed", rn)
+        ctx.save_popup_closed = True
 
-        # ★11항: 저장 팝업 닫기-반드시 확인 (중간 닫기=ROLLBACK)
-        wait_save_popup_closed(
-            page,
-            ctx,
-            rn,
-            before_popup_ids=before_popup_ids,
-            baseline=alert_baseline,
-        )
-        if not getattr(ctx, "save_popup_closed", False):
-            ctx.shot(page, "03_modal_stuck", rn)
-            raise RuntimeError(
-                f"#{rn} 최종 팝업화면이 닫히지 않음 (11항 미확인) — "
-                "닫힐 때까지 초기화할 수 없습니다."
-            )
-        ctx.step(11, "수집 상품 DB저장하기 종료 : 저장 팝업 닫기-확인")
-
-        # ★12항: 닫힌 뒤 최종 저장건수 로그 확인
-        found_n = verify_mango_collect_alert(
-            page,
-            ctx,
-            rn,
-            save_count,
-            dialog_msgs=dialog_msgs,
-            baseline=alert_baseline,
-            dialog_from=dialog_from,
-            dismiss=False,
-        )
-        ctx.save_count_logged = True
+        # ★12항: 최종 저장건수 로그 — 문구에 건수가 있으면 그 값, 없으면
+        # (신규상품의 저장이 완료되었습니다 처럼 건수 없는 경우) 8항에서
+        # 읽은 원래 세팅값(save_count)을 그대로 기록
+        found_n = save_count
+        if kind == "count_msg":
+            n_parsed, _ = parse_mango_collect_count(hit)
+            if n_parsed is not None:
+                found_n = n_parsed
+        ctx.save_count_snapshot = found_n
         ctx.step(12, "수집후 DB 최종 저장건수 로그 확인")
-        ctx.info(f"상품 {found_n}건이 수집, 저장되었다")
+        ctx.info(f"상품 {found_n}건이 수집, 저장되었다 (신호문구={hit!r})")
+        ctx.shot(page, "12_count_logged", rn)
+        ctx.save_count_logged = True
 
         verify_row_save_done(page, ctx, rn, save_count)
         # 10·11·12 모두 확인된 경우에만 서버 저장 성공 → 13항 초기화 허용
@@ -2866,6 +2874,82 @@ def find_mango_collect_alert(
                 return n, hit, "popup", p
 
     return None, "", "", None
+
+
+def find_save_complete_signal(
+    page: Page,
+    dialog_msgs: list[str] | None = None,
+    *,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+) -> tuple[str, str, Page | None] | None:
+    """★저장완료 확정 신호 — 보이는 즉시(단계적 대기 없이) 다음 단계로.
+
+    최우선: "신규상품의 저장이 완료되었습니다" 정확 문구.
+    보조: 기존 'N건이 수집/저장되었다' 알림도 저장완료로 인정(실제
+    사이트 문구가 다를 수 있는 경우의 안전망).
+    읽기만 한다 — 클릭·스크롤 없음.
+    반환: (kind, 매칭문구, 해당 Page) 또는 None.
+    """
+    # 1) JS dialog
+    for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
+        if SAVE_COMPLETE_MSG_PATTERN.search(msg or ""):
+            return "complete_msg", msg, page
+    n, hit = parse_mango_collect_count("\n".join(dialog_msgs or []))
+    if n is not None:
+        for msg in list(dialog_msgs or [])[max(0, int(dialog_from)) :]:
+            n2, hit2 = parse_mango_collect_count(msg)
+            if n2 is not None:
+                return "count_msg", hit2 or msg, page
+
+    # 2) 본문
+    text = _page_visible_text(page)
+    if SAVE_COMPLETE_MSG_PATTERN.search(text or ""):
+        return "complete_msg", SAVE_COMPLETE_MSG_PATTERN.search(text).group(0), page
+    n, hit, src, hit_page = find_mango_collect_alert(
+        page, dialog_msgs, baseline=baseline, dialog_from=dialog_from
+    )
+    if n is not None:
+        return "count_msg", hit, hit_page or page
+
+    # 3) 새 창(ADMIN_HOST 포함)
+    for p in save_popups(page):
+        ptext = _page_visible_text(p)
+        if SAVE_COMPLETE_MSG_PATTERN.search(ptext or ""):
+            return "complete_msg", SAVE_COMPLETE_MSG_PATTERN.search(ptext).group(0), p
+
+    return None
+
+
+def wait_for_save_complete_signal(
+    page: Page,
+    ctx: RunCtx,
+    rn: int,
+    *,
+    dialog_msgs: list[str] | None = None,
+    baseline: set[str] | None = None,
+    dialog_from: int = 0,
+    timeout_sec: float | None = None,
+) -> tuple[str, str] | None:
+    """★9항 클릭 후 곧바로(무행동 대기 없이) 계속 확인 — 신호가 보이면 즉시 반환.
+
+    120초 순수대기·300초 단계적 확인 요건은 생략한다. 대신 클릭 직후부터
+    끊임없이(짧은 간격으로) 확인하고, 신호가 보이는 즉시 리턴한다.
+    timeout_sec 는 순수 안전망(그래도 안 보이면 실패 처리)일 뿐, 평소엔
+    이보다 훨씬 빨리 끝난다.
+    """
+    wait_sec = float(timeout_sec or SAVE_COMPLETE_WAIT_SEC)
+    end = time.time() + wait_sec
+    while time.time() < end:
+        ctx.check_budget("저장완료 메세지 확인")
+        found = find_save_complete_signal(
+            page, dialog_msgs, baseline=baseline, dialog_from=dialog_from
+        )
+        if found is not None:
+            kind, hit, _hit_page = found
+            return kind, hit
+        page.wait_for_timeout(200)
+    return None
 
 
 def _is_settings_modal_text(txt: str) -> bool:

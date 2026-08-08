@@ -72,8 +72,9 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
             f"(state={last_state}, hint={last_count})"
         )
 
-    # 결과 화면 준비 (6 이후 · 7 이전)
-    result_imgs = C.prepare_product_view_for_shot(page, min_images=2)
+    # 결과 화면 준비 (6 이후 · 7 이전) — 요건: 6항 확인 후 7·8항은 지연
+    # 없이 즉시 수행. 스크린샷용 이미지 대기도 최소화(fast=True).
+    result_imgs = C.prepare_product_view_for_shot(page, min_images=2, fast=True)
     ctx.info(f"  검색결과 준비 (상품이미지 약 {result_imgs}개)")
     if C.is_mango_no_results(page):
         ctx.shot(page, "01_mango_no_results", rn)
@@ -87,11 +88,9 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
     # ── 7. 저장범위 ──
     step07_save_range(page, ctx, rn)
 
-    # 저장 단계 시간 확보 — 요건 3(120초 무행동) + 요건 6(최대 300초 메세지확인)
-    # + 팝업 닫힘 대기(최대 60초) 등을 감안해 여유 있게 잡는다.
-    ctx.row_deadline = time.time() + (
-        C.SAVE_POPUP_BLIND_WAIT_SEC + C.SAVE_POPUP_CONFIRM_WAIT_SEC + 200.0
-    )
+    # 저장 단계 시간 확보 — 저장완료 메세지 즉시탐지(최대 SAVE_COMPLETE_WAIT_SEC)
+    # + 여유 버퍼. 120초/300초 단계적 대기는 더 이상 쓰지 않음.
+    ctx.row_deadline = time.time() + (C.SAVE_COMPLETE_WAIT_SEC + 60.0)
 
     # ── 8. 필터 입력(저장상품수는 원래 세팅값 유지·미변경) ──
     effective_count = step08_filter_count(page, ctx, rn, label, save_count)
@@ -121,13 +120,16 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
 
 
 def step02_init(page, ctx, rn: int) -> None:
-    """2(최초) 또는 13(다음행부터) — 상품데이터수집 → 대량데이터수집."""
+    """★상품수집 필드 초기화는 언제나 2단계 — 두 번째 이후 행이라도
+    "13"으로 표시하지 않는다(사용자 지적: 초기화 단계는 항상 2단계).
+
+    ★불필요한 고정 대기 없음 — reset_to_bulk_menu() 내부에서 URL검색
+    버튼이 실제로 보일 때까지만 기다리고, 그 후 3항으로 곧바로 진행.
+    """
     import collect as C
 
-    n = 2 if getattr(ctx, "input_ordinal", 1) <= 1 else 13
-    ctx.step(n, "상품수집 필드 초기화 : 상품데이터수집 → 대량데이터수집")
+    ctx.step(2, "상품수집 필드 초기화 : 상품데이터수집 → 대량데이터수집")
     C.reset_to_bulk_menu(page)
-    page.wait_for_timeout(500)
     ctx.shot(page, "00_init_bulk", rn)
 
 
@@ -255,6 +257,10 @@ def step06b_settle(
 
 
 def step07_save_range(page, ctx, rn: int) -> None:
+    """★요건: 6항 확인 후 7·8항은 단계별 딜레이 없이 즉시 수행 —
+    9항 진입까지 소요시간 최소화. 모달이 뜨는 즉시(폴링 간격 최소) 진행,
+    스크린샷용 이미지 대기는 fast=True로 최소화, 꼬리의 고정 대기 제거.
+    """
     import collect as C
 
     C.click_it(C.save_all_button(page))
@@ -262,16 +268,15 @@ def step07_save_range(page, ctx, rn: int) -> None:
     while time.time() < end:
         if C.save_modal_visible(page):
             break
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(100)
     else:
         ctx.shot(page, "02_save_missing", rn)
         raise RuntimeError(f"#{rn} 7항 모두저장 후 상품저장설정 모달 미열림")
     try:
-        imgs = C.prepare_product_view_for_shot(page, min_images=2)
+        imgs = C.prepare_product_view_for_shot(page, min_images=2, fast=True)
     except Exception as e:
         ctx.info(f"  [경고] 모달 상품이미지 대기 실패: {e}")
         imgs = 0
-    page.wait_for_timeout(300)
     ctx.step(7, "수집된 상품 저장범위 지정 : 검색된 상품 모두저장")
     ctx.info(f"  상품저장설정 모달 열림 (상품이미지 약 {imgs}개)")
     ctx.shot(page, "02_save_modal", rn)
