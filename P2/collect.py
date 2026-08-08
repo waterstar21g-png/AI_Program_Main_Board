@@ -2256,18 +2256,32 @@ def handle_possible_login_page(page: Page) -> None:
 
 
 def _wait_bulk_ready_once(page: Page) -> None:
+    """★타이밍 진단 포함 — 2→3항 사이 지연이 어디서 나는지 sub로그로 남긴다.
+
+    코드가 만드는 블라인드 sleep은 전부 제거했다. 남는 시간은 실제
+    페이지 전환·서버응답·렌더링 시간일 가능성이 높으므로, 다음 실행에서
+    바로 원인을 특정할 수 있게 각 구간 소요시간을 기록한다.
+    """
+    t0 = time.time()
     try:
         page.wait_for_load_state("domcontentloaded", timeout=15_000)
     except Exception:  # noqa: BLE001
         pass
+    t1 = time.time()
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
     handle_possible_login_page(page)
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
         handle_possible_login_page(page)
-    log("  대량수집 화면 로딩 확인 중...")
+    t2 = time.time()
     url_search_button(page).first.wait_for(state="visible", timeout=60_000)
+    t3 = time.time()
+    log(
+        "  [타이밍] domcontentloaded="
+        f"{t1 - t0:.2f}s, URL이동/로그인체크={t2 - t1:.2f}s, "
+        f"URL검색버튼 보일때까지={t3 - t2:.2f}s"
+    )
 
 
 def wait_bulk_ready(page: Page) -> None:
@@ -2280,12 +2294,14 @@ def _reset_to_bulk_menu_once(page: Page) -> None:
     실제로 URL검색 버튼이 보일 때까지만 기다린다(그 이상 블라인드로
     쉬지 않음 — 2항 초기화 후 3항까지 8초씩 걸리던 지연 제거).
     """
+    t_click0 = time.time()
     href = page.locator('a[href*="getGoodsNew"]').first
     if href.count() > 0:
         try:
             href.click(timeout=5000)
         except PWTimeout:
             href.evaluate("(node) => node.click()")
+        log(f"  [타이밍] 메뉴 클릭 자체={time.time() - t_click0:.2f}s")
         handle_possible_login_page(page)
         if BULK_PATH in page.url:
             wait_bulk_ready(page)
@@ -2307,6 +2323,7 @@ def _reset_to_bulk_menu_once(page: Page) -> None:
             if (sub) (sub.closest('a') || sub).click();
         }"""
     )
+    log(f"  [타이밍] JS 메뉴 클릭 자체={time.time() - t_click0:.2f}s")
     handle_possible_login_page(page)
     if BULK_PATH not in page.url:
         safe_goto(page, BULK_URL)
