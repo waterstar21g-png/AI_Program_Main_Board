@@ -1,4 +1,4 @@
-"""P1_ZARA_DE 3행×12열(상위·중위·하위1~10) · 하위 수집 단위테스트."""
+"""P1_ZARA_DE 20행×3열(상위·중위·하위URL) · 최종 카테고리 리스트업 단위테스트."""
 
 from __future__ import annotations
 
@@ -12,15 +12,14 @@ from crawl import (  # noqa: E402
     COL_LABELS,
     DEFAULT_SITE,
     DEFAULT_URL,
-    LOW_SLOT_COUNT,
+    NAME_ENTRY_WIDTH,
     TOP_GRID_COLS,
     TOP_GRID_ROWS,
+    URL_ENTRY_WIDTH,
     _make_leaf,
     expand_grid_rows_to_paths,
-    fill_hierarchy_from_previous,
     filter_by_hierarchy_specs,
     hierarchy_row_from_match,
-    parse_category_specs,
     parse_grid_category_specs,
     parse_zara_html_links,
     to_english_locale_url,
@@ -28,83 +27,74 @@ from crawl import (  # noqa: E402
 
 
 def test_grid_shape():
-    assert TOP_GRID_ROWS == 3
-    assert TOP_GRID_COLS == 12
-    assert LOW_SLOT_COUNT == 10
-    assert len(COL_LABELS) == 12
-    assert COL_LABELS[0] == "상위 카테고리"
-    assert COL_LABELS[1] == "중위 카테고리"
-    assert COL_LABELS[2] == "하위 카테고리1"
-    assert COL_LABELS[11] == "하위 카테고리10"
+    assert TOP_GRID_ROWS == 20
+    assert TOP_GRID_COLS == 3
+    assert len(COL_LABELS) == 3
+    assert COL_LABELS[0] == "상위 카테고리명"
+    assert COL_LABELS[1] == "중위 카테고리명"
+    assert COL_LABELS[2] == "하위 카테고리 URL"
+    assert URL_ENTRY_WIDTH == NAME_ENTRY_WIDTH * 10
     assert DEFAULT_SITE == "독일자라"
     assert DEFAULT_URL == "https://www.zara.com/de/en/user/order"
 
 
-def test_expand_grid_rows_to_paths():
-    """한 행 = 상위·중위·하위1~10 → 경로 전개. 상위/중위 생략 시 이전 행 복사."""
-    row1 = ["WOMAN", "CLOTHING", "Dresses", "Tops"] + [""] * 8
-    row2 = ["", "", "Skirts"] + [""] * 9  # → WOMAN, CLOTHING, Skirts
-    row3 = ["MAN", "SHOES"] + [""] * 10  # 하위 없음 → MAN > SHOES 전체
-    paths = expand_grid_rows_to_paths([row1, row2, row3])
+def test_expand_grid_rows_requires_url():
+    """한 행 = 상위·중위·하위URL. URL 있는 행만 채택, 상위/중위 생략 시 이전 행 복사."""
+    rows = [
+        ("WOMAN", "CLOTHING", "https://www.zara.com/de/en/dresses-l1001.html"),
+        ("", "", "https://www.zara.com/de/en/tops-l1002.html"),
+        ("MAN", "SHOES", ""),  # URL 없음 → skip
+        ("", "BAGS", "https://www.zara.com/de/de/bags-l2001.html"),
+    ]
+    paths = expand_grid_rows_to_paths(rows)
     assert paths == [
-        ("WOMAN", "CLOTHING", "Dresses"),
-        ("WOMAN", "CLOTHING", "Tops"),
-        ("WOMAN", "CLOTHING", "Skirts"),
-        ("MAN", "SHOES", ""),
+        ("WOMAN", "CLOTHING", "https://www.zara.com/de/en/dresses-l1001.html"),
+        ("WOMAN", "CLOTHING", "https://www.zara.com/de/en/tops-l1002.html"),
+        ("MAN", "BAGS", "https://www.zara.com/de/de/bags-l2001.html"),
     ]
 
 
-def test_fill_hierarchy_from_previous():
-    """상위·중위 생략 시 이전 경로 값을 복사."""
-    raw = [
-        ("WOMAN", "CLOTHING", "Dresses"),
-        ("", "", "Tops"),
-        ("", "SHOES", "Boots"),
-        ("MAN", "", "Jeans"),
-        ("", "", ""),
-        ("", "", "Shirts"),
+def test_url_spec_lists_final_categories():
+    """하위 URL 입력 시 해당 노드·하위 최종 카테고리를 리스트업하고 엑셀 계층 반영."""
+    anchor_url = "https://www.zara.com/de/en/clothing-l10.html"
+    leaves = [
+        _make_leaf(
+            ["WOMAN", "CLOTHING"],
+            category_url=anchor_url,
+            cat_id="10",
+        ),
+        _make_leaf(
+            ["WOMAN", "CLOTHING", "Dresses"],
+            category_url="https://www.zara.com/de/en/dresses-l11.html",
+            cat_id="11",
+        ),
+        _make_leaf(
+            ["WOMAN", "CLOTHING", "Tops"],
+            category_url="https://www.zara.com/de/en/tops-l12.html",
+            cat_id="12",
+        ),
+        _make_leaf(
+            ["MAN", "SHOES", "Boots"],
+            category_url="https://www.zara.com/de/en/boots-l20.html",
+            cat_id="20",
+        ),
     ]
-    filled = fill_hierarchy_from_previous(raw)
-    assert filled[0] == ("WOMAN", "CLOTHING", "Dresses")
-    assert filled[1] == ("WOMAN", "CLOTHING", "Tops")
-    assert filled[2] == ("WOMAN", "SHOES", "Boots")
-    assert filled[3] == ("MAN", "SHOES", "Jeans")
-    assert filled[4] == ("MAN", "SHOES", "Shirts")
-
-
-def test_parse_grid_specs_and_excel_hierarchy():
-    row = ["WOMAN", "CLOTHING", "Dresses", "Tops"] + [""] * 8
-    specs = parse_grid_category_specs([row])
-    assert len(specs) == 2
-    assert specs[1].match1 == "WOMAN"
-    assert specs[1].match2 == "CLOTHING"
-    assert specs[1].match3 == "Tops"
-    leaf = _make_leaf(
-        ["WOMAN", "CLOTHING", "Tops"],
-        category_url="https://www.zara.com/de/en/tops-l1.html",
-        cat_id="1",
+    specs = parse_grid_category_specs(
+        [("WOMAN", "CLOTHING", "https://www.zara.com/de/de/clothing-l10.html")]
     )
-    matched = filter_by_hierarchy_specs([leaf], specs)
-    assert len(matched) == 1
-    row_out = hierarchy_row_from_match("독일자라", leaf, matched[0][1])
-    assert row_out.top == "WOMAN"
-    assert row_out.mid == "CLOTHING"
-    assert row_out.low == "Tops"
-    assert "WOMAN" in row_out.top_final_label
-    assert "CLOTHING" in row_out.top_final_label
-
-
-def test_parse_specs_applies_fill_and_excel_hierarchy():
-    specs = parse_category_specs(
-        [
-            ("WOMAN", "CLOTHING", "Dresses"),
-            ("", "", "Tops"),
-        ]
-    )
-    assert len(specs) == 2
-    assert specs[1].match1 == "WOMAN"
-    assert specs[1].match2 == "CLOTHING"
-    assert specs[1].match3 == "Tops"
+    assert len(specs) == 1
+    assert specs[0].low_url.endswith("/de/en/clothing-l10.html")
+    matched = filter_by_hierarchy_specs(leaves, specs)
+    finals = [leaf.final for leaf, _ in matched]
+    assert "CLOTHING" in finals
+    assert "Dresses" in finals
+    assert "Tops" in finals
+    assert "Boots" not in finals
+    row = hierarchy_row_from_match("독일자라", matched[1][0], matched[1][1])
+    assert row.top == "WOMAN"
+    assert row.mid == "CLOTHING"
+    assert row.low == "CLOTHING"  # URL 노드명
+    assert row.final in ("Dresses", "Tops", "CLOTHING")
 
 
 def test_html_link_parse_english():
@@ -124,9 +114,7 @@ def test_html_link_parse_english():
 
 if __name__ == "__main__":
     test_grid_shape()
-    test_expand_grid_rows_to_paths()
-    test_fill_hierarchy_from_previous()
-    test_parse_grid_specs_and_excel_hierarchy()
-    test_parse_specs_applies_fill_and_excel_hierarchy()
+    test_expand_grid_rows_requires_url()
+    test_url_spec_lists_final_categories()
     test_html_link_parse_english()
     print("ok")
