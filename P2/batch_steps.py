@@ -6,6 +6,10 @@
   = 3→4→5→6→7→8→9→10→11→12→13(초기화) → 다시 3 …
 
 실패 최대 원인: 6·11·12 확인 없이 다음 단계 진행.
+
+★실행로그 규칙: 화면(표준출력·보드)에는 오직 1~13단계 줄만 보인다
+(ctx.step() 로만 출력됨). 그 외 세부 진단은 ctx.info()로 파일에만 남긴다.
+단계 내 입력 필드값은 그 단계 아래 한 단 더 들여써서 별도 줄로 출력한다.
 """
 
 from __future__ import annotations
@@ -29,19 +33,18 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
     url = C.normalize_url(raw_url)
     save_count = max(3, int(ctx.save_count))
 
-    # 저장 팝업 대기 중 초기화(2) 진입 금지
+    # 저장 팝업 대기 중 초기화(2/13) 진입 금지
     if getattr(ctx, "save_awaiting_popup", False):
         raise RuntimeError(
             f"#{rn} 저장하기 후 팝업모달 대기 미완료 — "
-            "2항 초기화로 진행 불가 (11·12항 먼저)"
+            "초기화 진행 불가 (11·12항 먼저)"
         )
 
     ctx.info(
         f"==== BATCH 시작 엑셀{rn}행 | {label} | {raw_url} | 저장수={save_count} ===="
     )
-    ctx.info("순서: 2초기화→3URL→4검색클릭→5팝업열림→6팝업닫힘→7모두저장→8필터→9저장하기→10저장팝업→11닫힘→12건수")
 
-    # ── 2. 초기화 ──
+    # ── 2(최초)/13(다음행) 초기화 ──
     step02_init(page, ctx, rn)
 
     # ── 3~6. URL검색 (실패 시 같은 구간만 최대 N회) ──
@@ -84,8 +87,11 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
     # ── 7. 저장범위 ──
     step07_save_range(page, ctx, rn)
 
-    # 저장 단계 시간 확보
-    ctx.row_deadline = time.time() + max(120.0, float(C.MODAL_WAIT_SEC) + 60.0)
+    # 저장 단계 시간 확보 — 요건 3(120초 무행동) + 요건 6(최대 300초 메세지확인)
+    # + 팝업 닫힘 대기(최대 60초) 등을 감안해 여유 있게 잡는다.
+    ctx.row_deadline = time.time() + (
+        C.SAVE_POPUP_BLIND_WAIT_SEC + C.SAVE_POPUP_CONFIRM_WAIT_SEC + 200.0
+    )
 
     # ── 8. 필터·건수 ──
     step08_filter_count(page, ctx, rn, label, save_count)
@@ -115,9 +121,11 @@ def run_row_batch(page: "Page", row: dict, ctx: "C_mod.RunCtx") -> None:
 
 
 def step02_init(page, ctx, rn: int) -> None:
+    """2(최초) 또는 13(다음행부터) — 상품데이터수집 → 대량데이터수집."""
     import collect as C
 
-    ctx.info("2. 상품수집 필드 초기화 : 상품데이터수집 → 대량데이터수집")
+    n = 2 if getattr(ctx, "input_ordinal", 1) <= 1 else 13
+    ctx.step(n, "상품수집 필드 초기화 : 상품데이터수집 → 대량데이터수집")
     C.reset_to_bulk_menu(page)
     page.wait_for_timeout(500)
     ctx.shot(page, "00_init_bulk", rn)
@@ -128,7 +136,8 @@ def step03_input_url(
 ) -> None:
     import collect as C
 
-    ctx.info(f"3. URL 입력 | {url}")
+    ctx.step(3, "상품수집 URL정보 입력")
+    ctx.info(f"최종 카테고리 URL주소: {url}")
     if url != raw_url.strip():
         ctx.info(f"  [정보] 프로토콜 보정됨: {url}")
     target = C.url_input(page)
@@ -148,14 +157,13 @@ def step03_input_url(
 def step04_click_search(page, ctx, rn: int) -> None:
     import collect as C
 
-    ctx.info("4. 상품수집 시작 : URL상품검색하기 클릭")
+    ctx.step(4, "상품수집 시작 : URL상품검색하기 클릭")
     C.click_it(C.url_search_button(page))
 
 
 def step05_popup_open(page, ctx, rn: int, try_i: int) -> None:
     import collect as C
 
-    ctx.info("5. 상품수집 실행 : 검색 팝업 모달 열림 대기 (임시메모리 적재)")
     opened = C.wait_popup_open(page, grace_sec=15.0)
     if not opened:
         ctx.info("  키보드 재시도 (Enter)")
@@ -181,7 +189,8 @@ def step05_popup_open(page, ctx, rn: int, try_i: int) -> None:
         imgs = 0
     ctx.search_popup_seen = True
     ctx.search_popup_closed = False
-    ctx.info(f"5. 검색 팝업 열림 확인 (상품이미지 약 {imgs}개)")
+    ctx.step(5, "상품수집 실행 : 검색 팝업 모달 열림 (임시메모리 적재 중)")
+    ctx.info(f"  상품이미지 약 {imgs}개")
     if try_i == 1:
         ctx.shot(popup, "01_popup_opened", rn)
 
@@ -189,7 +198,6 @@ def step05_popup_open(page, ctx, rn: int, try_i: int) -> None:
 def step06_popup_close(page, ctx, rn: int, try_i: int) -> None:
     import collect as C
 
-    ctx.info("6. 상품수집 종료 : 검색 팝업 닫기-확인 (임시메모리 보관 완료)")
     C.wait_popups_close(page)
     if C.popups(page):
         raise TimeoutError(
@@ -200,7 +208,7 @@ def step06_popup_close(page, ctx, rn: int, try_i: int) -> None:
         page.bring_to_front()
     except Exception:
         pass
-    ctx.info("6. 검색 팝업 닫힘 확인 완료")
+    ctx.step(6, "상품수집 종료 : 검색 팝업 닫기-확인 (임시메모리 보관 완료)")
     if try_i == 1:
         ctx.shot(page, "01_popup_closed", rn)
 
@@ -249,8 +257,6 @@ def step06b_settle(
 def step07_save_range(page, ctx, rn: int) -> None:
     import collect as C
 
-    ctx.info("7. 저장범위 지정 : 검색된 상품 모두저장 클릭")
-    C.scroll_to_product_strip(page)
     C.click_it(C.save_all_button(page))
     end = time.time() + C.MODAL_WAIT_SEC
     while time.time() < end:
@@ -266,7 +272,8 @@ def step07_save_range(page, ctx, rn: int) -> None:
         ctx.info(f"  [경고] 모달 상품이미지 대기 실패: {e}")
         imgs = 0
     page.wait_for_timeout(300)
-    ctx.info(f"7. 상품저장설정 모달 열림 (상품이미지 약 {imgs}개)")
+    ctx.step(7, "수집된 상품 저장범위 지정 : 검색된 상품 모두저장")
+    ctx.info(f"  상품저장설정 모달 열림 (상품이미지 약 {imgs}개)")
     ctx.shot(page, "02_save_modal", rn)
 
 
@@ -275,22 +282,23 @@ def step08_filter_count(
 ) -> None:
     import collect as C
 
-    ctx.info(f"8. 필터·수집상품수 입력 (필터={label}, 수={save_count})")
+    ctx.step(8, "수집 상품 필터·수집상품갯수 입력")
+    ctx.info(f"검색필터명: {label}")
+    ctx.info(f"저장상품수: {save_count}")
     C.fill_save_modal_fields(page, ctx, rn, label, save_count)
 
 
 def step09_to_12_db_save(page, ctx, rn: int, save_count: int) -> None:
-    """9 저장하기 → 10 팝업열림 → 11 닫힘확인 → 12 건수로그 (한 줄도 건너뛰지 않음)."""
+    """9 저장하기 → 10 팝업열림 → 11 닫힘확인 → 12 건수로그 (한 줄도 건너뛰지 않음).
+
+    9~12항 각각의 화면 출력(ctx.step)은 run_save_submit_and_verify 내부에서
+    실제로 그 단계가 확인된 시점에 남긴다(미리 다 찍지 않음).
+    """
     import collect as C
 
-    ctx.info("9. DB저장 시작 — 하단 '저장하기' (모두저장과 다른 버튼)")
-    ctx.info("10. DB저장 실행 — 저장 팝업 열림 대기")
-    ctx.info("11. DB저장 종료 — 저장 팝업 닫기-확인")
-    ctx.info("12. 최종 저장건수 로그 확인")
     C.run_save_submit_and_verify(page, ctx, rn, save_count)
     if not ctx.server_save_ok:
         raise RuntimeError(
             f"#{rn} 9항 저장하기 실패 또는 10·11·12항 미완료 — "
             "저장하기 클릭→팝업열림→닫힘→건수로그 필수"
         )
-    ctx.info("9~12. DB저장 BATCH 완료")

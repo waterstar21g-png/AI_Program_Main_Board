@@ -98,13 +98,19 @@ CHROME_CANDIDATES = [
 
 POPUP_WAIT_SEC = 40  # 검색 팝업(6항) 닫힘 대기(초) — 초과 시 다음단계 금지·실패
 MODAL_WAIT_SEC = 60
-# 저장하기 클릭 후 서버 처리·팝업 생성에 주는 최소 시간(초)
-# (이 전에 화면에 있던 '00건 수집' 문구로 즉시 통과·초기화 금지)
+# 저장하기 클릭 직후 "뭔가 반응했나"만 빠르게 보는 짧은 확인(초) — 요건 3의
+# 120초 무행동 대기와는 다른, 클릭 실패 여부만 가르는 용도.
 SAVE_POPUP_GRACE_SEC = 5.0
+# ★요건 3: 저장하기 클릭 후 이 시간(초) 동안은 절대 어떤 행동도 하지 않고
+# 순수하게 기다린다(읽기·클릭·스크롤 전부 없음). 그 후에만 다음 단계 진행.
+SAVE_POPUP_BLIND_WAIT_SEC = 120.0
+# ★요건 6: 그 다음 "상품 N건이 수집, 저장되었다" 메세지를 확인할 때까지
+# 최대 이 시간(초)만큼 더 기다린다(읽기만, 클릭·스크롤 없음).
+SAVE_POPUP_CONFIRM_WAIT_SEC = 300.0
 DEFAULT_SAVE_COUNT = 3
 DEFAULT_ROW_RETRIES = 2
 SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
-ROW_BUDGET_SEC = 180  # 한 입력 행에 쓸 수 있는 최대 시간(초) — 초과 시 다음 행
+ROW_BUDGET_SEC = 240  # 한 입력 행(2~7항 검색단계)에 쓸 수 있는 최대 시간(초)
 
 # 보드 "수집 종료" 버튼이 만드는 중단 플래그 (로그는 보드에 보존)
 STOP_FLAG = Path(__file__).parent / ".collect_stop"
@@ -265,9 +271,33 @@ SHOT_STEP_LABELS: dict[str, str] = {
 # 사용자 수동 로그인 대기 제한 (초)
 LOGIN_WAIT_SEC = 600
 
+# ★실행로그 — main/sub 두 그리드 프로토콜 (board/app.py 참고).
+# main: 1~13단계 줄만(단계 발생 1회=1행). sub: 그 "발생(seq)"에 딸린
+# 추가정보·스크린샷 — 같은 단계번호가 행마다 반복되므로 seq로 구분한다.
+# 형식: ##MAIN##<seq>##<n>##<msg>  /  ##SUB##<seq>##<msg>
+#      ##SUBSHOT##<seq>##<path>##<label>
+# (docs/수집_14단계_필수순서.md)
+MAIN_LINE_MARK = "##MAIN##"
+SUB_LINE_MARK = "##SUB##"
+SUB_SHOT_MARK = "##SUBSHOT##"
+
 
 def log(msg: str) -> None:
+    """내부 진단용 — 활성 ctx가 있으면 sub그리드로, 없으면 표준출력에."""
+    ctx = _ACTIVE_CTX
+    if ctx is not None:
+        ctx.info(msg)
+        return
     safe_print(f"[{time.strftime('%H:%M:%S')}] {msg}")
+
+
+def step_log(n: int, msg: str) -> None:
+    """모듈 레벨에서도 13단계(main) 출력을 쓸 수 있게 — 활성 ctx로 위임."""
+    ctx = _ACTIVE_CTX
+    if ctx is not None:
+        ctx.step(n, msg)
+    else:
+        safe_print(f"[{time.strftime('%H:%M:%S')}] {n}. {msg}")
 
 
 class RunCtx:
@@ -300,6 +330,8 @@ class RunCtx:
         self.step_i = 0
         self.shots: list[dict] = []
         self._gallery_written = False
+        self._current_step = 0  # main그리드 마지막 단계번호(1~13, 표시용)
+        self._step_seq = 0  # main그리드 각 발생(행)의 고유번호 — sub 연결용
         self.input_ordinal = 0  # 처리 중인 입력 순서(1부터)
         self.current_label = ""
         self.current_url = ""
@@ -381,11 +413,27 @@ class RunCtx:
         if _ACTIVE_CTX is self:
             _ACTIVE_CTX = None
 
-    def info(self, msg: str) -> None:
-        line = f"[{time.strftime('%H:%M:%S')}] {msg}"
-        safe_print(line)
+    def step(self, n: int, msg: str) -> None:
+        """★main 그리드 — 1~13단계 줄만(발생마다 새 seq). 이후 info()/shot()은
+        이 발생(seq)에 딸린 sub 항목으로 연결된다."""
+        self._step_seq += 1
+        self._current_step = n
+        seq = self._step_seq
+        ts = time.strftime("%H:%M:%S")
+        safe_print(f"[{ts}] {MAIN_LINE_MARK}{seq}##{n}##{msg}")
         try:
-            self._log_file.write(line + "\n")
+            self._log_file.write(f"[{ts}] {n}. {msg}\n")
+            self._log_file.flush()
+        except Exception:
+            pass
+
+    def info(self, msg: str) -> None:
+        """sub 그리드 — 마지막 step() 발생(seq)에 딸린 추가정보로 표시됨."""
+        seq = self._step_seq
+        ts = time.strftime("%H:%M:%S")
+        safe_print(f"[{ts}] {SUB_LINE_MARK}{seq}##{msg}")
+        try:
+            self._log_file.write(f"[{ts}]   {msg}\n")
             self._log_file.flush()
         except Exception:
             pass
@@ -410,11 +458,15 @@ class RunCtx:
         name = f"{self.step_i:02d}_{ord_part}_r{row_no or 0}_{safe}.png"
         path = self.shot_dir / name
         label = self.label_for_tag(tag)
+        main_step = self._current_step
+        seq = self._step_seq
         try:
             page.screenshot(path=str(path), full_page=True)
             self.shots.append(
                 {
                     "step": self.step_i,
+                    "main_step": main_step,
+                    "seq": seq,
                     "ordinal": self.input_ordinal,
                     "row": row_no or 0,
                     "tag": tag,
@@ -425,13 +477,18 @@ class RunCtx:
                     "path": str(path),
                 }
             )
-            extra = ""
-            if self.current_label or self.current_url:
-                extra = f" | {self.current_label} | {self.current_url}"
-            self.info(f"  [샷] {self.step_i:02d}. {label} -> {path.name}{extra}")
+            ts = time.strftime("%H:%M:%S")
+            safe_print(f"[{ts}] {SUB_SHOT_MARK}{seq}##{path}##{label}")
+            try:
+                self._log_file.write(
+                    f"[{ts}]   [샷] {self.step_i:02d}. {label} -> {path.name}\n"
+                )
+                self._log_file.flush()
+            except Exception:  # noqa: BLE001
+                pass
             return path
         except Exception as e:  # noqa: BLE001
-            self.info(f"  [샷 실패] {label}: {e}")
+            self.info(f"[샷 실패] {label}: {e}")
             return None
 
     def write_gallery(self) -> Path | None:
@@ -1027,34 +1084,8 @@ def wait_popups_gone(
 
 
 def scroll_to_product_strip(page: Page) -> None:
-    """수집 상품 썸네일/모두저장 버튼 영역이 보이도록 스크롤."""
-    try:
-        btn = save_all_button(page).first
-        if btn.count() > 0 and btn.is_visible():
-            btn.scroll_into_view_if_needed(timeout=5_000)
-            page.wait_for_timeout(250)
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        page.evaluate(
-            """() => {
-                const re = /검색된\\s*상품\\s*모두\\s*저장|전체선택|선택상품저장/;
-                const nodes = Array.from(document.querySelectorAll('input,button,a,td,div,span'));
-                const hit = nodes.find(el => re.test((el.value || el.innerText || '').trim()));
-                if (hit) hit.scrollIntoView({ block: 'center', inline: 'nearest' });
-                const imgs = Array.from(document.querySelectorAll('img')).filter(
-                    (i) => (i.naturalWidth || 0) >= 40 && (i.naturalHeight || 0) >= 40
-                );
-                if (imgs.length) {
-                    imgs[Math.min(3, imgs.length - 1)].scrollIntoView({
-                        block: 'center', inline: 'nearest'
-                    });
-                }
-            }"""
-        )
-        page.wait_for_timeout(300)
-    except Exception:  # noqa: BLE001
-        pass
+    """★스크롤 절대 금지 요건 — 더 이상 화면을 스크롤하지 않는다(하위 호환 no-op)."""
+    return None
 
 
 def wait_product_images(
@@ -1063,7 +1094,7 @@ def wait_product_images(
     min_count: int = 2,
     timeout_sec: float = 25.0,
 ) -> int:
-    """상품 이미지(naturalWidth>=40)가 로드될 때까지 스크롤·대기. 로드 개수 반환."""
+    """상품 이미지(naturalWidth>=40) 로드 개수를 읽기만 하고 대기(스크롤 없음)."""
     end = time.time() + max(3.0, float(timeout_sec))
     best = 0
     while time.time() < end:
@@ -1075,8 +1106,7 @@ def wait_product_images(
                     for (const img of Array.from(document.querySelectorAll('img'))) {
                         const w = img.naturalWidth || 0;
                         const h = img.naturalHeight || 0;
-                        const r = img.getBoundingClientRect();
-                        if (w >= 40 && h >= 40 && r.width >= 20 && r.height >= 20) ok += 1;
+                        if (w >= 40 && h >= 40) ok += 1;
                     }
                     return ok;
                 }"""
@@ -1085,35 +1115,25 @@ def wait_product_images(
         except Exception:  # noqa: BLE001
             pass
         if best >= min_count:
-            scroll_to_product_strip(page)
             return best
-        try:
-            page.evaluate(
-                "() => window.scrollBy(0, Math.max(280, Math.floor(window.innerHeight * 0.55)))"
-            )
-        except Exception:  # noqa: BLE001
-            pass
         page.wait_for_timeout(350)
-    scroll_to_product_strip(page)
     return best
 
 
 def prepare_product_view_for_shot(page: Page, *, min_images: int = 2) -> int:
-    """샷 직전에 상품 이미지가 보이도록 대기·스크롤. 로드된 이미지 수 반환."""
+    """샷 직전 상품 이미지 로드 개수 확인(읽기전용, 스크롤 없음)."""
     wait_page_not_loading(page, timeout_sec=15.0)
-    scroll_to_product_strip(page)
     n = wait_product_images(page, min_count=min_images, timeout_sec=25.0)
-    scroll_to_product_strip(page)
-    page.wait_for_timeout(400)
+    page.wait_for_timeout(200)
     return n
 
 
 # ── 입력 · 클릭 (망고 구형 input 대응) ────────────────────────
 
 def type_into(page: Page, locator, value: str) -> None:
+    """★스크롤 절대 금지 — el.click()의 내부 자동 스크롤 외에는 화면을 움직이지 않음."""
     el = locator.first
     el.wait_for(state="attached", timeout=60_000)
-    el.scroll_into_view_if_needed()
     try:
         el.click(timeout=15_000)
     except PWTimeout:
@@ -1159,10 +1179,11 @@ def click_it(locator) -> bool:
     window.open()(팝업)이 조용히 차단될 수 있다. 그래서 실패해도
     좌표 기반 실제 마우스 클릭(신뢰됨)을 먼저 시도하고,
     그것마저 안 될 때만 최후 수단으로 JS 클릭을 쓴다.
+
+    ★스크롤 절대 금지 — el.click()의 내부 자동 스크롤 외에는 화면을 움직이지 않음.
     """
     el = locator.first
     el.wait_for(state="visible", timeout=60_000)
-    el.scroll_into_view_if_needed()
     try:
         el.click(timeout=20_000)
         return True
@@ -1388,36 +1409,12 @@ def _first_visible(locator):
 
 
 def scroll_save_modal_to_footer(page: Page) -> None:
-    """상품저장설정 모달 하단(저장하기·취소하기)이 보이도록 스크롤."""
-    try:
-        modal = save_modal(page)
-        modal.evaluate(
-            """(node) => {
-                node.scrollTop = node.scrollHeight;
-                let p = node.parentElement;
-                for (let i = 0; i < 6 && p; i++) {
-                    if (p.scrollHeight > p.clientHeight + 8) {
-                        p.scrollTop = p.scrollHeight;
-                    }
-                    p = p.parentElement;
-                }
-                window.scrollTo(0, document.body.scrollHeight);
-            }"""
-        )
-    except Exception:  # noqa: BLE001
-        pass
-    # 취소하기(푸터)가 보이면 그쪽을 기준으로 맞춤
-    try:
-        page.get_by_text(re.compile(r"^취소하기$")).last.scroll_into_view_if_needed(
-            timeout=3_000
-        )
-    except Exception:  # noqa: BLE001
-        pass
-    try:
-        page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
-    except Exception:  # noqa: BLE001
-        pass
-    page.wait_for_timeout(250)
+    """★스크롤 절대 금지 요건 — 더 이상 화면을 스크롤하지 않는다(하위 호환 no-op).
+
+    저장하기 버튼 클릭은 el.click()이 필요할 때만 자체적으로 최소 이동하며,
+    이 함수가 하던 명시적 페이지/모달 스크롤은 하지 않는다.
+    """
+    return None
 
 
 def dump_save_button_candidates(page: Page, ctx: "RunCtx | None" = None) -> str:
@@ -1743,32 +1740,8 @@ def trusted_click_save_submit(
     except Exception:  # noqa: BLE001
         pass
     diagnose_save_click_environment(page, el, ctx, tag="클릭전")
-    try:
-        el.scroll_into_view_if_needed(timeout=5_000)
-    except Exception:  # noqa: BLE001
-        pass
-    # 스크롤/애니메이션 중 좌표가 흔들리는 경우 대비 — 위치 안정화 대기
-    try:
-        prev_box = el.bounding_box()
-        for _ in range(6):
-            page.wait_for_timeout(120)
-            cur_box = el.bounding_box()
-            if prev_box and cur_box and abs(cur_box["y"] - prev_box["y"]) < 1:
-                break
-            prev_box = cur_box
-    except Exception:  # noqa: BLE001
-        pass
-
-    # 실제 사람처럼 호버 후 클릭 — mouseenter/hover에 의존하는 버튼 대비
-    try:
-        box = el.bounding_box()
-        if box:
-            page.mouse.move(
-                box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
-            )
-            page.wait_for_timeout(120)
-    except Exception:  # noqa: BLE001
-        pass
+    # ★스크롤·호버 등 별도 움직임 절대 금지 — el.click() 자체(필요한 최소
+    # 내부 이동만 포함)와 아래 좌표클릭만 "버튼 클릭" 행위로 허용한다.
 
     # 1) 일반 클릭 (trusted)
     try:
@@ -2494,11 +2467,8 @@ def run_save_submit_and_verify(
             dump_save_button_candidates(page, ctx)
             ctx.shot(page, "02_save_missing", rn)
 
-        ctx.info(
-            "9. DB저장 시작 : 하단 파란 '저장하기' 클릭 "
-            "(옆=취소하기 / 7항 모두저장과 다른 버튼)"
-        )
-        scroll_save_modal_to_footer(page)
+        ctx.step(9, "수집 상품 DB저장하기 시작 : 하단 '저장하기' 클릭")
+        ctx.info("옆=취소하기 / 7항 모두저장과 다른 버튼")
         dump_save_button_candidates(page, ctx)
         ctx.shot(page, "02_modal_filled", rn)
 
@@ -2633,6 +2603,8 @@ def run_save_submit_and_verify(
             before_popup_ids=before_popup_ids,
             baseline=alert_baseline,
             dialog_from=dialog_from,
+            grace_sec=SAVE_POPUP_BLIND_WAIT_SEC,
+            timeout_sec=SAVE_POPUP_CONFIRM_WAIT_SEC,
         )
         if not getattr(ctx, "save_popup_seen", False):
             ctx.shot(page, "03_result_missing", rn)
@@ -2640,8 +2612,9 @@ def run_save_submit_and_verify(
                 f"#{rn} 최종 팝업화면이 열리지 않음 — "
                 "팝업 없이 초기화할 수 없습니다."
             )
+        ctx.step(10, "수집 상품 DB저장하기 실행 : 저장 팝업 모달 열림 확인")
 
-        # 열린 동안 건수 스냅샷만 (닫기/확인은 11항에서)
+        # 열린 동안 건수 스냅샷만 (닫기/확인은 11항에서) — 읽기만, 클릭 없음
         snap_n, snap_msg, snap_src, _ = find_mango_collect_alert(
             page,
             dialog_msgs,
@@ -2650,15 +2623,9 @@ def run_save_submit_and_verify(
         )
         if snap_n is not None:
             ctx.save_count_snapshot = snap_n
-            ctx.info(
-                f"  [10항 스냅샷] 저장중 건수 힌트={snap_n} "
-                f"({snap_src}:{snap_msg!r}) — 아직 11항 닫힘 전"
-            )
+            ctx.info(f"저장중 건수 힌트: {snap_n} ({snap_src}:{snap_msg!r})")
 
         # ★11항: 저장 팝업 닫기-반드시 확인 (중간 닫기=ROLLBACK)
-        ctx.info(
-            f"{COLLECT_STEP11} 대기 — 닫힘 확인 전 건수확정/초기화 금지"
-        )
         wait_save_popup_closed(
             page,
             ctx,
@@ -2672,10 +2639,10 @@ def run_save_submit_and_verify(
                 f"#{rn} 최종 팝업화면이 닫히지 않음 (11항 미확인) — "
                 "닫힐 때까지 초기화할 수 없습니다."
             )
+        ctx.step(11, "수집 상품 DB저장하기 종료 : 저장 팝업 닫기-확인")
 
         # ★12항: 닫힌 뒤 최종 저장건수 로그 확인
-        ctx.info(f"{COLLECT_STEP12} — 망고 자체 'N건이 수집되었음'")
-        verify_mango_collect_alert(
+        found_n = verify_mango_collect_alert(
             page,
             ctx,
             rn,
@@ -2686,6 +2653,8 @@ def run_save_submit_and_verify(
             dismiss=False,
         )
         ctx.save_count_logged = True
+        ctx.step(12, "수집후 DB 최종 저장건수 로그 확인")
+        ctx.info(f"상품 {found_n}건이 수집, 저장되었다")
 
         verify_row_save_done(page, ctx, rn, save_count)
         # 10·11·12 모두 확인된 경우에만 서버 저장 성공 → 13항 초기화 허용
@@ -2701,8 +2670,8 @@ def run_save_submit_and_verify(
         ctx.server_save_ok = True
         ctx.save_awaiting_popup = False  # 11·12 완료 → 13항 초기화 허용
         ctx.info(
-            f"12→13. 서버 최종 갱신 완료 "
-            f"(저장하기 OK + 팝업 열림→닫힘→건수로그 OK / 저장수 {save_count})"
+            f"서버 최종 갱신 완료 (저장하기 OK + 팝업 열림→닫힘→건수로그 OK / "
+            f"저장수 {save_count})"
         )
         ctx.shot(page, "04_row_done", rn)
     finally:
@@ -2967,31 +2936,29 @@ def wait_save_execution_popup(
     grace = max(2.0, float(grace_sec if grace_sec is not None else SAVE_POPUP_GRACE_SEC))
     base = baseline if baseline is not None else set()
     ctx.info(
-        "3. ★★★ 저장하기 후 '팝업창 모달' 대기 중 "
-        f"(최소 {grace:.0f}초 저장시간 + 최대 {int(wait_sec)}초) "
-        "— 잔여 '00건' 문구로 통과·초기화 금지"
+        f"저장하기 후 {grace:.0f}초 동안 어떠한 액션도 취하지 않고 대기 "
+        "(요건 3) — 그 후 최대 "
+        f"{int(wait_sec)}초 '상품 N건이 수집, 저장되었다' 메세지 확인 (요건 6)"
     )
-    if base:
-        ctx.info(f"  [기준] 클릭 전 무시할 수집문구={sorted(base)}")
 
+    # ── 요건 3: 클릭 후 grace(기본 120초) 동안은 순수 대기만. 아무 것도 읽지·
+    # 누르지·스크롤하지 않는다. ──
+    blind_end = time.time() + grace
+    while time.time() < blind_end:
+        ctx.check_budget("저장하기 후 120초 무행동 대기")
+        page.wait_for_timeout(min(2000, max(200, int((blind_end - time.time()) * 1000))))
+
+    # ── 요건 6: 이후 최대 wait_sec(기본 300초) 동안 — 읽기만(클릭·스크롤 없음)
+    # 하며 저장 완료 메세지를 확인. 찾을 때까지 후속 단계 진행 금지. ──
     end = time.time() + wait_sec
-    grace_until = time.time() + grace
     saw = False
     detail = ""
     target: Page | None = None
-    logged_settings_closed = False
     logged_stale = False
 
     while time.time() < end:
-        ctx.check_budget("저장하기 후 팝업창 모달 대기")
-        if not save_modal_visible(page) and not logged_settings_closed:
-            logged_settings_closed = True
-            ctx.info(
-                "  [대기] 상품저장설정 모달 닫힘 — "
-                f"저장 처리·팝업을 최소 {grace:.0f}초 기다림"
-            )
+        ctx.check_budget("저장하기 후 팝업창 모달(메세지) 대기")
 
-        # 유예 시간 중에도 '새 창 팝업'은 즉시 인정. 페이지 잔여문구는 무시.
         has_signal, detail, target = save_result_signal_present(
             page,
             dialog_msgs,
@@ -3000,25 +2967,20 @@ def wait_save_execution_popup(
             dialog_from=dialog_from,
         )
         if has_signal:
-            # 유예 전이라도 진짜 새 신호면 OK
             saw = True
             break
 
-        # 잔여 00건이 화면에 있으면 안내 (오인 방지)
+        # 잔여 00건이 화면에 있으면 안내 (오인 방지) — 읽기만, 클릭 없음
         if not logged_stale and base:
             stale_n, stale_hit = parse_mango_collect_count(_page_visible_text(page))
             if stale_n is not None and f"page:{stale_n}:{stale_hit}" in base:
                 logged_stale = True
                 ctx.info(
-                    f"  [무시] 검색단계 잔여 문구 {stale_hit!r} "
-                    "— 저장 팝업으로 보지 않음, 계속 대기"
+                    f"검색단계 잔여 문구 {stale_hit!r} "
+                    "— 저장 완료 메세지로 보지 않음, 계속 대기"
                 )
 
-        if time.time() < grace_until:
-            page.wait_for_timeout(350)
-            continue
-
-        page.wait_for_timeout(400)
+        page.wait_for_timeout(1000)
 
     if not saw:
         ctx.shot(page, "03_result_missing", rn)
@@ -3156,12 +3118,12 @@ def wait_save_popup_closed(
 
     end = time.time() + wait_sec
     closed_stable = 0
-    helped = False
     saw_open = bool(getattr(ctx, "save_popup_ui_latched", False))
+    last_dismiss_at = 0.0
 
     while time.time() < end:
         ctx.check_budget("11항 최종 팝업 닫힘 대기")
-        # 닫기 전에 건수 스냅샷 (12항용) — 확인 클릭으로 문구가 사라져도 남김
+        # 닫기 전에 건수 스냅샷 (12항용) — 읽기만, 클릭 없음
         if getattr(ctx, "save_count_snapshot", None) is None:
             try:
                 sn, sm, ss, _ = find_mango_collect_alert(
@@ -3169,9 +3131,7 @@ def wait_save_popup_closed(
                 )
                 if sn is not None:
                     ctx.save_count_snapshot = sn
-                    ctx.info(
-                        f"  [11항 직전 스냅샷] {sn}건 ({ss}:{sm!r})"
-                    )
+                    ctx.info(f"11항 직전 스냅샷: {sn}건 ({ss}:{sm!r})")
             except Exception:  # noqa: BLE001
                 pass
         open_now = final_save_popup_still_open(
@@ -3180,24 +3140,25 @@ def wait_save_popup_closed(
         if open_now:
             saw_open = True
             closed_stable = 0
-            # 11항: 확인 클릭으로 정상 종료 보조
-            dismiss_mango_alert_ui(page)
-            helped = True
-            page.wait_for_timeout(400)
+            # 11항: 확인 클릭으로 정상 종료(2초에 한 번만 — 과도한 반복클릭 금지)
+            if time.time() - last_dismiss_at >= 2.0:
+                dismiss_mango_alert_ui(page)
+                last_dismiss_at = time.time()
+            page.wait_for_timeout(500)
             continue
 
         # 아직 UI 열림을 한 번도 못 봄 → '닫힘'으로 오인 금지, 계속 대기
         if not saw_open:
-            page.wait_for_timeout(350)
+            page.wait_for_timeout(500)
             continue
 
         closed_stable += 1
-        if closed_stable >= 3:  # ~1초 이상 닫힌 상태 유지
+        if closed_stable >= 2:  # ~1초 이상 닫힌 상태 유지
             ctx.save_popup_closed = True
-            ctx.info("3. ★ 최종 팝업화면 닫힘 확인 완료")
+            ctx.info("최종 팝업화면 닫힘 확인 완료")
             ctx.shot(page, "03_modal_closed", rn)
             return
-        page.wait_for_timeout(350)
+        page.wait_for_timeout(500)
 
     ctx.shot(page, "03_modal_stuck", rn)
     if not saw_open:
@@ -3554,7 +3515,7 @@ def ensure_ready_page(page: Page) -> Page:
     매 단계 사이마다 탭이 살아있는지 확인하고 복구한다.
     """
     page = refresh_if_closed(page)
-    log("1. 로그인 준비")
+    step_log(1, "로그인")
 
     if ADMIN_HOST not in page.url or page.url in ("about:blank", ""):
         log("메인화면으로 이동: " + MAIN_URL)
@@ -3720,10 +3681,10 @@ def main() -> None:
                 try:
                     check_stop(f"입력#{ordinal} 시작 전")
                     # 14항: 3~13 반복 — 다음 행은 13(초기화) 후 3부터
+                    # (13번 자체 로그는 batch_steps.step02_init 에서 남김)
                     if ordinal >= 2:
                         ctx.info(
-                            f"13. 수집전 화면 초기화 (입력#{ordinal}) — "
-                            "14항 반복: 3~13 (팝업정리 후 초기화→URL부터)"
+                            f"[다음행준비] 입력#{ordinal} — 팝업정리 후 13항 초기화로"
                         )
                         page = ensure_overlays_closed_before_next(
                             page,

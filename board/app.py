@@ -6,12 +6,12 @@ AI_Program_Main_Board — Python B안 보드 (P1 / P2=구P3)
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -30,10 +30,10 @@ from library import (  # noqa: E402
     search_xlsx,
     set_selected,
 )
-from log_format import format_log_display  # noqa: E402
+from log_protocol import parse_line, step_tag, strip_timestamp  # noqa: E402
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 
-VERSION = "2.0.45"
+VERSION = "2.0.46"
 APP_TITLE = "AI_Program_Main_Board"
 
 
@@ -348,7 +348,7 @@ class BoardApp(tk.Tk):
         ).pack(side="left", padx=6)
         tk.Label(
             actions,
-            text="실행로그: ①~⑤단 전각들여쓰기·색상 · 전행 카테고리·URL · 1·2행 스크린샷",
+            text="실행로그: main(1~13단계) · sub(단계별 추가정보/스크린샷) — main 행 클릭시 sub 갱신",
             bg="#ffffff",
             fg="#0f766e",
             anchor="w",
@@ -382,48 +382,77 @@ class BoardApp(tk.Tk):
         self.p2_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
         self.p2_sel.pack(fill="x", pady=(2, 0))
 
-        # 3. 실행 로그 그리드 (1~5단 들여쓰기 + 색상)
-        log_frame = tk.LabelFrame(
-            parent,
-            text="3. 실행 로그 (①~⑤단 전각들여쓰기 · 색상)",
+        # 3. 실행 로그 — main(13단계) / sub(단계별 추가정보·스크린샷) 두 그리드
+        log_area = tk.Frame(parent, bg="#f1f5f9")
+        log_area.pack(fill="both", expand=True, pady=(8, 0))
+
+        style = ttk.Style(self)
+        try:
+            style.configure("P2Log.Treeview", rowheight=22, font=("Malgun Gothic", 9))
+            style.configure("P2Log.Treeview.Heading", font=("Malgun Gothic", 9, "bold"))
+        except tk.TclError:
+            pass
+
+        main_frame = tk.LabelFrame(
+            log_area, text="3-A. 실행 로그 main (1~13단계)", bg="#ffffff", padx=6, pady=4
+        )
+        main_frame.pack(fill="both", expand=True)
+
+        self.p2_main_log = ttk.Treeview(
+            main_frame,
+            columns=("time", "step", "message"),
+            show="headings",
+            height=9,
+            style="P2Log.Treeview",
+        )
+        self.p2_main_log.heading("time", text="시각")
+        self.p2_main_log.heading("step", text="단계")
+        self.p2_main_log.heading("message", text="내용 (1~13단계)")
+        self.p2_main_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
+        self.p2_main_log.column("step", width=44, minwidth=40, stretch=False, anchor="center")
+        self.p2_main_log.column("message", width=620, minwidth=220, stretch=True, anchor="w")
+        main_sb = tk.Scrollbar(main_frame, orient="vertical", command=self.p2_main_log.yview)
+        self.p2_main_log.configure(yscrollcommand=main_sb.set)
+        self.p2_main_log.pack(side="left", fill="both", expand=True)
+        main_sb.pack(side="right", fill="y")
+        self.p2_main_log.bind("<<TreeviewSelect>>", self._on_main_log_select)
+        self._setup_p2_log_tags()
+
+        sub_frame = tk.LabelFrame(
+            log_area,
+            text="3-B. 실행 로그 sub (선택한 단계의 추가정보·스크린샷)",
             bg="#ffffff",
             padx=6,
             pady=4,
         )
-        log_frame.pack(fill="both", expand=True, pady=(8, 0))
+        sub_frame.pack(fill="both", expand=True, pady=(6, 0))
 
-        cols = ("time", "stage", "message")
-        style = ttk.Style(self)
-        try:
-            style.configure(
-                "P2Log.Treeview",
-                rowheight=22,
-                font=("Malgun Gothic", 9),
-            )
-            style.configure(
-                "P2Log.Treeview.Heading",
-                font=("Malgun Gothic", 9, "bold"),
-            )
-        except tk.TclError:
-            pass
-        self.p2_log = ttk.Treeview(
-            log_frame,
-            columns=cols,
+        self.p2_sub_log = ttk.Treeview(
+            sub_frame,
+            columns=("time", "message"),
             show="headings",
-            height=12,
+            height=7,
             style="P2Log.Treeview",
         )
-        self.p2_log.heading("time", text="시각")
-        self.p2_log.heading("stage", text="단")
-        self.p2_log.heading("message", text="내용 (①~⑤ 들여쓰기)")
-        self.p2_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
-        self.p2_log.column("stage", width=44, minwidth=40, stretch=False, anchor="center")
-        self.p2_log.column("message", width=620, minwidth=220, stretch=True, anchor="w")
-        self._setup_p2_log_tags()
-        log_sb = tk.Scrollbar(log_frame, orient="vertical", command=self.p2_log.yview)
-        self.p2_log.configure(yscrollcommand=log_sb.set)
-        self.p2_log.pack(side="left", fill="both", expand=True)
-        log_sb.pack(side="right", fill="y")
+        self.p2_sub_log.heading("time", text="시각")
+        self.p2_sub_log.heading("message", text="추가정보 · [샷]은 더블클릭으로 열기")
+        self.p2_sub_log.column("time", width=70, minwidth=60, stretch=False, anchor="center")
+        self.p2_sub_log.column("message", width=700, minwidth=220, stretch=True, anchor="w")
+        sub_sb = tk.Scrollbar(sub_frame, orient="vertical", command=self.p2_sub_log.yview)
+        self.p2_sub_log.configure(yscrollcommand=sub_sb.set)
+        self.p2_sub_log.pack(side="left", fill="both", expand=True)
+        sub_sb.pack(side="right", fill="y")
+        self.p2_sub_log.tag_configure("shot", foreground="#0f766e")
+        self.p2_sub_log.bind("<Double-Button-1>", self._on_sub_log_double_click)
+
+        # seq(단계 발생 고유번호) 기반 main↔sub 연결 데이터
+        self._sub_by_seq: dict[int, list[tuple[str, str, str]]] = {}
+        self._shot_path_by_seq: dict[tuple[int, int], str] = {}
+        self._main_item_by_seq: dict[int, str] = {}
+        self._seq_by_main_item: dict[str, int] = {}
+        self._selected_seq: int | None = None
+        self._latest_seq: int = 0
+        self._follow_latest: bool = True
 
         self.p2_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
         self.p2_status.pack(fill="x", pady=4)
@@ -504,78 +533,116 @@ class BoardApp(tk.Tk):
         return "break"
 
     def _clear_p2_log(self) -> None:
-        if hasattr(self, "p2_log"):
-            for item in self.p2_log.get_children():
-                self.p2_log.delete(item)
+        for tv in (getattr(self, "p2_main_log", None), getattr(self, "p2_sub_log", None)):
+            if tv is not None:
+                for item in tv.get_children():
+                    tv.delete(item)
+        self._sub_by_seq = {}
+        self._shot_path_by_seq = {}
+        self._main_item_by_seq = {}
+        self._seq_by_main_item = {}
+        self._selected_seq = None
+        self._latest_seq = 0
+        self._follow_latest = True
 
     def _setup_p2_log_tags(self) -> None:
-        """실행로그 1~5단·상태별 색상 태그."""
-        tv = self.p2_log
-        tv.tag_configure("d1", foreground="#0f172a", background="#e2e8f0")
-        tv.tag_configure("d2", foreground="#0f766e", background="#f0fdfa")
-        tv.tag_configure("d3", foreground="#1d4ed8", background="#eff6ff")
-        tv.tag_configure("d4", foreground="#475569", background="#ffffff")
-        tv.tag_configure("d5", foreground="#94a3b8", background="#ffffff")
-        tv.tag_configure("ok", foreground="#166534", background="#dcfce7")
-        tv.tag_configure("err", foreground="#991b1b", background="#fee2e2")
-        tv.tag_configure("warn", foreground="#9a3412", background="#ffedd5")
+        """main 실행로그 — 단계 성격별 색상 태그."""
+        tv = self.p2_main_log
+        tv.tag_configure("normal", foreground="#0f172a")
+        tv.tag_configure("login", foreground="#7c3aed", background="#f5f3ff")
+        tv.tag_configure("init", foreground="#0f766e", background="#f0fdfa")
         tv.tag_configure("save", foreground="#5b21b6", background="#f3e8ff")
-        tv.tag_configure("btn", foreground="#1e3a8a", background="#dbeafe")
-        tv.tag_configure("stop", foreground="#7f1d1d", background="#fecaca")
+        tv.tag_configure("done", foreground="#166534", background="#dcfce7")
 
-    @staticmethod
-    def _format_log_display(text: str) -> tuple[int, str, str, str]:
-        """(depth, stage_label, display_message, color_tag)."""
-        return format_log_display(text)
+    def _handle_collect_line(self, message: str) -> None:
+        """collect.py stdout 한 줄 처리 — main/sub 프로토콜만 그리드에 반영.
 
-    def _p2_log_line(self, message: str, stage: str = "") -> None:
-        """메인 스레드에서 실행로그 그리드에 한 줄 추가 (1~5단·색상·전각들여쓰기)."""
-        if not hasattr(self, "p2_log"):
-            return
+        (요건: main엔 1~13단계만, 그 외 잡다한 로그는 화면에 출력하지 않음)
+        """
         text = (message or "").rstrip()
         if not text:
             return
-        t = time.strftime("%H:%M:%S")
-        m = re.match(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(.*)$", text)
-        if m:
-            t = m.group(1)
-            text = m.group(2)
-        self._capture_shot_dir_from_log(text)
-        depth, stage_lbl, display, tag = format_log_display(text)
-        # stage 인자는 하위호환용 — 표시는 항상 1단~5단
-        _ = stage
-        stage_lbl = f"{depth}단"
-        self.p2_log.insert(
-            "", "end", values=(t, stage_lbl, display), tags=(tag,)
-        )
-        children = self.p2_log.get_children()
-        if children:
-            self.p2_log.see(children[-1])
+        t, text = strip_timestamp(text)
+        parsed = parse_line(text)
+        if parsed is None:
+            return  # 마커 없는 줄은 화면에 출력하지 않음 — 요건 2
 
-    def _capture_shot_dir_from_log(self, text: str) -> None:
-        """로그에서 샷 폴더 경로를 잡아 둔다."""
-        for key in ("[샷폴더]", "[갤러리]", "스크린샷·로그:", "로그="):
-            if key not in text:
-                continue
-            part = text.split(key, 1)[-1].strip()
-            # "[갤러리] C:\...\index.html (12장)" → 폴더
-            part = part.split(" (", 1)[0].strip()
-            if part.lower().endswith("index.html"):
-                part = str(Path(part).parent)
-            # "verify=True · 로그=C:\...\run-logs\..." 형태
-            if "로그=" in text and key == "로그=":
-                part = text.split("로그=", 1)[-1].strip()
-            p = Path(part)
-            if p.is_dir():
-                self._last_shot_dir = p
-            elif p.parent.is_dir() and p.parent.name:
+        kind = parsed[0]
+        if kind == "main":
+            _, seq, n, msg = parsed
+            self._insert_main_row(t, seq, n, msg)
+        elif kind == "sub":
+            _, seq, msg = parsed
+            self._append_sub_entry(seq, t, "info", msg)
+        elif kind == "subshot":
+            _, seq, path, label = parsed
+            self._capture_shot_dir_from_path(path)
+            self._append_sub_entry(seq, t, "shot", f"[샷] {label} -> {Path(path).name}")
+            self._shot_path_by_seq[(seq, len(self._sub_by_seq.get(seq, [])) - 1)] = path
+
+    def _insert_main_row(self, t: str, seq: int, n: int, msg: str) -> None:
+        tag = step_tag(n)
+        item = self.p2_main_log.insert("", "end", values=(t, n, msg), tags=(tag,))
+        self._main_item_by_seq[seq] = item
+        self._seq_by_main_item[item] = seq
+        self._latest_seq = max(self._latest_seq, seq)
+        self.p2_main_log.see(item)
+        if self._follow_latest:
+            self.p2_main_log.selection_set(item)
+            self._selected_seq = seq
+            self._render_sub_grid(seq)
+
+    def _append_sub_entry(self, seq: int, t: str, kind: str, msg: str) -> None:
+        self._sub_by_seq.setdefault(seq, []).append((t, kind, msg))
+        if self._selected_seq == seq:
+            tag = ("shot",) if kind == "shot" else ()
+            item = self.p2_sub_log.insert("", "end", values=(t, msg), tags=tag)
+            self.p2_sub_log.see(item)
+
+    def _render_sub_grid(self, seq: int) -> None:
+        for item in self.p2_sub_log.get_children():
+            self.p2_sub_log.delete(item)
+        for t, kind, msg in self._sub_by_seq.get(seq, []):
+            tag = ("shot",) if kind == "shot" else ()
+            self.p2_sub_log.insert("", "end", values=(t, msg), tags=tag)
+
+    def _on_main_log_select(self, _evt=None) -> None:
+        sel = self.p2_main_log.selection()
+        if not sel:
+            return
+        seq = self._seq_by_main_item.get(sel[0])
+        if seq is None:
+            return
+        self._selected_seq = seq
+        self._follow_latest = seq == self._latest_seq
+        self._render_sub_grid(seq)
+
+    def _on_sub_log_double_click(self, _evt=None) -> None:
+        sel = self.p2_sub_log.selection()
+        if not sel or self._selected_seq is None:
+            return
+        idx = self.p2_sub_log.index(sel[0])
+        path = self._shot_path_by_seq.get((self._selected_seq, idx))
+        if not path:
+            return
+        p = Path(path)
+        if not p.is_file():
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(str(p))  # type: ignore[attr-defined]
+            else:
+                webbrowser.open(p.as_uri())
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _capture_shot_dir_from_path(self, path: str) -> None:
+        try:
+            p = Path(path)
+            if p.parent.is_dir():
                 self._last_shot_dir = p.parent
-
-    @staticmethod
-    def _guess_log_stage(text: str) -> str:
-        """하위 호환 — 단 분류는 format_log_display 사용."""
-        _d, label, _m, _t = format_log_display(text)
-        return label
+        except Exception:  # noqa: BLE001
+            pass
 
     def _show_shot_viewer(self) -> None:
         folder = self._last_shot_dir
@@ -583,8 +650,8 @@ class BoardApp(tk.Tk):
             folder = latest_shot_dir(ROOT)
         open_shot_viewer(self, shot_dir=folder, root=ROOT)
 
-    def _p2_log_ui(self, message: str, stage: str = "") -> None:
-        self.after(0, lambda: self._p2_log_line(message, stage))
+    def _p2_log_ui(self, message: str) -> None:
+        self.after(0, lambda: self._handle_collect_line(message))
 
     def _run_p2(self) -> None:
         sel = self.lib_list.curselection()
@@ -632,19 +699,10 @@ class BoardApp(tk.Tk):
             args.extend(["--verify", "--max-rows", "2"])
 
         set_selected(path)
+        self._clear_p2_log()
         mode = "1·2행 전과정 스크린샷" if verify else "전체(앞2행 샷)"
-        self._p2_log_line(f"수집 시작 ({mode}): {path}", "시작")
-        self._p2_log_line(
-            "실행로그에 모든 입력의 상위 최종 카테고리명 / 최종 카테고리 URL주소 기록",
-            "입력",
-        )
-        self._p2_log_line(
-            "중단은 [수집 종료] — 로그는 화면에 그대로 보존 · "
-            "1번 종료 후 2번 수집 전 팝업/모달 닫힘 샷 보관",
-            "안내",
-        )
         self.p2_status.configure(
-            text=f"수집 실행 중 ({mode}) — 브라우저에서 직접 로그인하세요",
+            text=f"수집 시작 ({mode}): {path} — 브라우저에서 직접 로그인하세요",
             fg="#15803d",
         )
 
@@ -670,7 +728,7 @@ class BoardApp(tk.Tk):
             )
         except Exception as e:
             messagebox.showerror("실행 실패", str(e))
-            self._p2_log_line(str(e), "오류")
+            self.p2_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
             return
 
         threading.Thread(
@@ -691,11 +749,7 @@ class BoardApp(tk.Tk):
         try:
             self._stop_flag_path().write_text("stop\n", encoding="utf-8")
         except OSError as e:
-            self._p2_log_line(f"중단 플래그 기록 실패: {e}", "오류")
-        self._p2_log_line(
-            "수집 종료 요청 — 현재 단계 중단 대기 (실행로그는 화면에 보존)",
-            "중단",
-        )
+            self.p2_status.configure(text=f"중단 플래그 기록 실패: {e}", fg="#b91c1c")
         self.p2_status.configure(text="수집 종료 요청 중… (로그 보존)", fg="#b45309")
         threading.Thread(target=self._force_stop_p2, args=(proc,), daemon=True).start()
 
@@ -707,7 +761,12 @@ class BoardApp(tk.Tk):
             time.sleep(0.5)
         if proc.poll() is not None:
             return
-        self._p2_log_ui("협조 중단 지연 — 프로세스 강제 종료", "중단")
+        self.after(
+            0,
+            lambda: self.p2_status.configure(
+                text="협조 중단 지연 — 프로세스 강제 종료", fg="#b45309"
+            ),
+        )
         try:
             proc.terminate()
         except Exception:  # noqa: BLE001
@@ -751,19 +810,16 @@ class BoardApp(tk.Tk):
                 if text:
                     self._p2_log_ui(text)
         except Exception as e:  # noqa: BLE001
-            self._p2_log_ui(f"로그 수신 오류: {e}", "오류")
+            self.after(
+                0,
+                lambda: self.p2_status.configure(text=f"로그 수신 오류: {e}", fg="#b91c1c"),
+            )
         code = proc.wait()
         if code == 0:
-            self._p2_log_ui(f"수집 종료 OK (exit={code}): {path}", "완료")
             self.after(0, lambda: self._on_p2_finished(True, path, code))
         elif code == 130:
-            self._p2_log_ui(
-                f"수집 사용자 중단 (exit={code}): {path} — 로그 보존",
-                "중단",
-            )
             self.after(0, lambda: self._on_p2_finished(False, path, code, stopped=True))
         else:
-            self._p2_log_ui(f"수집 종료 FAIL (exit={code}): {path}", "오류")
             self.after(0, lambda: self._on_p2_finished(False, path, code))
 
     def _on_p2_finished(
@@ -785,7 +841,6 @@ class BoardApp(tk.Tk):
             self.p2_status.configure(text=f"수집 완료: {path}", fg="#15803d")
             folder = self._last_shot_dir or latest_shot_dir(ROOT)
             if folder and folder.is_dir() and any(folder.glob("*.png")):
-                self._p2_log_line(f"스크린샷 폴더: {folder}", "샷")
                 # 1행 전과정 샷이 있으면 바로 보여 줌
                 if bool(self.var_verify.get()):
                     open_shot_viewer(self, shot_dir=folder, root=ROOT)
