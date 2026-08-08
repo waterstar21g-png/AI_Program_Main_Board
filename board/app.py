@@ -669,7 +669,11 @@ class BoardApp(tk.Tk):
             if self._selected_seq == seq - 1:
                 self._render_sub_grid(seq - 1)
         tag = step_tag(n)
-        item = self.p2_main_log.insert("", "end", values=(t, n, msg), tags=(tag,))
+        # step=0 → 엑셀 5필드 한 줄(오렌지). 표시는 sticky META와 동일하게 "엑셀"
+        step_label: str | int = "엑셀" if n == 0 else n
+        item = self.p2_main_log.insert(
+            "", "end", values=(t, step_label, msg), tags=(tag,)
+        )
         self._main_item_by_seq[seq] = item
         self._seq_by_main_item[item] = seq
         self._latest_seq = max(self._latest_seq, seq)

@@ -101,7 +101,9 @@ class FakeCtx:
         self.save_awaiting_popup = False
         self.save_popup_kind = ""
         self.save_popup_ui_latched = False
-        self.row_deadline = time.time() + 120
+        self.row_deadline = time.time() + 200
+        self.save_phase_deadline = time.time() + 200
+        self.mango_save_log_lines: list[str] = []
         self.save_count = 3
         self.verify = False
 
@@ -114,6 +116,11 @@ class FakeCtx:
         print(f"[CTX-STEP {n}]", msg)
 
     def check_budget(self, where: str = "") -> None:
+        if (
+            self.save_phase_deadline is not None
+            and time.time() > self.save_phase_deadline
+        ):
+            raise C.RowBudgetExceeded("9·10·11 budget")
         if time.time() > self.row_deadline:
             raise C.RowBudgetExceeded("budget")
 

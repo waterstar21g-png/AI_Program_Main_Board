@@ -40,8 +40,10 @@ MAIN_RE = re.compile(r"^##MAIN##(\d+)##(\d+)##(.*)$")
 SUB_RE = re.compile(r"^##SUB##(\d+)##(.*)$")
 SUBSHOT_RE = re.compile(r"^##SUBSHOT##(\d+)##(.*?)##(.*)$")
 
-# 단계번호 → 색상태그 (1=로그인, 2·13=초기화, 9~11=저장, 12=완료, 그 외=normal)
+# 단계번호 → 색상태그
+# 0=엑셀진행(오렌지 meta), 1=로그인, 2·13=초기화, 9~11=저장, 12=완료
 STEP_TAG: dict[int, str] = {
+    0: "meta",
     1: "login",
     2: "init",
     13: "init",

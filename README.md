@@ -30,13 +30,14 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
 
 ## 실행
 
-- **바탕화면/작업표시줄 아이콘** → `boot-from-icon.ps1`  
+- **바탕화면/작업표시줄 아이콘** → `boot-from-icon.ps1` (**수동 pull 불필요**)  
   1) **기존 보드 종료** (`stop-board.ps1`)  
-  2) `update-if-newer.ps1` → `VERSION`이 **다를 때만** `git pull origin main`  
+  2) `update-if-newer.ps1` → `VERSION`이 GitHub `main`과 **다를 때만** 자동 갱신  
+     - 우선 `git pull origin main` (실패 시 `reset --hard origin/main`)  
+     - 그래도 안 되면 **ZIP 통째 덮어쓰기** 자동 폴백  
   3) `run.bat --noupdate` → pip + **보드 재시작**  
 - `.\run.bat` / `.\start.bat` 도 동일 체인. `--noupdate`면 갱신 생략.
-- (v2.0.58부터) 파일 하나하나를 GitHub에서 개별로 다시 받는 단계는 없앴습니다
-  — `git pull` 한 번이 모든 스크립트를 이미 갱신하기 때문입니다.
+- (v2.0.58부터) 파일 하나하나를 GitHub에서 개별로 다시 받는 단계는 없앴습니다.
 
 아이콘이 옛 `run.bat`만 가리키면 반영이 안 됩니다. **한 번** 아래로 갱신하세요:
 
