@@ -19,7 +19,13 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "P1"))
 sys.path.insert(0, str(ROOT / "board"))
 
-from crawl import crawl_site, save_excel  # noqa: E402
+from crawl import (  # noqa: E402
+    TOP_CELL_MAX_LEN,
+    TOP_GRID_COLS,
+    TOP_GRID_ROWS,
+    crawl_site,
+    save_excel,
+)
 from library import (  # noqa: E402
     add_paths,
     default_roots,
@@ -173,12 +179,56 @@ class BoardApp(tk.Tk):
 
         self.var_site = tk.StringVar(value="ABC마트")
         self.var_url = tk.StringVar(value="https://abcmart.a-rt.com/?track=W0009")
-        self.var_tops = tk.StringVar(value="MEN, WOMEN, KIDS")
         self.var_outdir = tk.StringVar(value=str(Path.home() / "Downloads"))
 
         self._row(form, "사이트명", self.var_site)
         self._row(form, "사이트 URL", self.var_url)
-        self._row(form, "상위 카테고리 (쉼표)", self.var_tops)
+
+        # 상위 카테고리: 3행 × 10칸 입력 그리드 (칸당 한글 15자, 명1:명2=엑셀치환)
+        tops_wrap = tk.Frame(form, bg="#ffffff")
+        tops_wrap.pack(fill="x", pady=3)
+        tk.Label(
+            tops_wrap,
+            text="상위 카테고리",
+            width=16,
+            anchor="nw",
+            bg="#ffffff",
+        ).pack(side="left", anchor="n", pady=2)
+        tops_right = tk.Frame(tops_wrap, bg="#ffffff")
+        tops_right.pack(side="left", fill="x", expand=True)
+        tk.Label(
+            tops_right,
+            text=(
+                f"{TOP_GRID_ROWS}행×{TOP_GRID_COLS}칸 · 칸당 {TOP_CELL_MAX_LEN}자 · "
+                "명1:명2 입력 시 엑셀 상위명을 명2로 출력"
+            ),
+            bg="#ffffff",
+            fg="#64748b",
+            anchor="w",
+            font=("Malgun Gothic", 8),
+        ).pack(fill="x", pady=(0, 2))
+        self._p1_top_vars: list[tk.StringVar] = []
+        vcmd = (self.register(self._validate_p1_top_cell), "%P")
+        grid = tk.Frame(tops_right, bg="#ffffff")
+        grid.pack(fill="x")
+        defaults = ["MEN", "WOMEN", "KIDS"]
+        idx = 0
+        for r in range(TOP_GRID_ROWS):
+            row_f = tk.Frame(grid, bg="#ffffff")
+            row_f.pack(fill="x", pady=1)
+            for c in range(TOP_GRID_COLS):
+                var = tk.StringVar(value=defaults[idx] if idx < len(defaults) else "")
+                self._p1_top_vars.append(var)
+                tk.Entry(
+                    row_f,
+                    textvariable=var,
+                    width=TOP_CELL_MAX_LEN + 1,
+                    font=("Malgun Gothic", 9),
+                    justify="center",
+                    validate="key",
+                    validatecommand=vcmd,
+                ).pack(side="left", padx=1)
+                idx += 1
 
         out_row = tk.Frame(form, bg="#ffffff")
         out_row.pack(fill="x", pady=3)
@@ -222,6 +272,19 @@ class BoardApp(tk.Tk):
         tk.Label(row, text=label, width=16, anchor="w", bg="#ffffff").pack(side="left")
         tk.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True)
 
+    def _validate_p1_top_cell(self, new_value: str) -> bool:
+        """상위 카테고리 칸 — 한글 포함 최대 TOP_CELL_MAX_LEN자."""
+        return len(new_value) <= TOP_CELL_MAX_LEN
+
+    def _p1_top_values(self) -> list[str]:
+        """그리드에서 비어 있지 않은 상위 카테고리 칸 값을 순서대로."""
+        out: list[str] = []
+        for var in getattr(self, "_p1_top_vars", []):
+            s = (var.get() or "").strip()
+            if s:
+                out.append(s)
+        return out
+
     def _pick_outdir(self) -> None:
         d = filedialog.askdirectory(initialdir=self.var_outdir.get() or str(Path.home()))
         if d:
@@ -230,14 +293,16 @@ class BoardApp(tk.Tk):
     def _p1_defaults(self) -> None:
         self.var_site.set("ABC마트")
         self.var_url.set("https://abcmart.a-rt.com/?track=W0009")
-        self.var_tops.set("MEN, WOMEN, KIDS")
+        defaults = ["MEN", "WOMEN", "KIDS"]
+        for i, var in enumerate(getattr(self, "_p1_top_vars", [])):
+            var.set(defaults[i] if i < len(defaults) else "")
 
     def _run_p1(self) -> None:
         self.btn_crawl.configure(state="disabled")
         self.btn_save.configure(state="disabled")
         self.p1_status.configure(text="수집 중…")
         self.p1_preview.delete("1.0", "end")
-        tops = [t.strip() for t in self.var_tops.get().split(",") if t.strip()]
+        tops = self._p1_top_values()
 
         def work() -> None:
             result = crawl_site(self.var_site.get(), self.var_url.get(), tops)
