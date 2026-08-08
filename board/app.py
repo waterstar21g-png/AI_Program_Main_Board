@@ -407,11 +407,11 @@ class BoardApp(tk.Tk):
         self._row(form, "사이트 URL", self.var_zara_url)
 
         # ★요건: 3행 × 12열 — 한 행 = 상위, 중위, 하위1…하위10
+        # ★요건: 복잡한 설명 라벨 제거, 입력칸 가로 폭 2배
         z_rows = p1_zara_crawl.TOP_GRID_ROWS
         z_cols = p1_zara_crawl.TOP_GRID_COLS
-        z_cell = p1_zara_crawl.TOP_CELL_MAX_LEN
         z_labels = p1_zara_crawl.COL_LABELS
-        z_lows = p1_zara_crawl.LOW_SLOT_COUNT
+        z_col_w = 18  # 기존 9 → 2배
 
         tops_wrap = tk.Frame(form, bg="#ffffff")
         tops_wrap.pack(fill="x", pady=3)
@@ -424,22 +424,6 @@ class BoardApp(tk.Tk):
         ).pack(side="left", anchor="n", pady=2)
         tops_right = tk.Frame(tops_wrap, bg="#ffffff")
         tops_right.pack(side="left", fill="x", expand=True)
-        tk.Label(
-            tops_right,
-            text=(
-                f"{z_rows}행 × {z_cols}열 · 칸당 {z_cell}자 · "
-                f"한 행=상위·중위·하위1~{z_lows} · "
-                "상위/중위 생략 시 이전 행 값 복사 · "
-                "이름이 있는 상위·중위·하위 노드의 하위 전부 수집 · "
-                "엑셀은 입력 계층에 맞춰 출력 · 명1:명2 치환 가능"
-            ),
-            bg="#ffffff",
-            fg="#64748b",
-            anchor="w",
-            font=("Malgun Gothic", 8),
-            wraplength=720,
-            justify="left",
-        ).pack(fill="x", pady=(0, 2))
 
         # 가로 스크롤 (12칸 헤더·입력)
         canvas = tk.Canvas(tops_right, bg="#ffffff", height=118, highlightthickness=0)
@@ -466,7 +450,7 @@ class BoardApp(tk.Tk):
             tk.Label(
                 hdr,
                 text=label.replace(" 카테고리", ""),
-                width=9,
+                width=z_col_w,
                 bg="#ffffff",
                 fg="#64748b",
                 font=("Malgun Gothic", 7),
@@ -489,7 +473,7 @@ class BoardApp(tk.Tk):
                 tk.Entry(
                     row_f,
                     textvariable=var,
-                    width=9,
+                    width=z_col_w,
                     font=("Malgun Gothic", 8),
                     justify="center",
                     validate="key",
