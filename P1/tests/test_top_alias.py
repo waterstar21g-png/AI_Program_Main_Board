@@ -9,6 +9,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from crawl import (  # noqa: E402
+    DEFAULT_OUTDIR,
+    DEFAULT_TOPS,
     EXCEL_HEADERS,
     TOP_CELL_MAX_LEN,
     TOP_GRID_COLS,
@@ -26,6 +28,16 @@ def test_grid_shape():
     assert TOP_GRID_ROWS == 3
     assert TOP_GRID_COLS == 10
     assert TOP_CELL_MAX_LEN == 15
+
+
+def test_default_outdir_and_tops():
+    assert DEFAULT_OUTDIR == r"D:\My_Project\AI_Program_Main_Board"
+    assert DEFAULT_TOPS == ["MEN:남성", "WOMEN:여성", "KIDS:키즈"]
+    names, rename = parse_tops(DEFAULT_TOPS)
+    assert names == ["MEN", "WOMEN", "KIDS"]
+    assert rename["MEN"] == "남성"
+    assert rename["WOMEN"] == "여성"
+    assert rename["KIDS"] == "키즈"
 
 
 def test_parse_plain():
@@ -82,6 +94,7 @@ def test_parse_total_and_review_from_html():
 
 if __name__ == "__main__":
     test_grid_shape()
+    test_default_outdir_and_tops()
     test_parse_plain()
     test_parse_alias()
     test_parse_tops_and_rename()
