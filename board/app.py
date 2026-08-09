@@ -364,7 +364,12 @@ class BoardApp(tk.Tk):
         lines = ["상위 | 중위 | 하위 | 최종 | 상위최종 | URL", "-" * 80]
         for r in result.rows[:80]:
             lines.append(
-                f"{r.top} | {r.mid or '—'} | {r.low or '—'} | {r.final} | {r.top_final_label} | {r.final_category_url}"
+                f"{r.top} | {r.mid or '—'} | {r.low or '—'} | {r.final} | "
+                f"{r.top_final_label} | {r.final_category_url} | "
+                f"총{getattr(r, 'total_product_count', 0)} | "
+                f"수집가능{getattr(r, 'collectible_count', 0)} | "
+                f"검색{getattr(r, 'search_count', 0)} | "
+                f"리뷰{getattr(r, 'review_count', 0)}"
             )
         if result.total > 80:
             lines.append(f"… 외 {result.total - 80}행 (엑셀에 전체 포함)")
