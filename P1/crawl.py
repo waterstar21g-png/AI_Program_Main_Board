@@ -5,6 +5,7 @@ P1_Category_Url_Extract — A-RT(ABC마트 계열) GNB → 계층 카테고리 U
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -27,6 +28,10 @@ EXCEL_HEADERS = [
     "최종 카테고리명",
     "상위 최종 카테고리명",
     "최종 카테고리 URL주소",
+    "총상품수",
+    "상품수집가능개수",
+    "검색수",
+    "리뷰수",
 ]
 
 # 보드 입력 그리드: 3행 × 10칸 = 최대 30개, 칸당 한글 15자
@@ -57,6 +62,20 @@ class HierarchyRow:
     final: str
     top_final_label: str
     final_category_url: str
+    total_product_count: int = 0  # 총상품수
+    collectible_count: int = 0  # 상품수집가능개수
+    search_count: int = 0  # 검색수
+    review_count: int = 0  # 리뷰수
+
+
+@dataclass
+class CategoryStats:
+    """카테고리 URL별 상품·검색·리뷰 수치."""
+
+    total_product_count: int = 0
+    collectible_count: int = 0
+    search_count: int = 0
+    review_count: int = 0
 
 
 @dataclass
@@ -198,14 +217,22 @@ def is_art_platform(html: str, url: str) -> bool:
     )
 
 
-def fetch_html(url: str) -> str:
-    res = requests.get(
-        url,
-        headers={
+def _session() -> requests.Session:
+    s = requests.Session()
+    s.headers.update(
+        {
             "User-Agent": DEFAULT_UA,
-            "Accept": "text/html,application/xhtml+xml",
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
             "Accept-Language": "ko-KR,ko;q=0.9",
-        },
+        }
+    )
+    return s
+
+
+def fetch_html(url: str, session: requests.Session | None = None) -> str:
+    sess = session or _session()
+    res = sess.get(
+        url,
         timeout=60,
         allow_redirects=True,
     )
@@ -213,6 +240,163 @@ def fetch_html(url: str) -> str:
         raise RuntimeError(f"페이지 요청 실패 ({res.status_code}): {url}")
     res.encoding = res.apparent_encoding or res.encoding or "utf-8"
     return res.text
+
+
+def _parse_int_count(raw: str | int | float | None) -> int:
+    if raw is None:
+        return 0
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, (int, float)):
+        return max(0, int(raw))
+    s = re.sub(r"[^\d]", "", str(raw))
+    return int(s) if s else 0
+
+
+def parse_total_count_from_html(html: str) -> int:
+    """A-RT 상품목록 HTML의 totalCount / result-cnt 파싱."""
+    soup = BeautifulSoup(html or "", "html.parser")
+    inp = soup.select_one('input[name="totalCount"]')
+    if inp and inp.get("value") is not None:
+        return _parse_int_count(inp.get("value"))
+    spot = soup.select_one(".result-cnt")
+    if spot:
+        return _parse_int_count(spot.get_text())
+    m = re.search(
+        r'name=["\']totalCount["\'][^>]*value=["\']([^"\']*)["\']',
+        html or "",
+        re.I,
+    )
+    if m:
+        return _parse_int_count(m.group(1))
+    m = re.search(
+        r'value=["\']([^"\']*)["\'][^>]*name=["\']totalCount["\']',
+        html or "",
+        re.I,
+    )
+    if m:
+        return _parse_int_count(m.group(1))
+    return 0
+
+
+def parse_review_count_from_html(html: str) -> int:
+    """목록/상세 HTML에서 리뷰수 합·표기 추출 (없으면 0)."""
+    text = html or ""
+    # 목록에 리뷰 배지가 있으면 합산
+    nums = [
+        _parse_int_count(x)
+        for x in re.findall(r"리뷰\s*\(?\s*([\d,]+)\s*\)?", text)
+    ]
+    if nums:
+        return sum(nums)
+    m = re.search(r'reviewCnt["\']?\s*[:=]\s*["\']?(\d+)', text, re.I)
+    if m:
+        return _parse_int_count(m.group(1))
+    return 0
+
+
+def fetch_art_category_stats(
+    category_url: str,
+    *,
+    ctgr_no: str | None = None,
+    brand_no: str | None = None,
+    session: requests.Session | None = None,
+) -> CategoryStats:
+    """카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수.
+
+    A-RT `/display/category/product/list` 의 totalCount 를 사용한다.
+    - 총상품수 = totalCount
+    - 검색수 = 동일 검색결과 수(totalCount)
+    - 상품수집가능개수 = 수집 가능한 상품 수(동일 totalCount, 판매중 기준)
+    - 리뷰수 = 목록 HTML에 있으면 합산, 없으면 0
+    """
+    sess = session or _session()
+    origin = f"{urlparse(category_url).scheme}://{urlparse(category_url).netloc}"
+    ctgr = ctgr_no or parse_ctgr_no(category_url)
+    brand = brand_no or parse_brand_no(category_url)
+    stats = CategoryStats()
+
+    try:
+        if ctgr:
+            list_url = urljoin(origin, "/display/category/product/list")
+            res = sess.get(
+                list_url,
+                params={
+                    "ctgrNo": ctgr,
+                    "pagingSortType": "",
+                    "rowsPerPage": 1,
+                    "pageNum": 1,
+                },
+                headers={
+                    "X-Requested-With": "XMLHttpRequest",
+                    "Referer": category_url,
+                    "Accept": "text/html, */*;q=0.8",
+                },
+                timeout=45,
+            )
+            if res.ok:
+                html = res.text
+                total = parse_total_count_from_html(html)
+                review = parse_review_count_from_html(html)
+                stats.total_product_count = total
+                stats.search_count = total
+                stats.collectible_count = total
+                stats.review_count = review
+                return stats
+
+        # 브랜드 URL 등 — 페이지 HTML의 result-cnt / totalCount 폴백
+        html = fetch_html(category_url, session=sess)
+        total = parse_total_count_from_html(html)
+        review = parse_review_count_from_html(html)
+        if total or review:
+            stats.total_product_count = total
+            stats.search_count = total
+            stats.collectible_count = total
+            stats.review_count = review
+            return stats
+
+        # brandNo 만 있을 때 카테고리 list 는 불가 — 0 유지
+        _ = brand
+    except Exception:
+        return stats
+    return stats
+
+
+def enrich_rows_with_product_stats(
+    rows: list[HierarchyRow],
+    leaves: list[Leaf],
+    *,
+    session: requests.Session | None = None,
+) -> list[str]:
+    """각 행의 카테고리 URL로 상품수·검색수·리뷰수를 채워 넣는다."""
+    sess = session or _session()
+    warnings: list[str] = []
+    fail = 0
+    for i, (row, leaf) in enumerate(zip(rows, leaves), start=1):
+        stats = fetch_art_category_stats(
+            leaf.category_url,
+            ctgr_no=leaf.ctgr_no,
+            brand_no=leaf.brand_no,
+            session=sess,
+        )
+        row.total_product_count = stats.total_product_count
+        row.collectible_count = stats.collectible_count
+        row.search_count = stats.search_count
+        row.review_count = stats.review_count
+        if (
+            stats.total_product_count == 0
+            and stats.collectible_count == 0
+            and (leaf.ctgr_no or leaf.brand_no)
+        ):
+            fail += 1
+        # 과도한 요청 완화
+        if i % 20 == 0:
+            time.sleep(0.05)
+    if fail:
+        warnings.append(
+            f"상품수 조회 실패/0건 {fail}개 URL (총상품수·상품수집가능개수·검색수·리뷰수 확인)"
+        )
+    return warnings
 
 
 def _dedupe(leaves: list[Leaf]) -> list[Leaf]:
@@ -413,6 +597,9 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
         )
         for leaf in leaves
     ]
+    # ★요건: 카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수 입력
+    sess = _session()
+    warnings.extend(enrich_rows_with_product_stats(rows, leaves, session=sess))
     return CrawlResult(
         ok=True,
         site_name=name,
@@ -437,7 +624,20 @@ def save_excel(rows: list[HierarchyRow], site_name: str, out_dir: Path | str) ->
     ws.title = "카테고리표"
     ws.append(list(EXCEL_HEADERS))
     for r in rows:
-        ws.append([r.top, r.mid, r.low, r.final, r.top_final_label, r.final_category_url])
+        ws.append(
+            [
+                r.top,
+                r.mid,
+                r.low,
+                r.final,
+                r.top_final_label,
+                r.final_category_url,
+                r.total_product_count,
+                r.collectible_count,
+                r.search_count,
+                r.review_count,
+            ]
+        )
     wb.save(path)
     return path
 
