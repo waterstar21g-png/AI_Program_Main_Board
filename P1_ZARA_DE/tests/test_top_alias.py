@@ -12,18 +12,21 @@ from crawl import (  # noqa: E402
     COL_LABELS,
     DEFAULT_SITE,
     DEFAULT_URL,
+    EXCEL_HEADERS,
     NAME_ENTRY_WIDTH,
     TOP_GRID_COLS,
     TOP_GRID_ROWS,
     URL_ENTRY_WIDTH,
     CategorySpec,
     _make_leaf,
+    count_products_in_zara_payload,
     expand_grid_rows_to_paths,
     filter_by_hierarchy_specs,
     hierarchy_row_from_match,
     leaves_from_user_category_page,
     parse_final_category_links,
     parse_grid_category_specs,
+    parse_product_count_from_zara_html,
     parse_zara_html_links,
     to_english_locale_url,
 )
@@ -146,10 +149,57 @@ def test_html_link_parse_english():
     ) == "https://www.zara.com/de/en/x-l1.html"
 
 
+def test_excel_headers_include_counts():
+    assert "총상품수" in EXCEL_HEADERS
+    assert "상품수집가능개수" in EXCEL_HEADERS
+    assert "검색수" in EXCEL_HEADERS
+    assert "리뷰수" in EXCEL_HEADERS
+
+
+def test_count_products_in_zara_payload():
+    data = {
+        "productGroups": [
+            {
+                "elements": [
+                    {
+                        "commercialComponents": [
+                            {"id": 1, "name": "A"},
+                            {"id": 2, "name": "B", "availability": "OUT_OF_STOCK"},
+                            {"id": 1, "name": "A-dup"},
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+    total, coll, rev = count_products_in_zara_payload(data)
+    assert total == 2
+    assert coll == 1
+    assert rev == 0
+    total2, coll2, _ = count_products_in_zara_payload({"totalProducts": 120})
+    assert total2 == 120
+    assert coll2 == 120
+
+
+def test_parse_product_count_from_zara_html_cards():
+    html = """
+    <div data-productid="101"></div>
+    <div data-product-id="102"></div>
+    <div data-productid="101"></div>
+    """
+    total, coll, rev = parse_product_count_from_zara_html(html)
+    assert total == 2
+    assert coll == 2
+    assert rev == 0
+
+
 if __name__ == "__main__":
     test_grid_shape()
     test_expand_grid_rows_requires_url()
     test_url_spec_lists_final_categories()
     test_user_driven_page_lists_finals()
     test_html_link_parse_english()
+    test_excel_headers_include_counts()
+    test_count_products_in_zara_payload()
+    test_parse_product_count_from_zara_html_cards()
     print("ok")

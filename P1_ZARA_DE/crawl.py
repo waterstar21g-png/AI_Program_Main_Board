@@ -44,6 +44,10 @@ EXCEL_HEADERS = [
     "최종 카테고리명",
     "상위 최종 카테고리명",
     "최종 카테고리 URL주소",
+    "총상품수",
+    "상품수집가능개수",
+    "검색수",
+    "리뷰수",
 ]
 
 # 보드 입력 그리드: 20행 × 3열
@@ -102,6 +106,20 @@ class HierarchyRow:
     final: str
     top_final_label: str
     final_category_url: str
+    total_product_count: int = 0  # 총상품수
+    collectible_count: int = 0  # 상품수집가능개수
+    search_count: int = 0  # 검색수
+    review_count: int = 0  # 리뷰수
+
+
+@dataclass
+class CategoryStats:
+    """카테고리 URL별 상품·검색·리뷰 수치."""
+
+    total_product_count: int = 0
+    collectible_count: int = 0
+    search_count: int = 0
+    review_count: int = 0
 
 
 @dataclass
@@ -609,6 +627,252 @@ def hierarchy_row_from_match(
         top_final_label=hierarchy_output_label((e1, e2, e3), final),
         final_category_url=leaf.category_url,
     )
+
+
+def _parse_int_count(raw: Any) -> int:
+    if raw is None or isinstance(raw, bool):
+        return 0
+    if isinstance(raw, (int, float)):
+        return max(0, int(raw))
+    s = re.sub(r"[^\d]", "", str(raw))
+    return int(s) if s else 0
+
+
+def _product_unavailable(obj: dict) -> bool:
+    """품절/비가용 여부 (가능하면 수집 제외)."""
+    for key in ("availability", "availabilityType", "productAvailability"):
+        val = str(obj.get(key) or "").upper()
+        if val in {"OUT_OF_STOCK", "SOLD_OUT", "UNAVAILABLE", "COMING_SOON"}:
+            return True
+    if obj.get("isBuyable") is False:
+        return True
+    if obj.get("soldOut") is True:
+        return True
+    return False
+
+
+def count_products_in_zara_payload(data: Any) -> tuple[int, int, int]:
+    """ZARA category products JSON → (총상품수, 수집가능, 리뷰합).
+
+    productGroups / commercialComponents / products 등 다양한 응답 형태를 지원.
+    """
+    # 명시적 total 필드 우선
+    if isinstance(data, dict):
+        for key in (
+            "totalProducts",
+            "totalProductsCount",
+            "productsCount",
+            "productCount",
+            "totalCount",
+            "total",
+        ):
+            if key in data and data[key] is not None:
+                total = _parse_int_count(data[key])
+                if total > 0:
+                    return total, total, 0
+
+    ids: set[str] = set()
+    collectible_ids: set[str] = set()
+    review_sum = 0
+
+    def walk(node: Any) -> None:
+        nonlocal review_sum
+        if isinstance(node, dict):
+            # 상품 후보
+            comps = node.get("commercialComponents")
+            if isinstance(comps, list):
+                for c in comps:
+                    if not isinstance(c, dict):
+                        continue
+                    cid = c.get("id") or c.get("productId") or c.get("reference")
+                    if cid is None:
+                        continue
+                    key = str(cid)
+                    ids.add(key)
+                    if not _product_unavailable(c):
+                        collectible_ids.add(key)
+                    for rk in ("numReviews", "reviewCount", "reviewsCount"):
+                        if c.get(rk) is not None:
+                            review_sum += _parse_int_count(c.get(rk))
+            # products 배열
+            prods = node.get("products")
+            if isinstance(prods, list):
+                for c in prods:
+                    if not isinstance(c, dict):
+                        continue
+                    cid = c.get("id") or c.get("productId") or c.get("reference")
+                    if cid is None:
+                        continue
+                    key = str(cid)
+                    ids.add(key)
+                    if not _product_unavailable(c):
+                        collectible_ids.add(key)
+                    for rk in ("numReviews", "reviewCount", "reviewsCount"):
+                        if c.get(rk) is not None:
+                            review_sum += _parse_int_count(c.get(rk))
+            for v in node.values():
+                if isinstance(v, (dict, list)):
+                    walk(v)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    total = len(ids)
+    collectible = len(collectible_ids) if collectible_ids else total
+    return total, collectible, review_sum
+
+
+def parse_product_count_from_zara_html(html: str) -> tuple[int, int, int]:
+    """카테고리 HTML 내 임베디드 JSON/상품카드에서 수량 추출."""
+    text = html or ""
+    # __PRELOADED_STATE__ / JSON blob
+    for m in re.finditer(
+        r'(\{[^{}]{0,200}"(?:totalProducts|productGroups|commercialComponents)"[\s\S]{0,500000}?\})',
+        text,
+    ):
+        blob = m.group(1)
+        try:
+            data = json.loads(blob)
+        except json.JSONDecodeError:
+            continue
+        total, coll, rev = count_products_in_zara_payload(data)
+        if total:
+            return total, coll, rev
+    # data-productid 카드 수 폴백
+    ids = set(re.findall(r'data-product[-_]?id=["\']?(\d+)', text, re.I))
+    if ids:
+        n = len(ids)
+        return n, n, 0
+    m = re.search(
+        r'(?:totalProducts|productsCount|productCount)\D{0,12}(\d+)',
+        text,
+        re.I,
+    )
+    if m:
+        n = _parse_int_count(m.group(1))
+        return n, n, 0
+    return 0, 0, 0
+
+
+def fetch_zara_category_stats(
+    category_url: str,
+    *,
+    cat_id: str | None = None,
+    session: requests.Session | None = None,
+    progress: ProgressFn | None = None,
+) -> CategoryStats:
+    """카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수.
+
+    1) `/de/en/category/{id}/products?ajax=true`
+    2) 카테고리 페이지 HTML 파싱
+    3) Playwright HTML 폴백
+    """
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
+    sess = session or _session()
+    stats = CategoryStats()
+    page_url = to_english_locale_url((category_url or "").split("?")[0].split("#")[0])
+    cid = (cat_id or _cat_id_from_url(page_url) or "").strip()
+    origin = f"{urlparse(page_url).scheme}://{urlparse(page_url).netloc}"
+
+    # 1) products ajax
+    if cid:
+        api = f"{origin}{ZARA_LOCALE_PATH}/category/{cid}/products?ajax=true"
+        try:
+            log("상품수", f"API: {api}")
+            text = fetch_text(api, sess)
+            if text.strip().startswith("{") or text.strip().startswith("["):
+                data = json.loads(text)
+                total, coll, rev = count_products_in_zara_payload(data)
+                if total or coll:
+                    stats.total_product_count = total
+                    stats.collectible_count = coll or total
+                    stats.search_count = total
+                    stats.review_count = rev
+                    return stats
+        except Exception as e:  # noqa: BLE001
+            log("상품수", f"API 실패: {e}")
+
+    # 2) 카테고리 페이지 HTML
+    html = ""
+    try:
+        html = fetch_text(page_url, sess)
+        total, coll, rev = parse_product_count_from_zara_html(html)
+        if total or coll:
+            stats.total_product_count = total
+            stats.collectible_count = coll or total
+            stats.search_count = total
+            stats.review_count = rev
+            return stats
+    except Exception as e:  # noqa: BLE001
+        log("상품수", f"HTML 실패: {e}")
+
+    # 3) Playwright 폴백
+    try:
+        html = fetch_html_playwright(page_url, progress=progress)
+        total, coll, rev = parse_product_count_from_zara_html(html)
+        stats.total_product_count = total
+        stats.collectible_count = coll or total
+        stats.search_count = total
+        stats.review_count = rev
+    except Exception as e:  # noqa: BLE001
+        log("상품수", f"Playwright 실패: {e}")
+    return stats
+
+
+def enrich_rows_with_product_stats(
+    rows: list[HierarchyRow],
+    matched: list[tuple[Leaf, CategorySpec]],
+    *,
+    session: requests.Session | None = None,
+    progress: ProgressFn | None = None,
+) -> list[str]:
+    """각 행의 최종 카테고리 URL로 상품수·검색수·리뷰수를 채운다."""
+    def log(step: str, msg: str) -> None:
+        if progress:
+            progress(step, msg)
+
+    sess = session or _session()
+    warnings: list[str] = []
+    fail = 0
+    cache: dict[str, CategoryStats] = {}
+    total_n = len(rows)
+    log("상품수", f"카테고리 URL별 상품수 조회 시작 — {total_n}건")
+    for i, (row, (leaf, _spec)) in enumerate(zip(rows, matched), start=1):
+        key = to_english_locale_url(leaf.category_url)
+        if key in cache:
+            stats = cache[key]
+        else:
+            stats = fetch_zara_category_stats(
+                leaf.category_url,
+                cat_id=leaf.cat_id,
+                session=sess,
+                progress=None,  # 행마다 과도한 로그 방지
+            )
+            cache[key] = stats
+            if i == 1 or i % 10 == 0 or i == total_n:
+                log(
+                    "상품수",
+                    f"[{i}/{total_n}] {leaf.final}: 총{stats.total_product_count} "
+                    f"수집가능{stats.collectible_count} 검색{stats.search_count} "
+                    f"리뷰{stats.review_count}",
+                )
+        row.total_product_count = stats.total_product_count
+        row.collectible_count = stats.collectible_count
+        row.search_count = stats.search_count
+        row.review_count = stats.review_count
+        if stats.total_product_count == 0 and stats.collectible_count == 0:
+            fail += 1
+        if i % 15 == 0:
+            time.sleep(0.05)
+    if fail:
+        warnings.append(
+            f"상품수 조회 실패/0건 {fail}개 URL (총상품수·상품수집가능개수·검색수·리뷰수 확인)"
+        )
+    return warnings
 
 
 def _dedupe(leaves: list[Leaf]) -> list[Leaf]:
@@ -1220,12 +1484,20 @@ def crawl_site(
     rows = [
         hierarchy_row_from_match(name, leaf, spec) for leaf, spec in matched
     ]
+    # ★요건(P1과 동일): 카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수
+    warnings.extend(
+        enrich_rows_with_product_stats(
+            rows, matched, session=_session(), progress=progress
+        )
+    )
     log("결과", f"최종 카테고리 {len(rows)}건 확정 (입력 계층 반영)")
     for i, r in enumerate(rows[:30], start=1):
         log(
             "결과",
             f"{i}. [{r.top} | {r.mid or '—'} | {r.low or '—'}] "
-            f"{r.final} | {r.final_category_url}",
+            f"{r.final} | {r.final_category_url} | "
+            f"총{r.total_product_count} 수집가능{r.collectible_count} "
+            f"검색{r.search_count} 리뷰{r.review_count}",
         )
     if len(rows) > 30:
         log("결과", f"… 외 {len(rows) - 30}건")
@@ -1271,7 +1543,20 @@ def save_excel(rows: list[HierarchyRow], site_name: str, out_dir: Path | str) ->
     ws.title = "카테고리표"
     ws.append(list(EXCEL_HEADERS))
     for r in rows:
-        ws.append([r.top, r.mid, r.low, r.final, r.top_final_label, r.final_category_url])
+        ws.append(
+            [
+                r.top,
+                r.mid,
+                r.low,
+                r.final,
+                r.top_final_label,
+                r.final_category_url,
+                r.total_product_count,
+                r.collectible_count,
+                r.search_count,
+                r.review_count,
+            ]
+        )
     wb.save(path)
     return path
 
