@@ -213,9 +213,10 @@ class BoardApp(tk.Tk):
         form = tk.Frame(parent, bg="#ffffff", padx=10, pady=10, relief="solid", bd=1)
         form.pack(fill="x")
 
-        self.var_site = tk.StringVar(value="ABC마트")
-        self.var_url = tk.StringVar(value="https://abcmart.a-rt.com/?track=W0009")
-        self.var_outdir = tk.StringVar(value=str(Path.home() / "Downloads"))
+        self.var_site = tk.StringVar(value=p1_crawl.DEFAULT_SITE)
+        self.var_url = tk.StringVar(value=p1_crawl.DEFAULT_URL)
+        # ★요건: 기본 저장 폴더
+        self.var_outdir = tk.StringVar(value=p1_crawl.DEFAULT_OUTDIR)
 
         self._row(form, "사이트명", self.var_site)
         self._row(form, "사이트 URL", self.var_url)
@@ -247,7 +248,8 @@ class BoardApp(tk.Tk):
         vcmd = (self.register(self._validate_p1_top_cell), "%P")
         grid = tk.Frame(tops_right, bg="#ffffff")
         grid.pack(fill="x")
-        defaults = ["MEN", "WOMEN", "KIDS"]
+        # ★요건: MEN:남성, WOMEN:여성, KIDS:키즈
+        defaults = list(p1_crawl.DEFAULT_TOPS)
         idx = 0
         for r in range(TOP_GRID_ROWS):
             row_f = tk.Frame(grid, bg="#ffffff")
@@ -331,9 +333,10 @@ class BoardApp(tk.Tk):
             self.var_outdir.set(d)
 
     def _p1_defaults(self) -> None:
-        self.var_site.set("ABC마트")
-        self.var_url.set("https://abcmart.a-rt.com/?track=W0009")
-        defaults = ["MEN", "WOMEN", "KIDS"]
+        self.var_site.set(p1_crawl.DEFAULT_SITE)
+        self.var_url.set(p1_crawl.DEFAULT_URL)
+        self.var_outdir.set(p1_crawl.DEFAULT_OUTDIR)
+        defaults = list(p1_crawl.DEFAULT_TOPS)
         for i, var in enumerate(getattr(self, "_p1_top_vars", [])):
             var.set(defaults[i] if i < len(defaults) else "")
 

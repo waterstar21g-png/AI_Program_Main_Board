@@ -21,6 +21,12 @@ DEFAULT_UA = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
+DEFAULT_SITE = "ABC마트"
+DEFAULT_URL = "https://abcmart.a-rt.com/?track=W0009"
+# ★요건: 기본 저장 폴더 · 상위 카테고리 프리필
+DEFAULT_OUTDIR = r"D:\My_Project\AI_Program_Main_Board"
+DEFAULT_TOPS: list[str] = ["MEN:남성", "WOMEN:여성", "KIDS:키즈"]
+
 EXCEL_HEADERS = [
     "상위 카테고리명",
     "중위 카테고리명",
@@ -646,14 +652,14 @@ def main() -> None:
     import argparse
 
     p = argparse.ArgumentParser(description="P1 카테고리 URL 추출")
-    p.add_argument("--site", default="ABC마트")
-    p.add_argument("--url", default="https://abcmart.a-rt.com/?track=W0009")
+    p.add_argument("--site", default=DEFAULT_SITE)
+    p.add_argument("--url", default=DEFAULT_URL)
     p.add_argument(
         "--tops",
-        default="MEN,WOMEN,KIDS",
+        default=",".join(DEFAULT_TOPS),
         help="쉼표 구분 상위 카테고리 (명1:명2 = 사이트명1→엑셀명2 치환)",
     )
-    p.add_argument("--out", default=".", help="엑셀 저장 폴더")
+    p.add_argument("--out", default=DEFAULT_OUTDIR, help="엑셀 저장 폴더")
     args = p.parse_args()
     tops = [t.strip() for t in args.tops.split(",") if t.strip()]
     result = crawl_site(args.site, args.url, tops)
