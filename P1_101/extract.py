@@ -168,8 +168,19 @@ def _parse_int_count(raw: str | int | float | None) -> int:
     return int(s) if s else 0
 
 
+# Zara 등 SPA 상품 그리드 카드
+PRODUCT_CARD_SELECTORS = (
+    "li.product-grid-product",
+    "article.product-grid-product",
+    ".product-grid-product",
+    "[data-productid]",
+    "[data-qa-qualifier='product-grid-product']",
+    "li[class*='product-grid']",
+)
+
+
 def parse_product_count_from_html(html: str) -> int:
-    """페이지 HTML에서 노출 상품수를 파싱한다 (A-RT · 일반 패턴)."""
+    """페이지 HTML에서 노출 상품수를 파싱한다 (A-RT · Zara · 일반 패턴)."""
     text = html or ""
     if not text:
         return 0
@@ -203,15 +214,19 @@ def parse_product_count_from_html(html: str) -> int:
         if n:
             return n
 
-    # JSON / JS 흔한 키
+    # JSON / JS / JSON-LD 흔한 키 (Zara·일반)
     for pat in (
+        r'"numberOfItems"\s*:\s*(\d+)',
         r'"totalCount"\s*:\s*(\d+)',
         r'"productCount"\s*:\s*(\d+)',
+        r'"productsCount"\s*:\s*(\d+)',
         r'"totalProducts"\s*:\s*(\d+)',
         r'"productsTotal"\s*:\s*(\d+)',
         r'"total_count"\s*:\s*(\d+)',
         r'"resultsCount"\s*:\s*(\d+)',
         r'"resultCount"\s*:\s*(\d+)',
+        r'"numProducts"\s*:\s*(\d+)',
+        r'"productsTotalCount"\s*:\s*(\d+)',
     ):
         m = re.search(pat, text, re.I)
         if m:
@@ -229,6 +244,7 @@ def parse_product_count_from_html(html: str) -> int:
         r"([\d,]+)\s*개\s*상품",
         r"([\d,]+)\s*products?\b",
         r"([\d,]+)\s*results?\b",
+        r"([\d,]+)\s*items?\b",
         r"([\d,]+)\s*Artikel\b",
         r"([\d,]+)\s*Produkte?\b",
     )
@@ -238,7 +254,83 @@ def parse_product_count_from_html(html: str) -> int:
             n = _parse_int_count(m.group(1))
             if n:
                 return n
+
+    # Zara 등: data-productid / 상품 상세 링크(-p####.html)
+    ids = set(re.findall(r'data-productid=["\'](\d+)["\']', text, flags=re.I))
+    if ids:
+        return len(ids)
+    p_links = set(
+        re.findall(
+            r"https?://[^\"'\s]+?-p\d+\.html",
+            text,
+            flags=re.I,
+        )
+    )
+    if not p_links:
+        p_links = set(re.findall(r"/[^\"'\s]+?-p\d+\.html", text, flags=re.I))
+    if p_links:
+        return len(p_links)
     return 0
+
+
+def _total_from_json_obj(data: object) -> int:
+    """API/JSON 객체에서 총상품수 후보를 찾는다."""
+    if data is None:
+        return 0
+    if isinstance(data, (int, float)) and not isinstance(data, bool):
+        return max(0, int(data))
+    if isinstance(data, list):
+        # 상품 배열로 보이면 길이
+        if data and isinstance(data[0], dict):
+            keys = set(data[0].keys())
+            if keys & {"id", "productId", "seo", "detail", "name", "price"}:
+                return len(data)
+        best = 0
+        for item in data[:50]:
+            best = max(best, _total_from_json_obj(item))
+        return best
+    if not isinstance(data, dict):
+        return 0
+    for key in (
+        "totalProducts",
+        "productsCount",
+        "productCount",
+        "totalCount",
+        "numberOfItems",
+        "numProducts",
+        "productsTotalCount",
+        "resultsCount",
+    ):
+        if key in data:
+            n = _parse_int_count(data.get(key))
+            if n:
+                return n
+    # productGroups / products 배열
+    for key in ("products", "productGroups", "items", "results"):
+        if key not in data:
+            continue
+        val = data[key]
+        if isinstance(val, list):
+            if key == "productGroups":
+                ids: set[str] = set()
+                for g in val:
+                    if not isinstance(g, dict):
+                        continue
+                    for p in g.get("products") or g.get("elements") or []:
+                        if isinstance(p, dict):
+                            pid = p.get("id") or p.get("productId")
+                            if pid is not None:
+                                ids.add(str(pid))
+                if ids:
+                    return len(ids)
+            n = len(val)
+            if n and isinstance(val[0], dict):
+                return n
+    best = 0
+    for v in list(data.values())[:40]:
+        if isinstance(v, (dict, list)):
+            best = max(best, _total_from_json_obj(v))
+    return best
 
 
 def find_header_index(headers: list[str], candidates: tuple[str, ...] | list[str]) -> int | None:
@@ -358,9 +450,69 @@ def dismiss_popups(page) -> int:
     return closed
 
 
-def extract_count_from_page(page) -> int:
-    """현재 페이지에서 상품수 추출 (DOM 텍스트 + HTML 파싱)."""
-    # 우선 눈에 띄는 카운터 요소
+def count_product_cards(page) -> int:
+    """DOM에 렌더된 상품 카드/링크 개수 (Zara 그리드 등)."""
+    best = 0
+    for sel in PRODUCT_CARD_SELECTORS:
+        try:
+            c = page.locator(sel).count()
+            if c > best:
+                best = c
+        except Exception:
+            continue
+    # 상품 상세 링크(-p123.html) 고유 개수
+    try:
+        n = page.evaluate(
+            """() => {
+              const hrefs = Array.from(document.querySelectorAll('a[href]'))
+                .map(a => a.href || '')
+                .filter(h => /-p\\d+\\.html/i.test(h));
+              return new Set(hrefs).size;
+            }"""
+        )
+        best = max(best, int(n or 0))
+    except Exception:
+        pass
+    return best
+
+
+def scroll_load_products(page, *, max_rounds: int = 25, pause: float = 0.7) -> int:
+    """무한스크롤 카테고리에서 상품을 더 불러온 뒤 카드 수를 반환."""
+    prev = -1
+    stable = 0
+    last = 0
+    for _ in range(max_rounds):
+        last = count_product_cards(page)
+        if last > 0 and last == prev:
+            stable += 1
+            if stable >= 2:
+                break
+        else:
+            stable = 0
+        prev = last
+        try:
+            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        except Exception:
+            break
+        time.sleep(pause)
+        dismiss_popups(page)
+    return count_product_cards(page) or last
+
+
+def extract_count_from_page(page, *, api_totals: list[int] | None = None) -> int:
+    """현재 페이지에서 상품수 추출.
+
+    우선순위:
+    1) 네트워크 API 총합(있을 때)
+    2) 화면 카운터/HTML 문구
+    3) Zara형 상품 그리드 카드 수(스크롤 로드 포함)
+    """
+    if api_totals:
+        api_best = max(api_totals)
+        if api_best > 0:
+            return api_best
+
+    # 눈에 띄는 카운터 요소
     selectors = (
         ".result-cnt",
         'input[name="totalCount"]',
@@ -370,6 +522,7 @@ def extract_count_from_page(page) -> int:
         ".products-count",
         ".search-count",
         ".total-count",
+        "[data-qa-qualifier='product-count']",
     )
     for sel in selectors:
         try:
@@ -405,7 +558,59 @@ def extract_count_from_page(page) -> int:
             return n
     except Exception:
         pass
+
+    # ★Zara 등: "N products" 문구 없이 그리드만 있는 경우 → 카드 수
+    cards = count_product_cards(page)
+    if cards <= 0:
+        try:
+            page.wait_for_selector(
+                ", ".join(PRODUCT_CARD_SELECTORS[:4]),
+                timeout=8_000,
+            )
+        except Exception:
+            pass
+        cards = count_product_cards(page)
+    if cards > 0:
+        # 추가 로드(무한스크롤) 후 재집계
+        loaded = scroll_load_products(page)
+        return max(cards, loaded)
     return 0
+
+
+def attach_api_total_listener(page) -> list[int]:
+    """카테고리/상품 API 응답에서 total 후보를 수집."""
+    found: list[int] = []
+
+    def _on_response(response) -> None:
+        try:
+            if response.status != 200:
+                return
+            url = response.url or ""
+            low = url.lower()
+            if not any(
+                k in low
+                for k in (
+                    "/products",
+                    "product",
+                    "catalog",
+                    "category",
+                    "commercial",
+                    "ajax=true",
+                )
+            ):
+                return
+            ctype = (response.headers or {}).get("content-type", "")
+            if "json" not in ctype and "text" not in ctype and "javascript" not in ctype:
+                return
+            data = response.json()
+            n = _total_from_json_obj(data)
+            if n > 0:
+                found.append(n)
+        except Exception:
+            return
+
+    page.on("response", _on_response)
+    return found
 
 
 def _default_headless() -> bool:
@@ -474,12 +679,14 @@ def run_extract(
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=use_headless)
+            # Zara 영문 DE 등 — en-GB 가 차단·팝업에 유리한 경우가 많음
             context = browser.new_context(
                 user_agent=DEFAULT_UA,
                 viewport={"width": 1440, "height": 900},
-                locale="ko-KR",
+                locale="en-GB",
             )
             page = context.new_page()
+            api_totals = attach_api_total_listener(page)
 
             for i, job in enumerate(jobs, start=1):
                 if stop_requested():
@@ -493,6 +700,7 @@ def run_extract(
                     "URL",
                     f"{i}/{result.total} 행{job.excel_row} 열기: {label} · {job.url}",
                 )
+                api_totals.clear()
                 try:
                     page.goto(job.url, wait_until="domcontentloaded", timeout=90_000)
                 except Exception as e:  # noqa: BLE001
@@ -539,7 +747,21 @@ def run_extract(
                     _log(progress, "팝업", f"행{job.excel_row} 추가 팝업 {closed2}건 닫기")
                     time.sleep(0.5)
 
-                count = extract_count_from_page(page)
+                count = extract_count_from_page(page, api_totals=api_totals)
+                if count == 0:
+                    _log(
+                        progress,
+                        "경고",
+                        f"행{job.excel_row} 상품수 0 — 그리드/API 미검출(사이트 지연·차단 가능)",
+                    )
+                elif api_totals and count == max(api_totals):
+                    _log(progress, "상품수", f"행{job.excel_row} API total={count}")
+                else:
+                    _log(
+                        progress,
+                        "상품수",
+                        f"행{job.excel_row} 그리드/문구 집계={count}",
+                    )
                 ws.cell(row=job.excel_row, column=count_idx + 1, value=count)
                 if collectible_idx is not None:
                     ws.cell(
