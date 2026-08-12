@@ -1677,8 +1677,9 @@ class BoardApp(tk.Tk):
             font=("Malgun Gothic", 8),
         ).pack(fill="x")
 
-        self._p3_file_list_height = 5
-        self._p3_url_list_height = 8
+        # ★실행로그를 최대로 키우기 위해 위쪽 목록은 최소 높이만
+        self._p3_file_list_height = 3
+        self._p3_url_list_height = 4
 
         found_wrap = tk.Frame(search, bg="#ffffff")
         found_wrap.pack(fill="x", pady=4)
@@ -1703,6 +1704,26 @@ class BoardApp(tk.Tk):
         actions.pack(fill="x", pady=(8, 0))
         btn_row = tk.Frame(actions, bg="#ffffff")
         btn_row.pack(fill="x")
+
+        # ★실행로그 표출 체크박스 — 실행 버튼줄 최우측 (MAIN / SUB / 스크린샷)
+        self.var_p3_show_main = tk.BooleanVar(value=True)
+        self.var_p3_show_sub = tk.BooleanVar(value=True)
+        self.var_p3_show_shot = tk.BooleanVar(value=True)
+        right_checks = tk.Frame(btn_row, bg="#ffffff")
+        right_checks.pack(side="right")
+        for text, var in (
+            ("MAIN", self.var_p3_show_main),
+            ("SUB", self.var_p3_show_sub),
+            ("스크린샷", self.var_p3_show_shot),
+        ):
+            tk.Checkbutton(
+                right_checks,
+                text=text,
+                variable=var,
+                command=self._toggle_p3_log_panels,
+                bg="#ffffff",
+                font=("Malgun Gothic", 9),
+            ).pack(side="left", padx=(0, 6))
 
         left_btns = tk.Frame(btn_row, bg="#ffffff")
         left_btns.pack(side="left", fill="x", expand=True)
@@ -1765,6 +1786,8 @@ class BoardApp(tk.Tk):
         self.p3_lib_list.pack(side="left", fill="both", expand=True)
         lib_sb.pack(side="right", fill="y")
         self._p3_excel_rows: list[dict] = []
+        self._p3_lib_texts: list[str] = []
+        self._p3_active_ordinal: int = 0  # 진행 중 엑셀행 (1-based, 0=없음)
         self._p3_current_excel: str = ""
         self.p3_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
         self.p3_sel.pack(fill="x", pady=(2, 0))
@@ -1775,39 +1798,6 @@ class BoardApp(tk.Tk):
             parent, text="실행 로그", bg="#ffffff", padx=6, pady=4
         )
         log_wrap.pack(fill="both", expand=True, pady=(8, 0))
-
-        self.var_p3_show_main = tk.BooleanVar(value=True)
-        self.var_p3_show_sub = tk.BooleanVar(value=True)
-        self.var_p3_show_shot = tk.BooleanVar(value=True)
-        log_checks = tk.Frame(log_wrap, bg="#ffffff")
-        log_checks.pack(fill="x", pady=(0, 4))
-        tk.Label(
-            log_checks, text="표시:", bg="#ffffff", font=("Malgun Gothic", 9)
-        ).pack(side="left", padx=(0, 4))
-        tk.Checkbutton(
-            log_checks,
-            text="MAIN",
-            variable=self.var_p3_show_main,
-            command=self._toggle_p3_log_panels,
-            bg="#ffffff",
-            font=("Malgun Gothic", 9),
-        ).pack(side="left", padx=(0, 6))
-        tk.Checkbutton(
-            log_checks,
-            text="SUB",
-            variable=self.var_p3_show_sub,
-            command=self._toggle_p3_log_panels,
-            bg="#ffffff",
-            font=("Malgun Gothic", 9),
-        ).pack(side="left", padx=(0, 6))
-        tk.Checkbutton(
-            log_checks,
-            text="스크린샷",
-            variable=self.var_p3_show_shot,
-            command=self._toggle_p3_log_panels,
-            bg="#ffffff",
-            font=("Malgun Gothic", 9),
-        ).pack(side="left")
 
         log_area = tk.Frame(log_wrap, bg="#f1f5f9")
         log_area.pack(fill="both", expand=True)
@@ -1835,7 +1825,7 @@ class BoardApp(tk.Tk):
             self.p3_main_frame,
             columns=("time", "step", "message"),
             show="headings",
-            height=7,
+            height=16,
             style="P3Log.Treeview",
         )
         self.p3_main_log.heading("time", text="시각")
@@ -1869,7 +1859,7 @@ class BoardApp(tk.Tk):
             self.p3_sub_frame,
             columns=("time", "message"),
             show="headings",
-            height=5,
+            height=8,
             style="P3Log.Treeview",
         )
         self.p3_sub_log.heading("time", text="시각")
@@ -1900,7 +1890,7 @@ class BoardApp(tk.Tk):
             self.p3_shot_frame,
             columns=("time", "label"),
             show="headings",
-            height=5,
+            height=6,
             style="P3Log.Treeview",
         )
         self.p3_shot_log.heading("time", text="시각")
@@ -1982,6 +1972,8 @@ class BoardApp(tk.Tk):
         """P2와 동일 엑셀 컬럼으로 카테고리URL목록 표시."""
         self.p3_lib_list.delete(0, "end")
         self._p3_excel_rows = []
+        self._p3_lib_texts = []
+        self._p3_active_ordinal = 0
         self._p3_current_excel = path
         try:
             from openpyxl import load_workbook
@@ -2023,9 +2015,9 @@ class BoardApp(tk.Tk):
             )
             item = {"label": label, "url": url}
             self._p3_excel_rows.append(item)
-            self.p3_lib_list.insert(
-                "end", f"{len(self._p3_excel_rows):03d}  {label}  |  {url}"
-            )
+            text = f"{len(self._p3_excel_rows):03d}  {label}  |  {url}"
+            self._p3_lib_texts.append(text)
+            self.p3_lib_list.insert("end", text)
         self.p3_sel.configure(
             text=f"선택: {Path(path).name} · {len(self._p3_excel_rows)}행"
         )
@@ -2111,6 +2103,14 @@ class BoardApp(tk.Tk):
         if parsed is None:
             return  # 마커 없는 줄은 화면에 출력하지 않음
         kind = parsed[0]
+        if kind == "meta":
+            _, field, value = parsed
+            if field == "진행":
+                try:
+                    self._mark_p3_active_row(int(str(value).strip() or "0"))
+                except ValueError:
+                    pass
+            return
         if kind == "main":
             _, seq, n, msg = parsed
             red, msg = split_red(msg)
@@ -2229,6 +2229,33 @@ class BoardApp(tk.Tk):
         self._p3_follow_latest = seq == self._p3_latest_seq
         self._render_p3_sub_grid(seq)
         self._render_p3_shot_grid(seq)
+
+    def _mark_p3_active_row(self, ordinal: int) -> None:
+        """엑셀 목록에서 지금 작업 중인 행에 진행 화살표(▶)·적색 표시."""
+        lst = getattr(self, "p3_lib_list", None)
+        if lst is None:
+            return
+        texts = getattr(self, "_p3_lib_texts", [])
+        prev = getattr(self, "_p3_active_ordinal", 0)
+        if prev and prev - 1 < len(texts):
+            try:
+                lst.delete(prev - 1)
+                lst.insert(prev - 1, texts[prev - 1])
+                lst.itemconfigure(prev - 1, foreground="#0f172a")
+            except tk.TclError:
+                pass
+        self._p3_active_ordinal = 0
+        idx = int(ordinal or 0) - 1
+        if idx < 0 or idx >= len(texts):
+            return
+        try:
+            lst.delete(idx)
+            lst.insert(idx, f"▶ {texts[idx]}")
+            lst.itemconfigure(idx, foreground="#b91c1c")
+            lst.see(idx)
+        except tk.TclError:
+            return
+        self._p3_active_ordinal = idx + 1
 
     def _capture_p3_shot_dir_from_path(self, path: str) -> None:
         try:
