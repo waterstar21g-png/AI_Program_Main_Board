@@ -184,6 +184,39 @@ def test_modify_popup_save_count_and_save_button():
         browser.close()
 
 
+def test_screenshot_step_and_save_count_grid(tmp_path: Path):
+    """필터일치 단계 샷 + 저장상품수 입력그리드 근접 샷."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import screenshot_save_count_grid, screenshot_step
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(MODIFY_HTML)
+        shot_dir = tmp_path / "shots"
+        p1 = screenshot_step(
+            page,
+            shot_dir,
+            step_tag="02_modify_opened",
+            label="2)검색필터 수정 화면",
+            row_no=1,
+            progress=None,
+        )
+        assert p1 is not None and p1.is_file()
+        loc = page.locator("td:has-text('검색결과 상위') input").first
+        p2 = screenshot_save_count_grid(
+            page,
+            loc,
+            shot_dir,
+            tag="before",
+            row_no=1,
+            note="현재값=3",
+            progress=None,
+        )
+        assert p2 is not None and p2.is_file()
+        browser.close()
+
+
 def test_modified_confirm_click_after_popup_close():
     """저장 후 '수정되었습니다' 팝업의 확인 버튼 클릭."""
     from playwright.sync_api import sync_playwright
@@ -223,5 +256,7 @@ if __name__ == "__main__":
         test_read_excel_and_lookup(Path(d))
     test_list_demango_rows_filter_input_and_url()
     test_modify_popup_save_count_and_save_button()
+    with tempfile.TemporaryDirectory() as d2:
+        test_screenshot_step_and_save_count_grid(Path(d2))
     test_modified_confirm_click_after_popup_close()
     print("PASS P3_필터_갱신 tests")

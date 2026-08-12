@@ -14,6 +14,9 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
 6) "수정되었습니다" 팝업에서 "확인" 반드시 클릭 → 다음 행
 7) 더망고 화면 전 행 반복
 
+필터 일치 행: 모든 단계 스크린샷을 run-logs + 실행로그에 남김
+(목록일치 → 수정화면 → 저장상품수 입력그리드 → 저장하기 → 닫힘 → 확인 → 목록복귀)
+
 로그:
 - 더망고 처음 10건: 더망고/엑셀 각각 1줄(검색필터·URL)
 - 엑셀 처음 5행 매칭분 = 단계별 세부 / 그 외 = 핵심만
@@ -51,6 +54,8 @@ if str(P2_DIR) not in sys.path:
 ProgressFn = Callable[[str, str], None]
 
 STOP_FLAG_PATH = Path(__file__).resolve().parent / ".filter_stop"
+P3_RUN_LOG_DIR = Path(__file__).resolve().parent / "run-logs"
+P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
 DETAIL_EXCEL_ROWS = 5  # 엑셀 1~5행 매칭 시 세부 로그
 FIRST_COMPARE_LOG_N = 10  # 더망고 처음 10건: 더망고/엑셀 비교 2줄 로그
 
@@ -530,16 +535,150 @@ def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
     return ok
 
 
-def set_save_count(page, value: int) -> bool:
+def set_save_count(
+    page,
+    value: int,
+    *,
+    shot_dir: Path | None = None,
+    progress: ProgressFn | None = None,
+    row_no: int = 0,
+) -> bool:
     """팝업 '검색필터 수정'의 저장상품수 입력필드에 상품개수 입력.
 
     스크린샷 기준 입력필드:
       저장상품수 | 검색결과 상위 [ 3 ] 개 상품만 저장
     → '검색결과 상위' 와 '개' 사이에 있는 숫자 input (현재값 예: 3)
+
+    판단한 입력그리드(행) 근접 스크린샷을 로그에 출력한다.
     """
     target = str(int(value))
+    loc = find_save_count_locator(page)
 
-    # 1) 가장 정확한 XPath: 상위 … input … 개
+    before_val = ""
+    if loc is not None:
+        try:
+            before_val = (loc.input_value(timeout=500) or "").strip()
+        except Exception:
+            before_val = ""
+        # 입력 전: 판단 필드 근접 그리드 샷
+        if shot_dir is not None:
+            screenshot_save_count_grid(
+                page,
+                loc,
+                shot_dir,
+                tag="before",
+                row_no=row_no,
+                note=f"현재값={before_val or '?'}",
+                progress=progress,
+            )
+
+    def _fill_loc(el) -> bool:
+        try:
+            el.click(timeout=1500)
+            el.press("Control+a")
+            el.fill("")
+            el.type(target, delay=25)
+            try:
+                got = (el.input_value(timeout=800) or "").strip()
+                if got == target:
+                    return True
+            except Exception:
+                pass
+            el.fill(target)
+            got2 = (el.input_value(timeout=800) or "").strip()
+            return got2 == target
+        except Exception:
+            try:
+                el.fill(target)
+                return True
+            except Exception:
+                return False
+
+    filled = False
+    if loc is not None and _fill_loc(loc):
+        filled = True
+    else:
+        # JS 폴백: '검색결과 상위' … input … '개' 패턴
+        try:
+            filled = bool(
+                page.evaluate(
+                    """(n) => {
+                      const want = String(n);
+                      const isNumInput = (inp) => {
+                        if (!inp) return false;
+                        const ty = (inp.getAttribute('type') || 'text').toLowerCase();
+                        if (!(ty === 'text' || ty === 'number' || ty === '')) return false;
+                        if (inp.disabled || inp.readOnly) return false;
+                        return true;
+                      };
+                      const setVal = (inp) => {
+                        inp.focus();
+                        inp.select && inp.select();
+                        inp.value = want;
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                        inp.blur && inp.blur();
+                        return (inp.value || '').trim() === want;
+                      };
+                      const trs = Array.from(document.querySelectorAll('tr'));
+                      for (const tr of trs) {
+                        const labelCell = Array.from(tr.querySelectorAll('th, td')).find(c => {
+                          const t = (c.innerText || '').replace(/\\s+/g, '');
+                          return t === '저장상품수' || t.startsWith('저장상품수');
+                        });
+                        if (!labelCell) continue;
+                        const valueCell = labelCell.nextElementSibling ||
+                          Array.from(tr.querySelectorAll('td')).find(td =>
+                            /검색결과/.test(td.innerText || '') && /상위/.test(td.innerText || '')
+                          );
+                        const scope = valueCell || tr;
+                        const inputs = Array.from(scope.querySelectorAll(
+                          'input[type="text"], input[type="number"], input:not([type])'
+                        )).filter(isNumInput);
+                        let pick = inputs.find(i => /^\\d+$/.test((i.value || '').trim()))
+                          || inputs[0];
+                        if (pick && setVal(pick)) return true;
+                      }
+                      return false;
+                    }""",
+                    int(value),
+                )
+            )
+        except Exception:
+            filled = False
+        # JS 후 locator 재탐색
+        if filled:
+            loc = find_save_count_locator(page)
+
+    if filled and loc is not None and shot_dir is not None:
+        after_val = target
+        try:
+            after_val = (loc.input_value(timeout=500) or "").strip() or target
+        except Exception:
+            pass
+        screenshot_save_count_grid(
+            page,
+            loc,
+            shot_dir,
+            tag="after",
+            row_no=row_no,
+            note=f"{before_val or '?'}→{after_val}",
+            progress=progress,
+        )
+
+    return filled
+
+
+def new_shot_dir() -> Path:
+    """P3 실행별 스크린샷 폴더."""
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    d = P3_RUN_LOG_DIR / ts
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def find_save_count_locator(page):
+    """저장상품수 숫자 입력칸 locator (검색결과 상위 [N] 개)."""
     loc = None
     try:
         loc = page.locator(
@@ -557,7 +696,6 @@ def set_save_count(page, value: int) -> bool:
 
     if loc is None:
         try:
-            # '검색결과 상위' 문구가 있는 셀 안의 숫자성 input
             loc = page.locator(
                 "xpath=//td[contains(.,'검색결과') and contains(.,'상위') and contains(.,'개')]"
                 "//input[@type='text' or @type='number' or not(@type)]"
@@ -577,107 +715,102 @@ def set_save_count(page, value: int) -> bool:
                 loc = None
         except Exception:
             loc = None
+    return loc
 
-    def _fill_loc(el) -> bool:
-        try:
-            el.click(timeout=1500)
-            el.press("Control+a")
-            el.fill("")
-            el.type(target, delay=25)
-            # 값 검증
-            try:
-                got = (el.input_value(timeout=800) or "").strip()
-                if got == target:
-                    return True
-            except Exception:
-                pass
-            el.fill(target)
-            got2 = (el.input_value(timeout=800) or "").strip()
-            return got2 == target
-        except Exception:
-            try:
-                el.fill(target)
-                return True
-            except Exception:
-                return False
 
-    if loc is not None and _fill_loc(loc):
-        return True
-
-    # 2) JS: '검색결과 상위' … input … '개' 패턴의 숫자 입력칸만 갱신
+def screenshot_step(
+    page,
+    shot_dir: Path | None,
+    *,
+    step_tag: str,
+    label: str,
+    row_no: int = 0,
+    progress: ProgressFn | None = None,
+    full_page: bool = False,
+) -> Path | None:
+    """필터 일치 행의 단계 스크린샷 → 실행 로그에 출력."""
+    if shot_dir is None:
+        return None
+    shot_dir.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w\-]+", "_", step_tag)[:48]
+    name = f"r{row_no:03d}_{safe}.png"
+    path = shot_dir / name
     try:
-        ok = page.evaluate(
-            """(n) => {
-              const want = String(n);
-              const isNumInput = (inp) => {
-                if (!inp) return false;
-                const ty = (inp.getAttribute('type') || 'text').toLowerCase();
-                if (!(ty === 'text' || ty === 'number' || ty === '')) return false;
-                if (inp.disabled || inp.readOnly) return false;
-                return true;
-              };
-              const setVal = (inp) => {
-                inp.focus();
-                inp.select && inp.select();
-                inp.value = want;
-                inp.dispatchEvent(new Event('input', { bubbles: true }));
-                inp.dispatchEvent(new Event('change', { bubbles: true }));
-                inp.blur && inp.blur();
-                return (inp.value || '').trim() === want;
-              };
+        time.sleep(0.12)
+        page.screenshot(path=str(path), full_page=bool(full_page))
+        if not (path.is_file() and path.stat().st_size > 0):
+            return None
+    except Exception as e:  # noqa: BLE001
+        _log(progress, "샷", f"[샷 실패] {label}: {e}")
+        return None
 
-              // A) 저장상품수 행 — '상위'~'개' 사이 숫자 input
-              const trs = Array.from(document.querySelectorAll('tr'));
-              for (const tr of trs) {
-                const labelCell = Array.from(tr.querySelectorAll('th, td')).find(c => {
-                  const t = (c.innerText || '').replace(/\\s+/g, '');
-                  return t === '저장상품수' || t.startsWith('저장상품수');
-                });
-                if (!labelCell) continue;
-                const valueCell = labelCell.nextElementSibling ||
-                  Array.from(tr.querySelectorAll('td')).find(td =>
-                    /검색결과/.test(td.innerText || '') && /상위/.test(td.innerText || '')
-                  );
-                const scope = valueCell || tr;
-                const scopeText = (scope.innerText || '').replace(/\\s+/g, ' ');
-                if (!/검색결과\\s*상위/.test(scopeText) && !/상위/.test(scopeText)) {
-                  // 그래도 행에 input 하나면 사용
-                }
-                const inputs = Array.from(scope.querySelectorAll(
-                  'input[type="text"], input[type="number"], input:not([type])'
-                )).filter(isNumInput);
-                // 현재값이 숫자(예: 3)인 input 우선
-                let pick = inputs.find(i => /^\\d+$/.test((i.value || '').trim()))
-                  || inputs[0];
-                if (pick && setVal(pick)) return true;
-              }
+    _log(progress, "샷", f"{label} -> {path}")
+    print(f"{P3_SHOT_MARK}{path}##{label}", flush=True)
+    return path
 
-              // B) 문서 전체: '검색결과 상위' 텍스트 노드 다음 input
-              const walk = document.createTreeWalker(
-                document.body, NodeFilter.SHOW_TEXT, null
-              );
-              let node;
-              while ((node = walk.nextNode())) {
-                const t = (node.nodeValue || '').replace(/\\s+/g, '');
-                if (!t.includes('상위') && !t.includes('검색결과상위')) continue;
-                // 같은 부모 아래 input
-                let p = node.parentElement;
-                for (let depth = 0; p && depth < 5; depth++, p = p.parentElement) {
-                  const inputs = Array.from(p.querySelectorAll(
-                    'input[type="text"], input[type="number"], input:not([type])'
-                  )).filter(isNumInput);
-                  const pick = inputs.find(i => /^\\d*$/.test((i.value || '').trim()))
-                    || inputs[0];
-                  if (pick && /개/.test(p.innerText || '') && setVal(pick)) return true;
-                }
-              }
-              return false;
-            }""",
-            int(value),
-        )
-        return bool(ok)
+
+def screenshot_save_count_grid(
+    page,
+    loc,
+    shot_dir: Path,
+    *,
+    tag: str,
+    row_no: int = 0,
+    note: str = "",
+    progress: ProgressFn | None = None,
+) -> Path | None:
+    """판단한 저장상품수 입력그리드(행) 근접 스크린샷 → 로그 출력."""
+    shot_dir.mkdir(parents=True, exist_ok=True)
+    safe_tag = re.sub(r"[^\w\-]+", "_", tag)[:40]
+    name = f"r{row_no:03d}_save_count_{safe_tag}.png"
+    path = shot_dir / name
+    label = f"저장상품수 입력그리드/{tag}"
+    if note:
+        label = f"{label} ({note})"
+
+    ok = False
+    try:
+        row = loc.locator("xpath=ancestor::tr[1]")
+        if row.count() > 0:
+            row.first.scroll_into_view_if_needed(timeout=2000)
+            time.sleep(0.15)
+            row.first.screenshot(path=str(path))
+            ok = path.is_file() and path.stat().st_size > 0
     except Exception:
-        return False
+        ok = False
+
+    if not ok:
+        try:
+            loc.scroll_into_view_if_needed(timeout=2000)
+            box = loc.bounding_box()
+            if box:
+                pad_l, pad_r, pad_y = 160, 220, 28
+                clip = {
+                    "x": max(0, box["x"] - pad_l),
+                    "y": max(0, box["y"] - pad_y),
+                    "width": max(80, box["width"] + pad_l + pad_r),
+                    "height": max(40, box["height"] + pad_y * 2),
+                }
+                page.screenshot(path=str(path), clip=clip)
+                ok = path.is_file() and path.stat().st_size > 0
+        except Exception:
+            ok = False
+
+    if not ok:
+        try:
+            # 최후: 뷰포트 샷
+            page.screenshot(path=str(path))
+            ok = path.is_file()
+        except Exception:
+            return None
+
+    if not ok:
+        return None
+
+    # 보드/콘솔 로그 — 사람이 읽는 줄 + 보드용 마커
+    _log(progress, "샷", f"{label} -> {path}")
+    print(f"{P3_SHOT_MARK}{path}##{label}", flush=True)
+    return path
 
 
 def click_save_button(page) -> bool:
@@ -941,6 +1074,8 @@ def run_update(
             browser, page = p2.connect_browser(p)
             navigate_mango_url(page, mango, progress=progress)
             time.sleep(0.5)
+            shot_dir = new_shot_dir()
+            _log(progress, "준비", f"스크린샷 폴더: {shot_dir}")
 
             demango_rows = list_demango_rows(page)
             result.total_demango = len(demango_rows)
@@ -1015,6 +1150,16 @@ def run_update(
                 if note:
                     lg.step("로직", f"1) {note}", note)
 
+                # ★필터 일치 시 모든 단계 스크린샷
+                screenshot_step(
+                    page,
+                    shot_dir,
+                    step_tag="01_matched_list",
+                    label=f"1)필터일치 목록행 filter={d_filter}",
+                    row_no=i,
+                    progress=progress,
+                )
+
                 # 목록에 있는지 확인 (이전 저장 후 복귀)
                 try:
                     cur = page.url or ""
@@ -1028,30 +1173,76 @@ def run_update(
                 if not click_edit_on_row(page, row_idx, edit_href):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 수집조건수정 클릭 실패")
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="02_edit_fail",
+                        label="2)수집조건수정 실패",
+                        row_no=i,
+                        progress=progress,
+                    )
                     _return_to_list(page, mango)
                     continue
                 if not wait_modify_page(page):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 검색필터 수정 화면 미진입")
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="02_modify_missing",
+                        label="2)검색필터수정 미진입",
+                        row_no=i,
+                        progress=progress,
+                    )
                     _return_to_list(page, mango)
                     continue
+                screenshot_step(
+                    page,
+                    shot_dir,
+                    step_tag="02_modify_opened",
+                    label="2)검색필터 수정 화면",
+                    row_no=i,
+                    progress=progress,
+                )
 
-                # 3) 저장상품수 갱신
+                # 3) 저장상품수 갱신 (입력그리드 before/after 샷 포함)
                 target = map_save_count(ex.collectible)
                 lg.step(
                     "로직",
                     f"3) 저장상품수 갱신 — 수집가능={ex.collectible} → 저장상품수={target}",
                     f"3) 저장상품수={target}",
                 )
-                if not set_save_count(page, target):
+                if not set_save_count(
+                    page,
+                    target,
+                    shot_dir=shot_dir,
+                    progress=progress,
+                    row_no=i,
+                ):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 저장상품수 입력칸 실패")
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="03_save_count_fail",
+                        label="3)저장상품수 입력 실패",
+                        row_no=i,
+                        progress=progress,
+                    )
                     try:
                         page.keyboard.press("Escape")
                     except Exception:
                         pass
                     _return_to_list(page, mango)
                     continue
+                screenshot_step(
+                    page,
+                    shot_dir,
+                    step_tag="03_save_count_done",
+                    label=f"3)저장상품수 입력완료={target}",
+                    row_no=i,
+                    progress=progress,
+                )
 
                 # 4) 저장하기 → 팝업 닫힘 → "수정되었습니다" 확인 클릭
                 dialog_state = attach_native_dialog_handler(page)
@@ -1059,8 +1250,24 @@ def run_update(
                 if not click_save_button(page):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 저장하기 클릭 실패")
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="04_save_click_fail",
+                        label="4)저장하기 클릭 실패",
+                        row_no=i,
+                        progress=progress,
+                    )
                     _return_to_list(page, mango)
                     continue
+                screenshot_step(
+                    page,
+                    shot_dir,
+                    step_tag="04_after_save_click",
+                    label="4)저장하기 클릭 후",
+                    row_no=i,
+                    progress=progress,
+                )
 
                 lg.step(
                     "로직",
@@ -1068,8 +1275,15 @@ def run_update(
                     "5) 수정팝업 닫힘",
                 )
                 if not wait_modify_page_closed(page, timeout_ms=20_000):
-                    # 닫힘이 느려도 확인 팝업이 있으면 진행
                     _log(progress, "경고", f"행{i} 수정팝업 닫힘 대기 시간초과 — 확인 팝업 계속 시도")
+                screenshot_step(
+                    page,
+                    shot_dir,
+                    step_tag="05_modify_closed",
+                    label="5)수정팝업 닫힘/확인대기",
+                    row_no=i,
+                    progress=progress,
+                )
 
                 lg.step(
                     "로직",
@@ -1085,8 +1299,24 @@ def run_update(
                         "오류",
                         f"행{i} '수정되었습니다' 확인 버튼 클릭 실패",
                     )
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="06_confirm_fail",
+                        label="6)수정되었습니다 확인 실패",
+                        row_no=i,
+                        progress=progress,
+                    )
                     _return_to_list(page, mango)
                     continue
+                screenshot_step(
+                    page,
+                    shot_dir,
+                    step_tag="06_confirm_ok",
+                    label="6)수정되었습니다 확인 클릭 후",
+                    row_no=i,
+                    progress=progress,
+                )
 
                 result.updated += 1
                 lg.step(
@@ -1097,6 +1327,14 @@ def run_update(
 
                 # 다음 행을 위해 목록 복귀
                 _return_to_list(page, mango)
+                screenshot_step(
+                    page,
+                    shot_dir,
+                    step_tag="07_back_to_list",
+                    label="7)목록 복귀",
+                    row_no=i,
+                    progress=progress,
+                )
 
                 if stop_requested():
                     break
