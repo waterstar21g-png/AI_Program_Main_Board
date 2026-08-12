@@ -129,17 +129,21 @@ function New-BoardShortcut {
     [string]$StartBat,
     [string]$BootPs1
   )
-  $args = ""
+  # cmd.exe wrapper: .bat alone often cannot pin to taskbar on Windows
+  $cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
   if (Test-Path -LiteralPath $StartBat) {
-    $target = $StartBat
-    $chain = "start.bat -> boot-from-icon.ps1"
+    $target = $cmdExe
+    $args = "/c `"$StartBat`""
+    $chain = "cmd -> start.bat -> boot-from-icon.ps1"
   } elseif (Test-Path -LiteralPath $BootPs1) {
     $target = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
     $args = "-NoProfile -ExecutionPolicy Bypass -File `"$BootPs1`""
     $chain = "boot-from-icon.ps1"
   } else {
-    $target = Join-Path $ProjectRoot "run.bat"
-    $chain = "run.bat (legacy)"
+    $runBat = Join-Path $ProjectRoot "run.bat"
+    $target = $cmdExe
+    $args = "/c `"$runBat`""
+    $chain = "cmd -> run.bat (legacy)"
   }
   New-LnkFile -LnkPath $LnkPath -TargetPath $target -Arguments $args -WorkDir $ProjectRoot `
     -Description "AI_Program_Main_Board stop+update+restart" -IconIndexUse $IconIndex
@@ -158,15 +162,101 @@ function New-UpdateShortcut {
     [string]([char]0xAC31) + [string]([char]0xC2E0) + ".bat"
   )
   if (Test-Path -LiteralPath $updateBatEn) {
-    $target = $updateBatEn
+    $bat = $updateBatEn
   } elseif (Test-Path -LiteralPath $updateBatKo) {
-    $target = $updateBatKo
+    $bat = $updateBatKo
   } else {
     throw "update-version.bat not found"
   }
-  New-LnkFile -LnkPath $LnkPath -TargetPath $target -Arguments "" -WorkDir $ProjectRoot `
-    -Description "Force VERSION update from GitHub main, then start board" -IconIndexUse $UpdateIconIndex
-  return $target
+  # cmd.exe wrapper so version-update shortcut can pin to taskbar
+  $cmdExe = Join-Path $env:SystemRoot "System32\cmd.exe"
+  New-LnkFile -LnkPath $LnkPath -TargetPath $cmdExe -Arguments ("/c `"{0}`"" -f $bat) `
+    -WorkDir $ProjectRoot `
+    -Description "Force VERSION update from GitHub main, then start board" `
+    -IconIndexUse $UpdateIconIndex
+  return $bat
+}
+
+function Invoke-PinToTaskbar {
+  param([string]$FullLnkPath)
+
+  if (-not $FullLnkPath -or -not (Test-Path -LiteralPath $FullLnkPath)) {
+    return $false
+  }
+
+  # Korean: "작업 표시줄에 고정"
+  $koPin = -join (
+    [char]0xC791, [char]0xC5C5, [char]0x20,
+    [char]0xD45C, [char]0xC2DC, [char]0xC904, [char]0xC5D0, [char]0x20,
+    [char]0xACE0, [char]0xC815
+  )
+  $name = [System.IO.Path]::GetFileName($FullLnkPath)
+  $folder = [System.IO.Path]::GetDirectoryName($FullLnkPath)
+
+  try {
+    $shell = New-Object -ComObject Shell.Application
+    $folderItem = $null
+    try {
+      $desk = $shell.NameSpace("shell:Desktop")
+      if ($desk) { $folderItem = $desk.ParseName($name) }
+    } catch {}
+    if (-not $folderItem) {
+      $ns = $shell.NameSpace($folder)
+      if ($ns) { $folderItem = $ns.ParseName($name) }
+    }
+    if (-not $folderItem) { return $false }
+
+    foreach ($verb in @($folderItem.Verbs())) {
+      if (-not $verb.Name) { continue }
+      $n = (($verb.Name) -replace '&', '').Trim()
+      if (
+        $n -eq 'Pin to taskbar' -or
+        $n -eq $koPin -or
+        $n -match '(?i)pin to taskbar' -or
+        ($n -match '(?i)taskbar' -and $n -match '(?i)pin')
+      ) {
+        $verb.DoIt()
+        return $true
+      }
+    }
+  } catch {
+    Write-IconLog ("WARN pin-verb " + $name + " :: " + $_.Exception.Message)
+  }
+  return $false
+}
+
+function Place-OnTaskbarAndStartMenu {
+  param(
+    [string]$SrcLnk,
+    [string]$DestName,
+    [string]$TaskPinDir,
+    [string]$StartMenuDir
+  )
+  if (-not $SrcLnk -or -not (Test-Path -LiteralPath $SrcLnk)) {
+    Write-IconLog ("SKIP taskbar missing src " + $DestName)
+    return $false
+  }
+  if (-not (Test-Path -LiteralPath $TaskPinDir)) {
+    New-Item -ItemType Directory -Force -Path $TaskPinDir | Out-Null
+  }
+  if (-not (Test-Path -LiteralPath $StartMenuDir)) {
+    New-Item -ItemType Directory -Force -Path $StartMenuDir | Out-Null
+  }
+
+  $destTask = Join-Path $TaskPinDir $DestName
+  $destStart = Join-Path $StartMenuDir $DestName
+  Copy-Item -LiteralPath $SrcLnk -Destination $destTask -Force
+  Copy-Item -LiteralPath $SrcLnk -Destination $destStart -Force
+  Write-IconLog ("OK taskbar-copy " + $destTask)
+
+  $pinned = $false
+  try { $pinned = Invoke-PinToTaskbar -FullLnkPath $SrcLnk } catch {}
+  if ($pinned) {
+    Write-IconLog ("OK pin-verb " + $DestName)
+  } else {
+    Write-IconLog ("INFO pin-verb unavailable for " + $DestName + " (folder copy done)")
+  }
+  return $true
 }
 
 try {
@@ -205,6 +295,7 @@ try {
   $chain = ""
   $updTarget = ""
   $primaryDesktop = $desktops[0]
+  $createdUpdateName = $UpdateLnkName
 
   foreach ($desktop in $desktops) {
     $desktopLnk = Join-Path $desktop $LnkName
@@ -220,12 +311,14 @@ try {
     try {
       $updTarget = New-UpdateShortcut -LnkPath $desktopUpdateLnk -ProjectRoot $Root
       Write-IconLog ("OK update-ko " + $desktopUpdateLnk)
+      $createdUpdateName = $UpdateLnkName
       $okCount++
     } catch {
       Write-IconLog ("FAIL update-ko " + $desktopUpdateLnk + " :: " + $_.Exception.Message)
       try {
         $updTarget = New-UpdateShortcut -LnkPath $desktopUpdateAscii -ProjectRoot $Root
         Write-IconLog ("OK update-ascii " + $desktopUpdateAscii)
+        $createdUpdateName = $UpdateLnkNameAscii
         $okCount++
       } catch {
         Write-IconLog ("FAIL update-ascii " + $desktopUpdateAscii + " :: " + $_.Exception.Message)
@@ -255,22 +348,38 @@ try {
     }
   }
 
-  if (-not (Test-Path -LiteralPath $taskPin)) {
-    New-Item -ItemType Directory -Force -Path $taskPin | Out-Null
-  }
+  # ★요건: 작업표시줄에 메인보드 + 버전갱신(바로가기) 둘 다 추가
   $srcBoard = Join-Path $primaryDesktop $LnkName
   if (-not (Test-Path -LiteralPath $srcBoard)) { $srcBoard = Join-Path $Root $LnkName }
-  if (Test-Path -LiteralPath $srcBoard) {
-    Copy-Item -LiteralPath $srcBoard -Destination (Join-Path $taskPin $LnkName) -Force
-    Copy-Item -LiteralPath $srcBoard -Destination (Join-Path $startMenu $LnkName) -Force
-    Write-IconLog ("OK taskbar+startmenu from " + $srcBoard)
+
+  $srcUpdate = Join-Path $primaryDesktop $createdUpdateName
+  if (-not (Test-Path -LiteralPath $srcUpdate)) {
+    $srcUpdate = Join-Path $primaryDesktop $UpdateLnkName
   }
+  if (-not (Test-Path -LiteralPath $srcUpdate)) {
+    $srcUpdate = Join-Path $primaryDesktop $UpdateLnkNameAscii
+  }
+  if (-not (Test-Path -LiteralPath $srcUpdate)) {
+    $srcUpdate = Join-Path $Root $UpdateLnkName
+  }
+  if (-not (Test-Path -LiteralPath $srcUpdate)) {
+    $srcUpdate = Join-Path $Root $UpdateLnkNameAscii
+  }
+
+  $tbBoard = Place-OnTaskbarAndStartMenu -SrcLnk $srcBoard -DestName $LnkName `
+    -TaskPinDir $taskPin -StartMenuDir $startMenu
+  $updDestName = [System.IO.Path]::GetFileName($srcUpdate)
+  if (-not $updDestName) { $updDestName = $UpdateLnkName }
+  $tbUpdate = Place-OnTaskbarAndStartMenu -SrcLnk $srcUpdate -DestName $updDestName `
+    -TaskPinDir $taskPin -StartMenuDir $startMenu
 
   Write-Host ""
   Write-Host ("[VERIFY] desktop dirs tried : {0}" -f $desktops.Count)
   Write-Host ("[VERIFY] shortcuts created : {0}" -f $okCount)
   Write-Host ("[VERIFY] board chain       : {0}" -f $chain)
   Write-Host ("[VERIFY] update target     : {0}" -f $updTarget)
+  Write-Host ("[VERIFY] taskbar board     : {0}" -f $tbBoard)
+  Write-Host ("[VERIFY] taskbar update    : {0}" -f $tbUpdate)
   Write-Host ("[VERIFY] log               : {0}" -f $logPath)
   Write-Host ""
 
@@ -280,10 +389,11 @@ try {
     exit 1
   }
 
-  Write-Host "[DONE] Desktop icons created." -ForegroundColor Green
-  Write-Host "  - AI_Program_Main_Board"
-  Write-Host ("  - " + [System.IO.Path]::GetFileNameWithoutExtension($UpdateLnkName) + "  (or AI_Board_Update)")
-  Write-Host "  - Copies also in project folder if Desktop was blocked."
+  Write-Host "[DONE] Desktop + Taskbar icons created." -ForegroundColor Green
+  Write-Host "  - AI_Program_Main_Board  (main board)"
+  Write-Host ("  - " + [System.IO.Path]::GetFileNameWithoutExtension($updDestName) + "  (version update)")
+  Write-Host "  - Both copied to Taskbar pin folder + Start Menu"
+  Write-Host "  - If taskbar icon missing: right-click desktop icon -> Pin to taskbar"
   Write-Host ""
   exit 0
 } catch {
