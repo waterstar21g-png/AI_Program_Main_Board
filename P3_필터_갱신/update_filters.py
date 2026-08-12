@@ -59,6 +59,8 @@ P3_RUN_LOG_DIR = Path(__file__).resolve().parent / "run-logs"
 P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
 DETAIL_EXCEL_ROWS = 5  # 엑셀 1~5행 매칭 시 세부 로그
 FIRST_COMPARE_LOG_N = 10  # 더망고 처음 10건: 더망고/엑셀 비교 2줄 로그
+# URL클릭 후 상품수 카드 집계(browse_store_count_cards) — 함수·로그는 유지, CALL만 차단(테스트 시간 절약)
+ENABLE_STORE_COUNT_CALL = False
 
 # ★요건: 보드 「더망고 URL」초기값 (검색필터·저장조건 화면)
 DEFAULT_MANGO_URL = (
@@ -124,7 +126,52 @@ class RunResult:
     errors: list[str] = field(default_factory=list)
 
 
-def _log(progress: ProgressFn | None, step: str, message: str) -> None:
+# 실행로그: 주요 단계만 남김 (나머지 상세 로그 억제)
+P3_MAJOR_LOG_ONLY = True
+_MAJOR_STEPS = frozenset(
+    {"주요", "실행", "로직", "오류", "중단", "완료", "샷", "행", "불일치"}
+)
+
+
+def _is_major_log(step: str, message: str) -> bool:
+    """주요 단계 로그만 True — 화면/준비/경고 등 잔여 상세는 제외."""
+    s = (step or "").strip()
+    m = (message or "").strip()
+    if s in ("오류", "중단", "완료", "샷", "주요", "실행", "행"):
+        return True
+    if s == "불일치":
+        return True
+    if "텍스트 찾기" in m or "버튼명 찾기" in m:
+        return True
+    # 번호 단계: 0) … 8)
+    if s in ("로직", "동작", "확인", "준비") and re.match(r"^\d+\)", m):
+        return True
+    if s == "로직" and (
+        m.startswith("갱신")
+        or "매칭" in m
+        or "저장상품수" in m
+        or "수집조건수정" in m
+        or "전체저장" in m
+    ):
+        return True
+    return False
+
+
+def _log(
+    progress: ProgressFn | None,
+    step: str,
+    message: str,
+    *,
+    major: bool | None = None,
+) -> None:
+    """보드/콘솔 로그. P3_MAJOR_LOG_ONLY 이면 주요 단계만 출력."""
+    keep = True if major is True else (
+        False if major is False else (
+            True if not P3_MAJOR_LOG_ONLY else _is_major_log(step, message)
+        )
+    )
+    if not keep:
+        return
     print(f"[{step}] {message}", flush=True)
     if progress:
         progress(step, message)
@@ -276,7 +323,7 @@ def maximize_mango_chrome_window(
         msg += " (CDP 실패·Windows 최대화 시도)"
     if state:
         msg += f" · {state}"
-    _log(progress, "화면", msg)
+    _log(progress, "화면", msg, major=False)
     if dwell_s > 0:
         time.sleep(dwell_s)
 
@@ -316,7 +363,8 @@ def reveal_browser_page(
     msg = f"{step_no}) {action}"
     if state:
         msg += f" · {state}"
-    _log(progress, "화면", msg + " ← 망고 Chrome 창 표시")
+    # 화면 상세는 주요 로그에서 제외 (동작만 수행)
+    _log(progress, "화면", msg + " ← 망고 Chrome 창 표시", major=False)
     if dwell > 0:
         time.sleep(dwell)
 
@@ -1516,15 +1564,47 @@ def _modify_ui_opened(page) -> bool:
 
 
 # 6) 수집조건수정: URL 우측 「전체저장」→ 한글 4글자 우측을 버튼으로 클릭
-EDIT_CLICK_MAX_TRIES = 3  # 같은 좌표(4글자) 재시도
+# ※ 한글 1글자씩 이동하며 N회 시도하는 로직은 삭제됨 — 고정 4글자 1좌표만 사용
+EDIT_CLICK_MAX_TRIES = 3  # 같은 좌표 재클릭(팝업 대기)만 — 글자 이동 없음
 EDIT_CLICK_CHAR_PAD_X = 2  # 전체저장 직후 여유(px)
 EDIT_CLICK_FIXED_CHARS = 4  # ★전체저장 우측으로 한글 4글자 = 수집조건수정 버튼
 
 
-def edit_click_char_steps(attempt: int) -> int:
-    """하위호환 — 항상 고정 4글자(시도 번호와 무관)."""
-    _ = attempt
-    return int(EDIT_CLICK_FIXED_CHARS)
+def _log_text_find_phase(
+    page,
+    progress: ProgressFn | None,
+    shot_dir: Path | None,
+    *,
+    row_no: int,
+    phase: str,
+    kind: str,
+    label: str,
+    found: bool | None = None,
+    detail: str = "",
+) -> None:
+    """텍스트/버튼명 찾기 전·후 — 텍스트 + 스크린샷을 주요 로그에 남긴다.
+
+    kind: '텍스트' | '버튼명'
+    phase: '전' | '후'
+    label: '전체저장' | '수집조건수정'
+    """
+    if phase == "전":
+        msg = f"6) {kind} 찾기 전 · {kind}={label}"
+        tag = f"06_find_{label}_before"
+    else:
+        status = "OK" if found else "FAIL"
+        extra = f" · {detail}" if detail else ""
+        msg = f"6) {kind} 찾기 후 · {kind}={label} · {status}{extra}"
+        tag = f"06_find_{label}_after"
+    _log(progress, "주요", msg, major=True)
+    screenshot_step(
+        page,
+        shot_dir,
+        step_tag=tag,
+        label=msg,
+        row_no=row_no,
+        progress=progress,
+    )
 
 
 def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | None:
@@ -1705,17 +1785,88 @@ def _edit_click_point_from_allsave(
     row_index: int,
     row_url: str,
     *,
-    attempt: int = 1,
+    progress: ProgressFn | None = None,
+    shot_dir: Path | None = None,
+    row_no: int = 0,
+    log_find: bool = True,
 ) -> dict | None:
     """「전체저장」우측으로 한글 4글자 떨어진 곳을 버튼 클릭 좌표로 한다.
 
-    1) 검색필터 URL 바로 우측에서 「전체저장」텍스트 찾기
-    2) 그 우측 한글 4글자 거리에서 「수집조건수정」텍스트 확인
-    3) 그 위치를 버튼으로 가정하고 클릭 좌표 산출
+    1) 검색필터 URL 바로 우측에서 「전체저장」텍스트 찾기 (전/후 로그·샷)
+    2) 「전체저장」옆 「수집조건수정」버튼명 찾기 (전/후 로그·샷)
+    3) 전체저장 우측 한글 4글자 위치를 버튼으로 가정하고 클릭 좌표 산출
     """
-    _ = attempt
     _find_and_mark_row_url(page, row_index, row_url)
+
+    if log_find:
+        _log_text_find_phase(
+            page,
+            progress,
+            shot_dir,
+            row_no=row_no,
+            phase="전",
+            kind="텍스트",
+            label="전체저장",
+        )
+
     geo = _find_allsave_anchor_geometry(page, row_index, row_url)
+
+    if log_find:
+        if geo:
+            detail = (
+                f"x={float(geo.get('left', 0)):.0f}~{float(geo.get('right', 0)):.0f}"
+            )
+            _log_text_find_phase(
+                page,
+                progress,
+                shot_dir,
+                row_no=row_no,
+                phase="후",
+                kind="텍스트",
+                label="전체저장",
+                found=True,
+                detail=detail,
+            )
+        else:
+            _log_text_find_phase(
+                page,
+                progress,
+                shot_dir,
+                row_no=row_no,
+                phase="후",
+                kind="텍스트",
+                label="전체저장",
+                found=False,
+            )
+
+    if log_find:
+        _log_text_find_phase(
+            page,
+            progress,
+            shot_dir,
+            row_no=row_no,
+            phase="전",
+            kind="버튼명",
+            label="수집조건수정",
+        )
+
+    found_edit = bool(geo and geo.get("foundEditLabel"))
+    if log_find:
+        detail = ""
+        if found_edit and geo is not None and geo.get("editMidX") is not None:
+            detail = f"mid=({float(geo['editMidX']):.0f},{float(geo.get('editMidY') or 0):.0f})"
+        _log_text_find_phase(
+            page,
+            progress,
+            shot_dir,
+            row_no=row_no,
+            phase="후",
+            kind="버튼명",
+            label="수집조건수정",
+            found=found_edit,
+            detail=detail,
+        )
+
     if not geo:
         return None
     char_w = float(geo.get("charW") or 14.0)
@@ -1738,10 +1889,10 @@ def _edit_click_point_from_allsave(
         "x": x,
         "y": y,
         "char_w": char_w,
-        "char_steps": steps,
+        "char_offset": steps,
         "start_x": start_x,
         "allsave_right": float(geo["right"]),
-        "found_edit_label": bool(geo.get("foundEditLabel")),
+        "found_edit_label": found_edit,
         "offset": int(round(x - start_x)),
     }
 
@@ -1763,12 +1914,13 @@ def click_edit_on_row(
     """6) URL 우측 「전체저장」→ 한글 4글자 우측을 「수집조건수정」버튼으로 클릭.
 
     1) 검색필터 URL 바로 우측에서 텍스트 「전체저장」찾기
-    2) 「전체저장」우측 한글 4글자 거리에서 「수집조건수정」텍스트 확인
-    3) 그 위치를 버튼으로 가정하고 클릭 (href 대체 절대 금지)
+    2) 「전체저장」옆 버튼명 「수집조건수정」찾기
+    3) 전체저장 우측 한글 4글자 위치를 버튼으로 가정하고 클릭 (href 금지)
     """
     _ = edit_href
     tries = max(1, int(max_tries))
     gap = max(0.2, float(try_interval_s))
+    logged_find = False
 
     for attempt in range(1, tries + 1):
         if stop_requested():
@@ -1776,14 +1928,16 @@ def click_edit_on_row(
 
         info = _find_and_mark_edit_button(page, row_index, row_url)
         point = _edit_click_point_from_allsave(
-            page, row_index, row_url, attempt=attempt
+            page,
+            row_index,
+            row_url,
+            progress=progress,
+            shot_dir=shot_dir,
+            row_no=row_no,
+            log_find=not logged_find,
         )
+        logged_find = True
         if point is None:
-            _log(
-                progress,
-                "로직",
-                f"6) '전체저장' 좌표 미검출 · 시도 {attempt}/{tries} — 버튼 폴백",
-            )
             if not info.get("ok"):
                 if attempt < tries:
                     time.sleep(gap)
@@ -1796,12 +1950,11 @@ def click_edit_on_row(
                 if attempt < tries:
                     time.sleep(gap)
                 continue
-            # 폴백: 마킹된 수집조건수정 버튼 중심
             point = {
                 "x": float(bbox["x"]) + float(bbox["width"]) / 2.0,
                 "y": float(bbox["y"]) + float(bbox["height"]) / 2.0,
                 "char_w": 14.0,
-                "char_steps": int(EDIT_CLICK_FIXED_CHARS),
+                "char_offset": int(EDIT_CLICK_FIXED_CHARS),
                 "found_edit_label": True,
                 "offset": 0,
             }
@@ -1814,16 +1967,14 @@ def click_edit_on_row(
 
         x = float(point["x"])
         y = float(point["y"])
-        steps = int(point.get("char_steps") or EDIT_CLICK_FIXED_CHARS)
-        char_w = float(point.get("char_w") or 14.0)
-        found_lbl = "Y" if point.get("found_edit_label") else "N"
-        _log(
-            progress,
-            "로직",
-            f"6) 수집조건수정 클릭 시도 {attempt}/{tries} · "
-            f"전체저장우측 +{steps}글자(≈{char_w:.0f}px) · "
-            f"수집조건수정텍스트={found_lbl} → ({x:.0f},{y:.0f})",
-        )
+        steps = int(point.get("char_offset") or EDIT_CLICK_FIXED_CHARS)
+        if attempt == 1:
+            _log(
+                progress,
+                "로직",
+                f"6) 수집조건수정 클릭 · 전체저장우측 +{steps}글자 → ({x:.0f},{y:.0f})",
+                major=True,
+            )
 
         popup = None
         try:
@@ -1834,23 +1985,15 @@ def click_edit_on_row(
             popup = None
             try:
                 page.mouse.click(x, y)
-            except Exception as e:
-                _log(
-                    progress,
-                    "로직",
-                    f"6) 좌표클릭 예외 시도{attempt}: {str(e).split(chr(10))[0][:100]}",
-                )
+            except Exception:
+                pass
 
         if popup is not None:
             try:
                 popup.wait_for_load_state("domcontentloaded", timeout=12_000)
             except Exception:
                 pass
-            _log(
-                progress,
-                "로직",
-                f"6) 팝업창 열림 · url={(popup.url or '')[:120]}",
-            )
+            _log(progress, "로직", "6) 수집조건수정 팝업 열림", major=True)
             reveal_browser_page(
                 popup,
                 progress,
@@ -1875,15 +2018,10 @@ def click_edit_on_row(
             except Exception:
                 pass
             if page_shows_not_found(page):
-                _log(progress, "오류", "6) 팝업 not found — 중단 (href 재시도 없음)")
+                _log(progress, "오류", "6) 팝업 not found — 중단")
                 return False
             if _modify_ui_opened(page):
-                _log(
-                    progress,
-                    "로직",
-                    f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · "
-                    f"전체저장우측 +{steps}글자",
-                )
+                _log(progress, "로직", "6) 수집조건수정 팝업 확인 OK", major=True)
                 if shot_dir is not None and shot_count > 0:
                     screenshot_after_edit_click_series(
                         page,
@@ -1898,15 +2036,10 @@ def click_edit_on_row(
             time.sleep(0.25)
 
         if page_shows_not_found(page):
-            _log(progress, "오류", "6) 팝업 not found — 중단 (href 재시도 없음)")
+            _log(progress, "오류", "6) 팝업 not found — 중단")
             return False
         if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=800):
-            _log(
-                progress,
-                "로직",
-                f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · "
-                f"전체저장우측 +{steps}글자",
-            )
+            _log(progress, "로직", "6) 수집조건수정 팝업 확인 OK", major=True)
             if shot_dir is not None and shot_count > 0:
                 screenshot_after_edit_click_series(
                     page,
@@ -1919,17 +2052,10 @@ def click_edit_on_row(
                 )
             return True
 
-        _log(
-            progress,
-            "로직",
-            f"6) 팝업 미오픈 · 같은 좌표(+{EDIT_CLICK_FIXED_CHARS}글자) 재시도",
-        )
-
     _log(
         progress,
         "오류",
-        f"6) 수집조건수정 클릭 {tries}회 실패 — "
-        f"전체저장 우측 +{EDIT_CLICK_FIXED_CHARS}글자 버튼 클릭에도 팝업 미오픈",
+        f"6) 수집조건수정 클릭 실패 — 전체저장 우측 +{EDIT_CLICK_FIXED_CHARS}글자",
     )
     return False
 
@@ -3091,20 +3217,31 @@ def run_update(
                     progress=progress,
                 )
 
-                # 2)~5) 팝업닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교 (창 표시)
-                try:
-                    browse_store_count_cards(
-                        store,
-                        excel_count=ex.collectible,
-                        progress=progress,
-                        shot_dir=shot_dir,
-                        row_no=i,
-                    )
-                except Exception as e:  # noqa: BLE001
+                # 2)~5) 팝업닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교
+                # ※ browse_store_count_cards 함수·상품수 카운트 로그는 유지.
+                #    ENABLE_STORE_COUNT_CALL=False 이면 CALL만 막아 테스트 시간 절약.
+                if ENABLE_STORE_COUNT_CALL:
+                    try:
+                        browse_store_count_cards(
+                            store,
+                            excel_count=ex.collectible,
+                            progress=progress,
+                            shot_dir=shot_dir,
+                            row_no=i,
+                        )
+                    except Exception as e:  # noqa: BLE001
+                        _log(
+                            progress,
+                            "경고",
+                            f"행{i} 스토어 스크롤/상품수 집계 예외: "
+                            f"{str(e).split(chr(10))[0][:120]}",
+                        )
+                else:
                     _log(
                         progress,
-                        "경고",
-                        f"행{i} 스토어 스크롤/상품수 집계 예외: {str(e).split(chr(10))[0][:120]}",
+                        "로직",
+                        "2)~5) 상품수 카운트 CALL 생략 (테스트시간절약 · 로그코드유지)",
+                        major=True,
                     )
 
                 # 더망고 목록 탭 재연결 후 수집조건수정
