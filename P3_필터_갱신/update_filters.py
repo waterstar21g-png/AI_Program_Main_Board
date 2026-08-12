@@ -567,23 +567,20 @@ def set_save_count(
     progress: ProgressFn | None = None,
     row_no: int = 0,
 ) -> bool:
-    """팝업 '검색필터 수정'의 저장상품수 입력필드에 상품개수 입력.
+    """저장상품수 입력칸: 현재 숫자(스크린샷의 '3')가 있는 칸을 찾아 상품수값으로 대체.
 
-    스크린샷 기준 입력필드:
-      저장상품수 | 검색결과 상위 [ 3 ] 개 상품만 저장
-    → '검색결과 상위' 와 '개' 사이에 있는 숫자 input (현재값 예: 3)
-
-    판단한 입력그리드(행) 근접 스크린샷을 로그에 출력한다.
+    UI: 저장상품수 | 검색결과 상위 [ 3 ] 개 상품만 저장
+    1) value가 '3'(또는 숫자)인 input 을 찾음
+    2) 그 칸의 값을 상품수(target)로 덮어씀
     """
     target = str(int(value))
 
-    # 팝업/iframe 포함 수정 화면 찾기
     work, kind = resolve_modify_target(page)
-    if kind == "frame" or (kind == "page" and work is not page):
-        _log(progress, "확인", f"저장상품수 대상={kind}")
     wait_for_save_count_ready(work, timeout_ms=8_000)
 
-    loc = find_save_count_locator(work)
+    # ★요건: 숫자 "3" 이 들어있는 칸 우선 탐색
+    loc = find_save_count_locator(work, prefer_value="3")
+    shot_page = page if kind == "frame" else work
 
     before_val = ""
     if loc is not None:
@@ -591,9 +588,14 @@ def set_save_count(
             before_val = (loc.input_value(timeout=500) or "").strip()
         except Exception:
             before_val = ""
+        _log(
+            progress,
+            "로직",
+            f"3) 저장상품수 칸 발견 현재값={before_val or '?'} → 상품수값={target}",
+        )
         if shot_dir is not None:
             screenshot_save_count_grid(
-                work if kind != "frame" else page,
+                shot_page,
                 loc,
                 shot_dir,
                 tag="before",
@@ -602,37 +604,82 @@ def set_save_count(
                 progress=progress,
             )
 
-    def _fill_loc(el) -> bool:
+    def _replace_value(el) -> bool:
+        """기존 숫자(3 등)를 지우고 상품수값으로 대체 입력."""
         try:
-            el.click(timeout=1500)
+            el.scroll_into_view_if_needed(timeout=1500)
+        except Exception:
+            pass
+        try:
+            el.click(timeout=1500, force=True)
+        except Exception:
             try:
-                el.press("Control+a")
+                el.focus()
             except Exception:
                 pass
+        # 전체 선택 후 삭제 → 새 값 입력 (자동완성 대비 Escape)
+        for key in ("Control+a", "Meta+a"):
+            try:
+                el.press(key)
+                break
+            except Exception:
+                continue
+        try:
+            el.press("Backspace")
+        except Exception:
+            pass
+        try:
             el.fill("")
-            el.type(target, delay=20)
-            try:
-                got = (el.input_value(timeout=800) or "").strip()
-                if got == target:
-                    return True
-            except Exception:
-                pass
-            el.fill(target)
-            got2 = (el.input_value(timeout=800) or "").strip()
-            return got2 == target
+        except Exception:
+            pass
+        try:
+            el.type(target, delay=30)
         except Exception:
             try:
                 el.fill(target)
-                got3 = (el.input_value(timeout=500) or "").strip()
-                return got3 == target or True
             except Exception:
                 return False
+        # 브라우저 자동완성(30/3/35) 닫기
+        try:
+            el.press("Escape")
+        except Exception:
+            pass
+        try:
+            page.keyboard.press("Escape")
+        except Exception:
+            pass
+        time.sleep(0.15)
+        try:
+            got = (el.input_value(timeout=800) or "").strip()
+            if got == target:
+                return True
+        except Exception:
+            pass
+        # JS 강제 대체
+        try:
+            ok = bool(
+                el.evaluate(
+                    """(el, want) => {
+                      el.focus();
+                      el.value = '';
+                      el.value = String(want);
+                      el.dispatchEvent(new Event('input', {bubbles:true}));
+                      el.dispatchEvent(new Event('change', {bubbles:true}));
+                      el.blur();
+                      return (el.value || '').trim() === String(want);
+                    }""",
+                    target,
+                )
+            )
+            return ok
+        except Exception:
+            return False
 
     filled = False
-    if loc is not None and _fill_loc(loc):
+    if loc is not None and _replace_value(loc):
         filled = True
     else:
-        # JS 폴백 (page 또는 frame evaluate)
+        # JS: value==='3' 인 칸을 우선 찾아 상품수값으로 대체
         try:
             filled = bool(
                 work.evaluate(
@@ -648,39 +695,35 @@ def set_save_count(
                       const setVal = (inp) => {
                         inp.focus();
                         try { inp.select(); } catch (e) {}
+                        inp.value = '';
                         inp.value = want;
                         inp.dispatchEvent(new Event('input', { bubbles: true }));
                         inp.dispatchEvent(new Event('change', { bubbles: true }));
                         try { inp.blur(); } catch (e) {}
                         return (inp.value || '').trim() === want;
                       };
-                      const trs = Array.from(document.querySelectorAll('tr'));
-                      for (const tr of trs) {
-                        const tAll = (tr.innerText || '').replace(/\\s+/g, '');
-                        if (!(tAll.includes('저장상품수') ||
-                              (tAll.includes('검색결과') && tAll.includes('상위')))) {
-                          continue;
-                        }
-                        const inputs = Array.from(tr.querySelectorAll(
-                          'input[type="text"], input[type="number"], input:not([type])'
-                        )).filter(isNumInput);
-                        let pick = inputs.find(i => /^\\d+$/.test((i.value || '').trim()))
-                          || inputs.find(i => {
-                            const n = ((i.name || '') + (i.id || '')).toLowerCase();
-                            return /limit|count|save|goods|num|qty/.test(n);
-                          })
-                          || inputs[0];
-                        if (pick && setVal(pick)) return true;
-                      }
-                      // 문구 '개 상품만 저장' 근처
-                      const allInp = Array.from(document.querySelectorAll(
+                      const inSaveRow = (inp) => {
+                        const tr = inp.closest('tr');
+                        const scope = tr || inp.closest('td,div,li') || inp.parentElement;
+                        const t = ((scope && scope.innerText) || '').replace(/\\s+/g, '');
+                        return t.includes('저장상품수')
+                          || (t.includes('검색결과') && t.includes('상위'))
+                          || t.includes('개상품만저장')
+                          || (t.includes('상위') && t.includes('개'));
+                      };
+                      const all = Array.from(document.querySelectorAll(
                         'input[type="text"], input[type="number"], input:not([type])'
                       )).filter(isNumInput);
-                      for (const inp of allInp) {
-                        const parent = inp.closest('td,tr,div,li') || inp.parentElement;
-                        const pt = ((parent && parent.innerText) || '');
-                        if (/상위/.test(pt) && /개/.test(pt) && setVal(inp)) return true;
-                      }
+
+                      // 1) 정확히 value==='3' 이고 저장상품수 문맥
+                      let pick = all.find(i => (i.value || '').trim() === '3' && inSaveRow(i));
+                      // 2) value==='3' (문맥 느슨)
+                      if (!pick) pick = all.find(i => (i.value || '').trim() === '3');
+                      // 3) 저장상품수 행의 숫자 value
+                      if (!pick) pick = all.find(i => inSaveRow(i) && /^\\d+$/.test((i.value || '').trim()));
+                      // 4) 저장상품수 행 첫 숫자 input
+                      if (!pick) pick = all.find(i => inSaveRow(i));
+                      if (pick) return setVal(pick);
                       return false;
                     }""",
                     int(value),
@@ -689,7 +732,7 @@ def set_save_count(
         except Exception:
             filled = False
         if filled:
-            loc = find_save_count_locator(work)
+            loc = find_save_count_locator(work, prefer_value=target)
 
     if filled and loc is not None and shot_dir is not None:
         after_val = target
@@ -697,23 +740,27 @@ def set_save_count(
             after_val = (loc.input_value(timeout=500) or "").strip() or target
         except Exception:
             pass
+        _log(
+            progress,
+            "로직",
+            f"3) 저장상품수 대체완료 {before_val or '3'} → {after_val}",
+        )
         screenshot_save_count_grid(
-            work if kind != "frame" else page,
+            shot_page,
             loc,
             shot_dir,
             tag="after",
             row_no=row_no,
-            note=f"{before_val or '?'}→{after_val}",
+            note=f"{before_val or '3'}→{after_val}",
             progress=progress,
         )
 
     if not filled:
-        # 실패 시에도 화면 샷을 남겨 원인 파악
         screenshot_step(
             page,
             shot_dir,
             step_tag="03_save_count_not_found",
-            label="3)저장상품수 입력칸 미검출 화면",
+            label="3)저장상품수(값3) 칸 미검출/대체실패",
             row_no=row_no,
             progress=progress,
         )
@@ -729,10 +776,109 @@ def new_shot_dir() -> Path:
     return d
 
 
-def find_save_count_locator(page):
-    """저장상품수 숫자 입력칸 locator (검색결과 상위 [N] 개)."""
+def find_save_count_locator(page, prefer_value: str = "3"):
+    """저장상품수 숫자 입력칸 — 우선 현재값이 prefer_value(기본 '3')인 input.
+
+    스크린샷: 검색결과 상위 [ 3 ] 개 상품만 저장
+    """
+    prefer = (prefer_value or "3").strip()
+
+    # 0) JS로 value===prefer (문맥: 저장상품수/상위/개) 인 요소 핸들
+    try:
+        handle = page.evaluate_handle(
+            """(prefer) => {
+              const isNumInput = (inp) => {
+                if (!inp) return false;
+                const ty = (inp.getAttribute('type') || 'text').toLowerCase();
+                if (!(ty === 'text' || ty === 'number' || ty === '')) return false;
+                if (inp.disabled || inp.readOnly) return false;
+                return true;
+              };
+              const inCtx = (inp) => {
+                const tr = inp.closest('tr');
+                const scope = tr || inp.closest('td,div') || inp.parentElement;
+                const t = ((scope && scope.innerText) || '').replace(/\\s+/g, '');
+                return t.includes('저장상품수')
+                  || (t.includes('검색결과') && t.includes('상위'))
+                  || (t.includes('상위') && t.includes('개'));
+              };
+              const all = Array.from(document.querySelectorAll(
+                'input[type="text"], input[type="number"], input:not([type])'
+              )).filter(isNumInput);
+              return all.find(i => (i.value || '').trim() === String(prefer) && inCtx(i))
+                || all.find(i => (i.value || '').trim() === String(prefer))
+                || all.find(i => inCtx(i) && /^\\d+$/.test((i.value || '').trim()))
+                || all.find(i => inCtx(i))
+                || null;
+            }""",
+            prefer,
+        )
+        el = handle.as_element()
+        if el is not None:
+            # ElementHandle → Locator 대신 직접 쓰기 위해 wrapper
+            # Playwright: page.locator로 재검색이 더 안정적
+            pass
+    except Exception:
+        handle = None
+        el = None
+
+    # 1) value=prefer 정확 매칭 (저장상품수 행)
+    try:
+        loc = page.locator(
+            "xpath=//tr[.//text()[contains(.,'저장상품수')] or "
+            ".//*[contains(normalize-space(.),'저장상품수')]]"
+            f"//input[(@type='text' or @type='number' or not(@type)) and @value='{prefer}']"
+        ).first
+        if loc.count() > 0 and loc.is_visible(timeout=400):
+            return loc
+    except Exception:
+        pass
+
+    # 2) '검색결과 상위' 셀 안 value=prefer
+    try:
+        loc = page.locator(
+            "xpath=//td[contains(.,'검색결과') and contains(.,'상위') and contains(.,'개')]"
+            f"//input[(@type='text' or @type='number' or not(@type)) and @value='{prefer}']"
+        ).first
+        if loc.count() > 0 and loc.is_visible(timeout=400):
+            return loc
+    except Exception:
+        pass
+
+    # 3) 화면에 보이는 input 중 value가 prefer 인 것 (런타임 value)
+    try:
+        cands = page.locator(
+            'input[type="text"], input[type="number"], input:not([type])'
+        )
+        n = min(cands.count(), 40)
+        for i in range(n):
+            el = cands.nth(i)
+            try:
+                if not el.is_visible(timeout=150):
+                    continue
+                v = (el.input_value(timeout=200) or "").strip()
+                if v != prefer:
+                    continue
+                # 부모 텍스트에 상위/개 있으면 채택
+                ok_ctx = el.evaluate(
+                    """(el) => {
+                      const tr = el.closest('tr');
+                      const t = ((tr && tr.innerText) || el.parentElement?.innerText || '')
+                        .replace(/\\s+/g, '');
+                      return t.includes('저장상품수')
+                        || (t.includes('상위') && t.includes('개'))
+                        || t.includes('검색결과');
+                    }"""
+                )
+                if ok_ctx:
+                    return el
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+    # 4) 기존 폴백: 저장상품수 행의 숫자 input
     selectors = (
-        # 가장 구체적: 상위 … input … 개
         "xpath=//td[contains(.,'검색결과') and contains(.,'상위') and contains(.,'개')]"
         "//input[@type='text' or @type='number' or not(@type)]",
         "xpath=//tr[.//th[contains(normalize-space(.),'저장상품수')] or "
@@ -742,13 +888,6 @@ def find_save_count_locator(page):
         "//input[@type='text' or @type='number' or not(@type)]",
         "xpath=//*[contains(normalize-space(.),'개 상품만 저장')]"
         "/preceding::input[@type='text' or @type='number' or not(@type)][1]",
-        'input[name*="limit"]',
-        'input[name*="count"]',
-        'input[name*="save"]',
-        'input[name*="goods"]',
-        'input[name*="num"]',
-        'input[name*="Limit"]',
-        'input[name*="Count"]',
     )
     for sel in selectors:
         try:
@@ -757,11 +896,9 @@ def find_save_count_locator(page):
                 continue
             if not loc.is_visible(timeout=400):
                 continue
-            # 숫자성 value 이거나 비어 있으면 OK
             try:
                 v = (loc.input_value(timeout=300) or "").strip()
                 if v and not re.fullmatch(r"\d+", v):
-                    # URL 같은 긴 텍스트면 스킵
                     if len(v) > 8 or "http" in v.lower():
                         continue
             except Exception:
