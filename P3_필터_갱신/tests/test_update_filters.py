@@ -165,23 +165,30 @@ def test_filters_equal():
 
 
 def test_mango_url_default_and_save(tmp_path: Path, monkeypatch):
-    """망고 URL 기본값 + 변경값 저장/복원."""
+    """망고 URL 초기값(검색필터 화면) + 변경값 저장/복원."""
     import update_filters as uf
 
     path = tmp_path / ".last_mango_url"
     monkeypatch.setattr(uf, "LAST_MANGO_URL_PATH", path)
     assert load_mango_url_default() == DEFAULT_MANGO_URL
-    assert DEFAULT_MANGO_URL.startswith("https://tmg1898.cafe24.com/")
-    save_mango_url("https://tmg1898.cafe24.com/mall/admin/shop/filter.php")
-    assert load_mango_url_default().endswith("filter.php")
+    assert "getGoodsCategory.php" in DEFAULT_MANGO_URL
+    assert "pmode=filter_delete" in DEFAULT_MANGO_URL
+    assert "site_id=zara_de" in DEFAULT_MANGO_URL
+    # 예전 admin.php 초기값이 저장돼 있어도 새 초기값 사용
+    path.write_text(
+        "https://tmg1898.cafe24.com/mall/admin/admin.php\n", encoding="utf-8"
+    )
+    assert load_mango_url_default() == DEFAULT_MANGO_URL
+    save_mango_url("https://tmg1898.cafe24.com/mall/admin/shop/custom.php")
+    assert load_mango_url_default().endswith("custom.php")
 
 
 def test_reveal_browser_page_brings_front():
-    """P2와 동일 — Chrome 탭/팝업을 bring_to_front 로 보여 준다."""
+    """현재 Chrome 탭/팝업을 bring_to_front 로 보여 준다."""
     from playwright.sync_api import sync_playwright
-    from update_filters import describe_page_state, ensure_mango_ready_like_p2, reveal_browser_page
+    from update_filters import attach_current_mango_page, describe_page_state, reveal_browser_page
 
-    assert callable(ensure_mango_ready_like_p2)
+    assert callable(attach_current_mango_page)
     logs: list[tuple[str, str]] = []
 
     def progress(step: str, msg: str) -> None:
@@ -205,59 +212,30 @@ def test_reveal_browser_page_brings_front():
     assert "팝업테스트" in state or "url=" in state
 
 
-def test_ensure_mango_ready_calls_p2_helpers():
-    """P3 망고 준비는 P2 확장설정·세션재사용 헬퍼를 호출한다."""
-    from update_filters import ensure_mango_ready_like_p2
-
-    calls: list[str] = []
-
-    class FakePage:
-        url = "https://tmg1898.cafe24.com/mall/admin/admin.php"
-        context = object()
-
-        def locator(self, _sel):
-            class L:
-                def count(self_inner):
-                    return 0
-
-            return L()
-
-        def bring_to_front(self):
-            calls.append("bring")
-
-        def wait_for_load_state(self, *_a, **_k):
-            return None
+def test_attach_current_mango_requires_open_cdp():
+    """CDP Chrome이 없으면 로그인/진입 없이 오류로 안내한다."""
+    from update_filters import attach_current_mango_page
 
     class FakeP2:
-        ADMIN_HOST = "tmg1898.cafe24.com"
-        MAIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin.php"
-        LOGIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin_login.php"
+        CDP_URL = "http://127.0.0.1:9222"
 
         @staticmethod
-        def ensure_mango_extension_settings(context, shot_ctx=None):
-            calls.append("ext")
+        def cdp_port_open():
+            return False
 
-        @staticmethod
-        def refresh_if_closed(page):
-            calls.append("refresh")
-            return page
+    class FakePw:
+        class chromium:
+            @staticmethod
+            def connect_over_cdp(_url):
+                raise AssertionError("CDP 없을 때 connect 하면 안 됨")
 
-        @staticmethod
-        def safe_goto(page, url):
-            calls.append(f"goto:{url}")
-
-        @staticmethod
-        def wait_for_user_login(page):
-            calls.append("login")
-            return page
-
-    page = FakePage()
-    out = ensure_mango_ready_like_p2(FakeP2(), page, progress=None)
-    assert out is page
-    assert "ext" in calls
-    assert "refresh" in calls
-    # 이미 로그인된 admin.php 이면 login 대기 생략
-    assert "login" not in calls
+    try:
+        attach_current_mango_page(FakeP2(), FakePw(), progress=None)
+        assert False, "RuntimeError 가 나야 함"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "열려 있는 더망고 Chrome" in msg
+        assert "로그인" in msg
 
 
 def test_read_excel_and_lookup(tmp_path: Path):

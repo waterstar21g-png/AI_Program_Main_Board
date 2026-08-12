@@ -1659,7 +1659,10 @@ class BoardApp(tk.Tk):
         )
         tk.Label(
             search,
-            text="망고 URL이 기본으로 채워집니다. 필요하면 수정하세요 (변경값 기억)",
+            text=(
+                "망고 URL 초기값=검색필터(저장조건) 화면. "
+                "작업은 현재 열린 망고 화면에서 진행(로그인·진입 없음)"
+            ),
             bg="#ffffff",
             fg="#64748b",
             anchor="w",
@@ -1989,13 +1992,7 @@ class BoardApp(tk.Tk):
             messagebox.showinfo("안내", "엑셀 파일을 선택하세요.")
             return
         mango = self.var_p3_mango_url.get().strip()
-        if not mango:
-            messagebox.showinfo(
-                "안내",
-                "더망고 URL(검색필터·저장조건 화면)을 입력하세요.",
-            )
-            return
-        if not mango.lower().startswith("http"):
+        if mango and not mango.lower().startswith("http"):
             messagebox.showerror("오류", "더망고 URL은 http(s)로 시작해야 합니다.")
             return
         if self._p3_proc and self._p3_proc.poll() is None:
@@ -2010,11 +2007,12 @@ class BoardApp(tk.Tk):
             messagebox.showerror("오류", f"실행 파일 없음:\n{update_py}")
             return
 
-        # 변경한 망고 URL을 다음 실행 기본값으로 저장
-        try:
-            p3_update.save_mango_url(mango)
-        except Exception:
-            pass
+        # 망고 URL 초기값/변경값 기억 (화면 이동에는 쓰지 않음)
+        if mango:
+            try:
+                p3_update.save_mango_url(mango)
+            except Exception:
+                pass
 
         try:
             self._p3_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
@@ -2025,9 +2023,9 @@ class BoardApp(tk.Tk):
             sys.executable,
             str(update_py),
             path,
-            "--mango-url",
-            mango,
         ]
+        if mango:
+            args.extend(["--mango-url", mango])
         try:
             add_paths([path])
             set_selected(path)
@@ -2038,15 +2036,18 @@ class BoardApp(tk.Tk):
         self.p3_status.configure(
             text=(
                 f"작업시작: {Path(path).name} / 총 {len(self._p3_excel_rows)}행 — "
-                "P2와 동일: Chrome(CDP)에서 더망고 로그인·팝업 확인"
+                "현재 열린 망고 화면에서 진행 (로그인·진입 없음)"
             ),
             fg="#15803d",
         )
         self._append_p3_log("실행", f"엑셀={path}")
-        self._append_p3_log("실행", f"더망고URL={mango}")
         self._append_p3_log(
             "실행",
-            "P2 망고연동 재현: CDP Chrome · 확장설정 · 로그인대기 · 필터URL",
+            f"더망고URL={mango or '(현재 화면)'}",
+        )
+        self._append_p3_log(
+            "실행",
+            "현재 망고 화면만 사용 — 로그인·URL 진입 없음",
         )
 
         try:
