@@ -593,14 +593,12 @@ class BoardApp(tk.Tk):
             return
         ts = time.strftime("%H:%M:%S")
         tag = ()
-        s = (step or "").upper()
-        if s in ("오류", "ERROR", "FAIL", "중단"):
-            tag = ("err",) if s != "중단" else ()
-        elif s in ("완료", "OK") or "완료" in (message or ""):
+        s = (step or "").strip()
+        su = s.upper()
+        if su in ("오류", "ERROR", "FAIL") or s == "오류":
+            tag = ("err",)
+        elif s in ("완료", "최종", "OK") or "완료" in (message or ""):
             tag = ("ok",)
-        if s == "중단":
-            # 주황 계열은 태그 없이 메시지로 구분
-            pass
         item = tv.insert("", "end", values=(ts, step, message), tags=tag)
         tv.see(item)
 

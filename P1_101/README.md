@@ -32,3 +32,11 @@ python extract.py D:\path\to\category.xlsx --headless
 3. **3초 대기**
 4. 화면에 노출된 상품수 파싱
 5. 엑셀 해당 행 UPDATE → 저장
+
+## 실행로그 최종출력
+
+행마다 · 종료 시 일괄:
+
+```
+[최종] 상위 최종 카테고리명=MEN 스니커즈 · 상품갯수=77 · url=https://...
+```
