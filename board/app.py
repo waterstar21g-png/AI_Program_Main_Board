@@ -346,6 +346,12 @@ class BoardApp(tk.Tk):
                 self._p2_proc.terminate()
         except Exception:
             pass
+        try:
+            if self._p3_proc and self._p3_proc.poll() is None:
+                self._p3_stop_flag().write_text("stop\n", encoding="utf-8")
+                self._p3_proc.terminate()
+        except Exception:
+            pass
 
         ok, detail = launch_external_updater(ROOT, wait_pid=os.getpid())
         if not ok:
