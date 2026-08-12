@@ -188,6 +188,11 @@ def _red(message: str) -> str:
     return f"{RED_PREFIX}{message}"
 
 
+def _emit_progress_row(ordinal: int) -> None:
+    """보드 엑셀 목록에 진행 화살표(▶)를 표시할 행 번호 (1-based, 0=해제)."""
+    print(f"##META##진행##{int(ordinal or 0)}", flush=True)
+
+
 def _step_no_of(message: str) -> int:
     """"N) ..." 형태면 N, 그 외(단계 표기 없음)는 0."""
     m = re.match(r"^(\d+)\)", message or "")
@@ -2516,44 +2521,6 @@ def set_save_count(
     return filled
 
 
-def verify_save_count(
-    page,
-    value: int,
-    *,
-    progress: ProgressFn | None = None,
-    retry: bool = True,
-) -> str:
-    """저장 직전 「저장상품수」 칸의 실제 값을 읽어 돌려준다 (다르면 1회 재입력).
-
-    ★입력 직후 값이 원복(예: 3)된 채로 '저장하기'를 누르면 엉뚱한 수치가 저장된다.
-    그래서 저장 전에 화면 값을 확인하고, 목표값이 아니면 다시 채운 뒤 재확인한다.
-    """
-    target = str(int(value))
-
-    def _read() -> str:
-        work, _kind = resolve_modify_target(page)
-        loc = find_save_count_locator(work, prefer_value=target)
-        if loc is None:
-            return ""
-        try:
-            return (loc.input_value(timeout=800) or "").strip()
-        except Exception:  # noqa: BLE001
-            return ""
-
-    got = _read()
-    if got == target or not retry:
-        return got
-    _log(
-        progress,
-        "로직",
-        f"5) 저장상품수 확인 {got or '?'} ≠ 목표 {target} → 재입력",
-    )
-    set_save_count(page, int(value), progress=progress)
-    got = _read()
-    _log(progress, "로직", f"5) 저장상품수 재확인 화면값={got or '?'} · 목표={target}")
-    return got
-
-
 def new_shot_dir() -> Path:
     """P3 실행별 스크린샷 폴더."""
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -3344,6 +3311,9 @@ def run_update(
                     _log(progress, "중단", "사용자 중단 요청")
                     break
 
+                # 화면 엑셀 목록에 지금 작업 중인 행 표시 (▶)
+                _emit_progress_row(i)
+
                 # 2) 엑셀 URL KEY → 망고행 찾기 (같은 URL 행이 여러 개면 전체 갱신)
                 matches = find_demango_rows_for_excel(
                     page, ex, progress=progress, done_keys=done_keys
@@ -3591,38 +3561,6 @@ def run_update(
                         _return_to_list(page, mango)
                         continue
 
-                    # ★저장 직전 값 검증 — 화면 값이 목표값이 아니면 저장하지 않는다
-                    #   (원복된 값 3 으로 저장돼 버리던 사고 방지)
-                    verified = verify_save_count(
-                        page, target, progress=progress, retry=True
-                    )
-                    if verified != str(target):
-                        result.failed += 1
-                        _log(
-                            progress,
-                            "오류",
-                            _red(
-                                f"엑셀{ex.excel_row}행 · 5) 저장상품수 확인 실패 — 저장하지 않음 · "
-                                f"화면값={verified or '?'} · 목표저장상품수={target} · "
-                                f"필터={d_filter} · KEY={key_short}"
-                            ),
-                        )
-                        screenshot_step(
-                            page,
-                            shot_dir,
-                            step_tag="05_save_count_mismatch",
-                            label=f"5)저장상품수 불일치 화면값={verified or '?'} 목표={target}",
-                            row_no=i,
-                            progress=progress,
-                        )
-                        try:
-                            page.keyboard.press("Escape")
-                        except Exception:
-                            pass
-                        _return_to_list(page, mango)
-                        continue
-                    count_io["after"] = verified
-
                     # 5) LABEL '저장하기' 버튼 클릭 (★'저장'이 아닌 '저장하기' 텍스트를 찾아 클릭)
                     dialog_state = attach_native_dialog_handler(page)
                     if not click_save_button(page):
@@ -3755,6 +3693,7 @@ def run_update(
         return result
 
     clear_stop_flag()
+    _emit_progress_row(0)
     result.ok = result.updated > 0 and not result.errors
     _log(
         progress,
