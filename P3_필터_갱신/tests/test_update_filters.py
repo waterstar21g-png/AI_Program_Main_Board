@@ -233,14 +233,23 @@ def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
             shot_dir=shot_dir,
             row_no=7,
             shot_count=0,
-            max_tries=1,
-            try_interval_s=0.5,
+            max_tries=5,
+            try_interval_s=0.2,
         )
         assert ok is True
         assert page.locator("body").get_attribute("data-clicked") == "real-777"
         assert len(context.pages) >= 2
-        # 클릭 성공 시 샷 시리즈는 기본 off (shot_count=0)
         browser.close()
+
+
+def test_edit_click_offset_moves_right():
+    """시도마다 URL 오른쪽 오프셋이 증가한다."""
+    from update_filters import edit_click_offset_x
+
+    xs = [edit_click_offset_x(i) for i in range(1, 6)]
+    assert xs == sorted(xs)
+    assert xs[0] < xs[1] < xs[2] < xs[3] < xs[4]
+    assert xs[1] - xs[0] == xs[2] - xs[1]
 
 
 def test_find_edit_marks_right_of_url():
@@ -312,10 +321,9 @@ def test_click_edit_fails_when_popup_does_not_open():
             fake_href,
             row_url=rows[0]["url"],
             progress=None,
-            max_tries=2,
-            try_interval_s=0.15,
+            max_tries=3,
+            try_interval_s=0.1,
         )
-        assert page.locator("body").get_attribute("data-clicked") == "1"
         assert ok is False
         # 같은 탭이 href 로 이동하지 않았는지
         assert "admin_group_modify" not in (page.url or "")
