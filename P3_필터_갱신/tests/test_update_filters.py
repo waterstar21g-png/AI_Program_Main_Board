@@ -561,12 +561,12 @@ def test_run_update_uses_canonical_7step_log_messages():
     """run_update 본문이 사용자 지정 1)~7) 단계 문구·중요정보를 사용해야 함."""
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
     assert "1) 망고 수집 URL 링크로 진입" in src
-    assert "2) 망고행: " in src  # 2단계 = 망고 행 정보 그대로
-    assert "URL KEY → 망고행 찾음 · 필터=" in src
-    assert "4) 상품노출수(카드수) 추출 — 주석처리(URL 화면 열지 않음)" in src
-    assert "'저장하기' 클릭 완료" in src
-    assert "6) '수정되었습니다' 확인 클릭 완료" in src
-    assert "7) 갱신성공 → 다음 행 반복" in src
+    assert "2) 망고행 · 필터=" in src  # 2단계 = 망고행 요약(URL 1회)
+    assert "2) 망고행 원문: " in src  # 원문은 SUB
+    assert "4) 상품수 {ex.collectible} (엑셀값 사용 · URL 화면 안 열음)" in src
+    assert "5) 저장하기 완료 · 상품수 " in src
+    assert '"6) 확인 완료"' in src
+    assert "7) 갱신 완료 (저장상품수 " in src
     # 매칭되지 않는 행 정보는 로그에 남기지 않음 (KEY/필터 불일치 시 조용히 skip)
     assert "매칭되지 않는 정보는 로그에 남기지 않는다" in src
     # 옛 Logger 세부로그 클래스·미사용 비교로그는 완전히 제거됨
@@ -1069,18 +1069,33 @@ def test_save_count_single_write_only():
     assert "★단발 입력" in src
 
 
-def test_step2_shows_mango_row_text_as_is():
-    """★요건: 2단계는 망고 행 정보를 그대로 표출 (행 원문 text 사용)."""
+def test_step2_shows_url_once_and_row_text_in_sub():
+    """★요건: URL 은 2단계 MAIN 에서 한 번만 · 망고행 원문은 SUB 로."""
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
-    assert '2) 망고행: {d_row_text' in src
+    assert 'f"URL={d_url}"' in src
+    assert '2) 망고행 원문: {d_row_text' in src
     assert 'd_row_text = " ".join((drow.get("text") or "").split())' in src
+    # 다른 단계 메시지에는 URL(KEY) 을 넣지 않는다
+    assert "KEY={key_short}" not in src
+    assert "KEY={row_url[:100]}" not in src
 
 
 def test_step5_shows_save_count_before_after():
     """★요건: 상품수 갱신전·갱신후는 5단계 '저장하기' 로그에 표출."""
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
-    assert "5) '저장하기' 클릭 완료 · 상품수 갱신전=" in src
-    assert "갱신후={after_cnt}" in src
+    assert "5) 저장하기 완료 · 상품수 {before_cnt} → {after_cnt}" in src
+
+
+def test_sub_lines_have_no_step_number_prefix():
+    """★요건: MAIN 과 SUB 를 섞지 않는다 — 단계번호는 MAIN 에만."""
+    import update_filters as uf
+
+    assert uf._strip_step_no("5) 검색필터 수정 팝업 표시 · url=x") == (
+        "검색필터 수정 팝업 표시 · url=x"
+    )
+    assert uf._strip_step_no("팝업닫기 후") == "팝업닫기 후"
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "##SUB##{cur_seq}##{_strip_step_no(m)}" in src
 
 
 def test_confirm_click_finds_button_in_different_browser_context():
