@@ -1137,43 +1137,121 @@ def _modify_ui_opened(page) -> bool:
     return False
 
 
-# 6) 수집조건수정: 시도마다 URL 오른쪽에서 더 우측으로 이동하며 클릭
-EDIT_CLICK_BASE_OFFSET_X = 28  # 1회차: URL 오른쪽 +28px
-EDIT_CLICK_STEP_X = 56  # 이후 회차마다 +56px 우측 이동
+# 6) 수집조건수정: 「전체저장」바로 우측에서 시작해 한글 1글자씩 우측 이동 · 최대 10회
+EDIT_CLICK_MAX_TRIES = 10
+EDIT_CLICK_CHAR_PAD_X = 2  # 전체저장 직후 여유(px)
 
 
-def edit_click_offset_x(attempt: int, *, base: int = EDIT_CLICK_BASE_OFFSET_X, step: int = EDIT_CLICK_STEP_X) -> int:
-    """시도 번호(1..N) → URL 오른쪽 가로 오프셋(px)."""
-    a = max(1, int(attempt))
-    return int(base) + (a - 1) * int(step)
+def edit_click_char_steps(attempt: int) -> int:
+    """시도 번호(1..N) → 전체저장 오른쪽에서 이동한 글자 수(0부터)."""
+    return max(0, int(attempt) - 1)
 
 
-def _row_url_click_point(
+def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | None:
+    """행 안 '전체저장' 텍스트의 우측 끝 + 한글 1글자 폭을 구한다."""
+    geo = page.evaluate(
+        """(args) => {
+          const rowIndex = args.rowIndex;
+          const urlHint = (args.urlHint || '').trim();
+          const urlStem = urlHint.split('?')[0];
+          const needle = '전체저장';
+
+          const rowMatchesUrl = (tr) => {
+            if (!urlHint) return false;
+            const text = tr.innerText || '';
+            if (text.includes(urlStem) || text.includes(urlHint)) return true;
+            return Array.from(tr.querySelectorAll('a[href]')).some(a => {
+              const h = a.href || a.getAttribute('href') || '';
+              return h === urlHint || h.startsWith(urlStem);
+            });
+          };
+
+          const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
+          let candidates = urlHint ? trs.filter(rowMatchesUrl) : [];
+          if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
+            candidates = [trs[rowIndex]];
+          }
+          if (!candidates.length) return null;
+
+          const findNeedleRect = (root) => {
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode())) {
+              const t = node.textContent || '';
+              const i = t.indexOf(needle);
+              if (i < 0) continue;
+              const range = document.createRange();
+              range.setStart(node, i);
+              range.setEnd(node, i + needle.length);
+              const rects = range.getClientRects();
+              if (!rects || !rects.length) continue;
+              const r = rects[rects.length - 1];
+              // 한글 1글자 폭: '전' 한 글자 측정, 실패 시 전체/4
+              let charW = Math.max(8, r.width / Math.max(1, needle.length));
+              try {
+                const r2 = document.createRange();
+                r2.setStart(node, i);
+                r2.setEnd(node, i + 1);
+                const rr = r2.getClientRects();
+                if (rr && rr.length && rr[0].width > 2) charW = rr[0].width;
+              } catch (e) {}
+              return {
+                left: r.left,
+                right: r.right,
+                top: r.top,
+                bottom: r.bottom,
+                width: r.width,
+                height: r.height,
+                charW: charW,
+                midY: r.top + r.height / 2,
+              };
+            }
+            return null;
+          };
+
+          for (const tr of candidates) {
+            // URL 오른쪽 영역 우선: 수집개수/전체저장이 있는 셀
+            let rect = null;
+            const cells = Array.from(tr.querySelectorAll('td, th'));
+            for (const cell of cells) {
+              const txt = (cell.innerText || '').replace(/\\s+/g, '');
+              if (txt.includes('전체저장') || txt.includes('수집개수')) {
+                rect = findNeedleRect(cell);
+                if (rect) break;
+              }
+            }
+            if (!rect) rect = findNeedleRect(tr);
+            if (!rect) continue;
+            try { tr.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+            return rect;
+          }
+          return null;
+        }""",
+        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
+    )
+    return geo if isinstance(geo, dict) else None
+
+
+def _edit_click_point_from_allsave(
     page,
     row_index: int,
     row_url: str,
     *,
     attempt: int,
 ) -> dict | None:
-    """URL 앵커 기준 오른쪽(시도마다 더 우측) 클릭 좌표."""
-    info = _find_and_mark_row_url(page, row_index, row_url)
-    if not info.get("ok"):
+    """「전체저장」바로 우측 + (attempt-1)글자만큼 오른쪽 클릭 좌표."""
+    # URL 마킹(스크롤/로그용)
+    _find_and_mark_row_url(page, row_index, row_url)
+    geo = _find_allsave_anchor_geometry(page, row_index, row_url)
+    if not geo:
         return None
-    loc = page.locator('[data-p3-url-target="1"]').first
-    try:
-        loc.scroll_into_view_if_needed(timeout=2000)
-    except Exception:
-        pass
-    try:
-        box = loc.bounding_box()
-    except Exception:
-        box = None
-    if not box:
-        return None
-    offset = edit_click_offset_x(attempt)
-    x = float(box["x"]) + float(box["width"]) + float(offset)
-    y = float(box["y"]) + float(box["height"]) / 2.0
-    # 뷰포트 안으로 클램프
+    char_w = float(geo.get("charW") or 14.0)
+    if char_w < 6:
+        char_w = 14.0
+    steps = edit_click_char_steps(attempt)
+    start_x = float(geo["right"]) + float(EDIT_CLICK_CHAR_PAD_X)
+    x = start_x + steps * char_w + char_w * 0.35  # 글자 중심 부근
+    y = float(geo.get("midY") or ((float(geo["top"]) + float(geo["bottom"])) / 2.0))
     try:
         vp = page.viewport_size or {}
         vw = float(vp.get("width") or 1280)
@@ -1185,9 +1263,11 @@ def _row_url_click_point(
     return {
         "x": x,
         "y": y,
-        "offset": offset,
-        "url_box": box,
-        "href": info.get("href") or row_url,
+        "char_w": char_w,
+        "char_steps": steps,
+        "start_x": start_x,
+        "allsave_right": float(geo["right"]),
+        "offset": int(round(x - start_x)),
     }
 
 
@@ -1202,12 +1282,12 @@ def click_edit_on_row(
     row_no: int = 0,
     shot_count: int = 0,
     shot_interval_s: float = 0.0,
-    max_tries: int = 5,
+    max_tries: int = EDIT_CLICK_MAX_TRIES,
     try_interval_s: float = 2.0,
 ) -> bool:
-    """6) URL 오른쪽에서 오른쪽으로 위치를 옮겨가며 클릭 — 2초 간격 최대 5회.
+    """6) 「전체저장」바로 우측부터 한글 1글자씩 우측 이동 클릭 — 2초×최대 10회.
 
-    ★동일 좌표 반복 금지. 시도1=+28px, 2=+84px, 3=+140px … (URL 오른쪽 기준)
+    순서: URL 우측 → 수집개수 우측 → ★전체저장 바로 우측 시작 → 글자씩 이동.
     ★href / location 대체 절대 금지. 오로지 좌표 클릭만.
     """
     _ = edit_href
@@ -1218,20 +1298,20 @@ def click_edit_on_row(
         if stop_requested():
             return False
 
-        # 참고용으로 버튼 마킹(로그). 클릭은 좌표 이동이 본체.
         info = _find_and_mark_edit_button(page, row_index, row_url)
-        point = _row_url_click_point(page, row_index, row_url, attempt=attempt)
+        point = _edit_click_point_from_allsave(
+            page, row_index, row_url, attempt=attempt
+        )
         if point is None:
             _log(
                 progress,
                 "로직",
-                f"6) URL 좌표 미검출 · 시도 {attempt}/{tries} — 버튼 폴백 클릭",
+                f"6) '전체저장' 좌표 미검출 · 시도 {attempt}/{tries} — 버튼 폴백",
             )
             if not info.get("ok"):
                 if attempt < tries:
                     time.sleep(gap)
                 continue
-            # 버튼 박스가 있으면 그 중심에서 시도마다 우측으로 살짝 이동
             try:
                 bbox = page.locator('[data-p3-edit-target="1"]').first.bounding_box()
             except Exception:
@@ -1240,12 +1320,15 @@ def click_edit_on_row(
                 if attempt < tries:
                     time.sleep(gap)
                 continue
-            offset = edit_click_offset_x(attempt)
+            # 폴백: 버튼 왼쪽부터 글자폭(~14px)씩 이동
+            char_w = 14.0
+            steps = edit_click_char_steps(attempt)
             point = {
-                "x": float(bbox["x"]) + min(float(bbox["width"]) * 0.5, 20) + (attempt - 1) * 20,
+                "x": float(bbox["x"]) + 4 + steps * char_w,
                 "y": float(bbox["y"]) + float(bbox["height"]) / 2.0,
-                "offset": offset,
-                "url_box": bbox,
+                "char_w": char_w,
+                "char_steps": steps,
+                "offset": int(steps * char_w),
             }
 
         before_pages = []
@@ -1256,15 +1339,13 @@ def click_edit_on_row(
 
         x = float(point["x"])
         y = float(point["y"])
-        offset = int(point.get("offset") or edit_click_offset_x(attempt))
-        near = "Y" if info.get("nearCollect") else "N"
-        right = "Y" if info.get("rightOfUrl") else "N"
+        steps = int(point.get("char_steps") or edit_click_char_steps(attempt))
+        char_w = float(point.get("char_w") or 14.0)
         _log(
             progress,
             "로직",
             f"6) 수집조건수정 클릭 시도 {attempt}/{tries} · "
-            f"URL오른쪽 +{offset}px → ({x:.0f},{y:.0f}) · "
-            f"버튼검출={right}/{near}",
+            f"전체저장우측 +{steps}글자(≈{char_w:.0f}px) → ({x:.0f},{y:.0f})",
         )
 
         popup = None
@@ -1294,7 +1375,6 @@ def click_edit_on_row(
                 f"6) 팝업창 열림 · url={(popup.url or '')[:120]}",
             )
 
-        # 2초 간격 동안 팝업/수정화면 확인
         deadline = time.time() + gap
         while time.time() < deadline:
             try:
@@ -1313,7 +1393,7 @@ def click_edit_on_row(
                 _log(
                     progress,
                     "로직",
-                    f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{offset}px",
+                    f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{steps}글자",
                 )
                 if shot_dir is not None and shot_count > 0:
                     screenshot_after_edit_click_series(
@@ -1335,7 +1415,7 @@ def click_edit_on_row(
             _log(
                 progress,
                 "로직",
-                f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{offset}px",
+                f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{steps}글자",
             )
             if shot_dir is not None and shot_count > 0:
                 screenshot_after_edit_click_series(
@@ -1352,13 +1432,13 @@ def click_edit_on_row(
         _log(
             progress,
             "로직",
-            f"6) 팝업 미오픈 · 다음 시도는 더 오른쪽 (+{edit_click_offset_x(attempt + 1)}px)",
+            f"6) 팝업 미오픈 · 다음 시도 +{edit_click_char_steps(attempt + 1)}글자 우측",
         )
 
     _log(
         progress,
         "오류",
-        f"6) 수집조건수정 클릭 {tries}회 실패 — 우측 이동 클릭에도 팝업 미오픈 (href 대체 없음)",
+        f"6) 수집조건수정 클릭 {tries}회 실패 — 전체저장 우측 글자이동에도 팝업 미오픈",
     )
     return False
 
@@ -2512,10 +2592,10 @@ def run_update(
                     continue
                 row_idx = int(row_idx2)
 
-                # 6) URL 오른쪽 수집조건수정 — 2초 간격 최대 5회 클릭만
+                # 6) 「전체저장」바로 우측부터 한글 1글자씩 우측 · 2초×최대 10회
                 lg.step(
                     "로직",
-                    "6) 수집조건수정 클릭 (URL오른쪽 · 2초×5회)",
+                    "6) 수집조건수정 클릭 (전체저장우측 · 글자씩 · 2초×10회)",
                     "6) 조건수정 클릭",
                 )
                 if not page_is_usable(page):
@@ -2530,7 +2610,7 @@ def run_update(
                     progress=progress,
                     shot_dir=shot_dir,
                     row_no=i,
-                    max_tries=5,
+                    max_tries=EDIT_CLICK_MAX_TRIES,
                     try_interval_s=2.0,
                 ):
                     result.failed += 1
