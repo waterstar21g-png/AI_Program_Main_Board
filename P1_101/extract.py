@@ -668,11 +668,9 @@ def scroll_down_to_footer(
     prev_h = -1
     stable = 0
     footer_hits = 0
+    # ★요건: 스크롤 상세 로그 출력 안 함 (4단계·주요정보만)
+    del progress
 
-    def log(msg: str) -> None:
-        _log(progress, "스크롤↓", msg)
-
-    log("상단 → 푸터 고속 스크롤 시작 (카드집계 없음)")
     try:
         page.evaluate("() => window.scrollTo(0, 0)")
     except Exception:
@@ -692,13 +690,7 @@ def scroll_down_to_footer(
         else:
             footer_hits = 0
 
-        if i == 1 or i % 10 == 0 or at_footer:
-            log(
-                f"{i}/{max_rounds} 높이={h} · 푸터={'Y' if at_footer else 'N'} · 안정={stable}"
-            )
-
         if footer_hits >= FOOTER_STABLE_ROUNDS and stable >= SCROLL_STABLE_ROUNDS:
-            log("푸터 영역 도달·안정화 — 하향 스크롤 완료")
             break
 
         scroll_step_down(page)
@@ -707,10 +699,7 @@ def scroll_down_to_footer(
         if i == 1 or i % 25 == 0:
             dismiss_popups(page)
         if stop_requested():
-            log("중단 요청 — 하향 스크롤 중단")
             break
-    else:
-        log("최대 하향 스크롤 도달")
 
     try:
         page.evaluate(
@@ -719,7 +708,6 @@ def scroll_down_to_footer(
     except Exception:
         pass
     time.sleep(0.12)
-    log("맨 하단에 고정 완료")
 
 
 def scroll_up_count_card_images(
@@ -734,11 +722,9 @@ def scroll_up_count_card_images(
     prev_n = -1
     stable = 0
     top_hits = 0
+    # ★요건: 스크롤 상세 로그 출력 안 함 (4단계·주요정보만)
+    del progress
 
-    def log(msg: str) -> None:
-        _log(progress, "스크롤↑", msg)
-
-    log("하단 → 상단 고속 스크롤하며 카드 갯수 집계 시작")
     try:
         page.evaluate(
             "() => window.scrollTo(0, (document.scrollingElement||document.documentElement).scrollHeight)"
@@ -761,13 +747,7 @@ def scroll_up_count_card_images(
         else:
             top_hits = 0
 
-        if i == 1 or i % 10 == 0 or at_top:
-            log(
-                f"{i}/{max_rounds} 카드갯수={n} · 상단={'Y' if at_top else 'N'} · 안정={stable}"
-            )
-
         if top_hits >= TOP_STABLE_ROUNDS and stable >= SCROLL_STABLE_ROUNDS:
-            log(f"상단 도달·안정화 — 카드갯수 확정={n}")
             break
 
         scroll_step_up(page)
@@ -775,10 +755,7 @@ def scroll_up_count_card_images(
         if i == 1 or i % 25 == 0:
             dismiss_popups(page)
         if stop_requested():
-            log(f"중단 요청 — 현재 카드갯수={n}")
             break
-    else:
-        log(f"최대 상향 스크롤 도달 — 카드갯수={len(seen)}")
 
     try:
         page.evaluate("() => window.scrollTo(0, 0)")
@@ -786,9 +763,7 @@ def scroll_up_count_card_images(
         pass
     time.sleep(0.1)
     seen |= collect_visible_card_keys(page)
-    total = len(seen)
-    log(f"상향 집계 완료 — 상품수(카드갯수)={total}")
-    return total
+    return len(seen)
 
 
 def extract_count_from_page(
@@ -815,16 +790,16 @@ def extract_count_from_page(
     except Exception:
         pass
 
-    _log(progress, "로직", "2) 스크롤 상단→푸터 고속 하향")
-    scroll_down_to_footer(page, progress=progress)
+    _log(progress, "로직", "2) 상단 → 푸터 스크롤")
+    scroll_down_to_footer(page, progress=None)
 
     if stop_requested():
         return len(collect_visible_card_keys(page))
 
-    _log(progress, "로직", "3) 스크롤 하단→상단 고속 상향 · 카드 갯수 집계")
-    total = scroll_up_count_card_images(page, progress=progress)
+    _log(progress, "로직", "3) 하단 → 상단 스크롤 · 카드 갯수 집계")
+    total = scroll_up_count_card_images(page, progress=None)
 
-    _log(progress, "로직", f"4) 상품수 확정={total} (엑셀·로그 출력)")
+    _log(progress, "로직", f"4) 상품수={total}")
     return total
 
 
@@ -972,26 +947,14 @@ def run_extract(
 
                 # ★요건1: url 입력 후 첫번째 팝업창 닫기
                 closed = dismiss_popups(page)
-                if closed:
-                    _log(
-                        progress,
-                        "로직",
-                        f"1) 첫 팝업 닫기 — 행{job.excel_row} {closed}건 닫음",
-                    )
-                else:
-                    _log(
-                        progress,
-                        "로직",
-                        f"1) 첫 팝업 닫기 — 행{job.excel_row} 닫을 팝업 없음(확인)",
-                    )
-
                 _log(
                     progress,
-                    "대기",
-                    f"행{job.excel_row} {post_popup_wait_sec:g}초 대기 후 "
-                    f"푸터↓→상단↑ 카드갯수 고속집계",
+                    "로직",
+                    f"1) 첫 팝업 닫기"
+                    + (f" ({closed}건)" if closed else " (없음)"),
                 )
-                # 대기 중에도 중단 플래그 확인
+
+                # 대기 (상세 로그 없음)
                 waited = 0.0
                 step = 0.25
                 while waited < float(post_popup_wait_sec):
@@ -1007,7 +970,6 @@ def run_extract(
                 # 대기 중 다시 뜬 팝업이 있으면 한 번 더 닫고, 짧게만 안정화
                 closed2 = dismiss_popups(page)
                 if closed2:
-                    _log(progress, "팝업", f"행{job.excel_row} 추가 팝업 {closed2}건 닫기")
                     time.sleep(0.5)
 
                 count = extract_count_from_page(
@@ -1020,14 +982,7 @@ def run_extract(
                     _log(
                         progress,
                         "경고",
-                        f"행{job.excel_row} 상품수 0 — 카드 미검출"
-                        f"(사이트 지연·차단 가능)",
-                    )
-                else:
-                    _log(
-                        progress,
-                        "상품수",
-                        f"행{job.excel_row} 카드갯수 집계 상품수={count}",
+                        f"행{job.excel_row} 상품수 0 — 카드 미검출",
                     )
                 ws.cell(row=job.excel_row, column=count_idx + 1, value=count)
                 if collectible_idx is not None:
