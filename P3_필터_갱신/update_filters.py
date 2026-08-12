@@ -1,24 +1,24 @@
 """
 P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품수 갱신.
 
-0) 이미 열린 현재 망고 화면에서 진행 (로그인·진입 없음)
-1) ★더망고 행의 URL을 기준값으로 엑셀에서 동일 URL을 찾음
-   → 검색필터 동일 시 진행 (엑셀 중간공백→'_' 재비교 포함)
+로직 순서 (1~7단계 — 실행 로그도 이 단계만 표시):
+1) 망고 수집 URL 링크로 진입 (입력 항목 정보로 제공)
+2) 망고에서 행 "URL" 클릭 → 이를 KEY로 엑셀자료 조회
+3) 망고 필터와 엑셀 필터가 불일치하면 다음 행으로 진행 (매칭 안 되는 행은 로그에 남기지 않음)
+4) 상품노출수(카드수) 추출 — ★현재는 건너뛰고 수행 (추후 완성본에서 추가)
+5) LABEL "수집조건수정" 버튼 클릭 → 팝업의 "저장상품수"(검색결과 상위 [ ]개) 필드에
+   엑셀 상품수 기준 값 입력 → 하단 LABEL "저장하기" 버튼 클릭 (★'저장'이 아닌 '저장하기')
+6) 팝업되는 "수정되었습니다" 메세지 하단 LABEL "확인" 버튼 클릭
+7) 2~6단계를 다음 행에 대해 반복
 
-필터 일치 시:
-  1) URL 클릭
-  2) 첫 팝업창 닫기
-  3) 스크롤 푸터까지 내리기
-  4) 하단→상단 스크롤하며 상품수 카드 갯수 로그
-  5) 엑셀 상품수와 비교값 출력
-  6) 「전체저장」확인 후 LABEL 「수집조건수정」/「수집조건저장」의 실제 버튼요소를 직접 클릭 (href 금지)
-  7) 팝업에서 저장상품수 수정 → 저장하기 → 확인
+로그 원칙:
+- 위 1)~7) 단계 로그만 남김 (그 외 화면전환/준비 등 세부 로그는 억제)
+- 매칭된 행만 로그에 남김 — 필터/URL 불일치 행은 로그에 남기지 않음
+- 성공/실패 여부와 필터명·KEY(URL)·상품수 등 핵심 정보를 포함
+- 오류 발생 시 원인 파악에 필요한 상세 정보(사유·KEY·필터명·목표값)를 포함
 
-로그:
-- 더망고 처음 10건: 더망고/엑셀 각각 1줄(검색필터·URL)
-- ★망고: 이미 열려 있는 현재 망고 화면에서만 진행 (로그인·URL진입 없음)
-- ★필터 매칭 시: 팝업/탭을 bring_to_front 로 실제 Chrome에 표시 + 단계샷
-- 불일치 행: 검색필터·URL만
+버튼 클릭은 좌표 추정이 아니라 LABEL 텍스트로 찾은 실제 DOM 버튼 요소를 직접 클릭한다
+(href 재시도 금지).
 
 사용법:
   python update_filters.py 엑셀.xlsx --mango-url "https://..."
@@ -57,7 +57,6 @@ ProgressFn = Callable[[str, str], None]
 STOP_FLAG_PATH = Path(__file__).resolve().parent / ".filter_stop"
 P3_RUN_LOG_DIR = Path(__file__).resolve().parent / "run-logs"
 P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
-FIRST_COMPARE_LOG_N = 10  # 더망고 처음 10건: 더망고/엑셀 비교 2줄 로그 (비주요 참고용)
 # URL클릭 후 상품수 카드 집계(browse_store_count_cards) — 함수·로그는 유지, CALL만 차단(테스트 시간 절약)
 ENABLE_STORE_COUNT_CALL = False
 
@@ -130,7 +129,7 @@ class RunResult:
 #   2) 망고 URL 클릭 → 엑셀 KEY 매칭
 #   3) 필터 불일치 → 다음 행
 #   4) 상품노출수(카드수) 추출 — 현재는 건너뛰고 수행 (추후 완성본에서 추가)
-#   5) LABEL '수집조건수정' 클릭 → 저장상품수 입력 → '저장' 클릭
+#   5) LABEL '수집조건수정' 클릭 → 저장상품수 입력 → '저장하기' 클릭
 #   6) '수정되었습니다' 확인 클릭
 #   7) 2~6단계 반복 (다음 행)
 P3_MAJOR_LOG_ONLY = True
@@ -167,7 +166,7 @@ def _log(
 
 
 # ★P2와 동일: 실제 Chrome(CDP) 창을 OS 앞으로 가져와 동작을 보여 줌
-STEP_VIEW_DWELL_SEC = 1.2
+STEP_VIEW_DWELL_SEC = 0.3  # ★테스트 속도 우선 — 짧게 유지(화면 표시는 유지)
 
 
 def describe_page_state(page) -> str:
@@ -380,7 +379,7 @@ def attach_mango_browser_like_p2(p2, playwright, *, progress: ProgressFn | None 
         progress,
         step_no="0",
         action="망고 Chrome 연동 창 표시",
-        dwell_s=1.5,
+        dwell_s=0.3,
     )
     try:
         cur = (page.url or "").strip()
@@ -524,36 +523,6 @@ def find_excel_by_demango_url(
     return by_url.get(key)
 
 
-def log_first10_compare(
-    progress: ProgressFn | None,
-    *,
-    ordinal: int,
-    d_filter: str,
-    d_url: str,
-    ex: ExcelRow | None,
-) -> None:
-    """더망고 처음 10건 — 더망고/엑셀 검색필터·URL을 두 줄로 표시."""
-    if ordinal > FIRST_COMPARE_LOG_N:
-        return
-    _log(
-        progress,
-        "비교",
-        f"더망고 · 검색필터={d_filter} · URL={d_url}",
-    )
-    if ex is not None:
-        _log(
-            progress,
-            "비교",
-            f"엑셀 · 검색필터={ex.filter_name} · URL={ex.url}",
-        )
-    else:
-        _log(
-            progress,
-            "비교",
-            "엑셀 · 검색필터=- · URL=-",
-        )
-
-
 def filters_equal(excel_filter: str, demango_filter: str) -> bool:
     """검색필터 비교.
 
@@ -609,7 +578,7 @@ def navigate_mango_url(
                 "경고",
                 f"0) URL 이동 예외({attempt}/2): {str(e).split(chr(10))[0][:120]}",
             )
-        time.sleep(0.6)
+        time.sleep(0.2)
         try:
             cur = (page.url or "").strip()
         except Exception:
@@ -621,7 +590,7 @@ def navigate_mango_url(
         if attempt < 2:
             _log(progress, "경고", "검색필터 화면 미도달 — URL 재이동")
     reveal_browser_page(
-        page, progress, step_no="0", action="검색필터(저장조건) 화면 표시", dwell_s=0.5
+        page, progress, step_no="0", action="검색필터(저장조건) 화면 표시", dwell_s=0.2
     )
     try:
         body = page.locator("body").inner_text(timeout=3000) or ""
@@ -1214,9 +1183,8 @@ def click_demango_row_url(
     """1) 필터일치 행의 URL 클릭 → 스토어 페이지(팝업/새탭) 반환."""
     info = _find_and_mark_row_url(page, row_index, row_url)
     if not info.get("ok"):
-        _log(progress, "오류", f"1) URL 링크 미검출 ({info})")
+        _log(progress, "오류", f"2) URL 링크 미검출 · KEY={row_url[:100]} · info={info}")
         return None
-    _log(progress, "로직", f"1) URL 클릭 · {(info.get('href') or row_url)[:120]}")
     before = []
     try:
         before = list(page.context.pages)
@@ -1232,7 +1200,12 @@ def click_demango_row_url(
         try:
             loc.click(timeout=5_000, force=True, no_wait_after=True)
         except Exception as e:
-            _log(progress, "오류", f"1) URL 클릭 실패: {str(e).split(chr(10))[0][:120]}")
+            _log(
+                progress,
+                "오류",
+                f"2) URL 클릭 실패 · KEY={row_url[:100]} · "
+                f"{str(e).split(chr(10))[0][:120]}",
+            )
             return None
     time.sleep(0.6)
     if store is None:
@@ -1245,7 +1218,6 @@ def click_demango_row_url(
             pass
     if store is None:
         # 같은 탭 이동된 경우 — 목록 복귀는 호출측에서 mango 로
-        _log(progress, "로직", "1) URL 클릭 후 새 창 없음 — 현재 탭을 스토어로 사용")
         store = page
     try:
         store.wait_for_load_state("domcontentloaded", timeout=30_000)
@@ -1415,7 +1387,7 @@ def close_store_return_list(
     except Exception as e:  # noqa: BLE001
         _log(progress, "경고", f"스토어 탭 닫기 예외: {str(e).split(chr(10))[0][:80]}")
 
-    time.sleep(0.35)
+    time.sleep(0.15)
 
     mango = None
     if ctx is not None:
@@ -1755,8 +1727,8 @@ def click_edit_on_row(
             _log(
                 progress,
                 "오류",
-                f"6) '수집조건수정' 버튼 미검출 · 재시도 {attempt}/{tries} — "
-                f"{info.get('reason', '')}",
+                f"5) '수집조건수정' 버튼 미검출 · KEY={row_url[:100]} · "
+                f"재시도 {attempt}/{tries} · 사유={info.get('reason', '')}",
             )
             if attempt < tries:
                 time.sleep(gap)
@@ -1769,13 +1741,6 @@ def click_edit_on_row(
             pass
 
         btn_label = str(info.get("matched_label") or "수집조건수정")
-        if attempt == 1:
-            _log(
-                progress,
-                "로직",
-                f"6) '{btn_label}' 버튼 실제 클릭 (좌표계산 없음 · href 재시도 금지)",
-                major=True,
-            )
 
         before_pages = []
         try:
@@ -1796,8 +1761,8 @@ def click_edit_on_row(
                 _log(
                     progress,
                     "오류",
-                    f"6) '{btn_label}' 버튼 클릭 예외 시도{attempt}: "
-                    f"{str(e).split(chr(10))[0][:120]}",
+                    f"5) '{btn_label}' 버튼 클릭 예외 · KEY={row_url[:100]} · "
+                    f"시도{attempt}/{tries}: {str(e).split(chr(10))[0][:120]}",
                 )
 
         if popup is not None:
@@ -1805,11 +1770,10 @@ def click_edit_on_row(
                 popup.wait_for_load_state("domcontentloaded", timeout=12_000)
             except Exception:
                 pass
-            _log(progress, "로직", f"6) '{btn_label}' 팝업 열림", major=True)
             reveal_browser_page(
                 popup,
                 progress,
-                step_no="6",
+                step_no="5",
                 action=f"{btn_label} 팝업 표시",
                 dwell_s=STEP_VIEW_DWELL_SEC,
             )
@@ -1830,10 +1794,19 @@ def click_edit_on_row(
             except Exception:
                 pass
             if page_shows_not_found(page):
-                _log(progress, "오류", "6) 팝업 not found — 중단")
+                _log(
+                    progress,
+                    "오류",
+                    f"5) '{btn_label}' 클릭 후 not found · KEY={row_url[:100]} · 중단",
+                )
                 return False
             if _modify_ui_opened(page):
-                _log(progress, "로직", f"6) '{btn_label}' 팝업 확인 OK", major=True)
+                _log(
+                    progress,
+                    "로직",
+                    f"5) '{btn_label}' 클릭 → 팝업 확인 OK · KEY={row_url[:100]}",
+                    major=True,
+                )
                 if shot_dir is not None and shot_count > 0:
                     screenshot_after_edit_click_series(
                         page,
@@ -1848,10 +1821,19 @@ def click_edit_on_row(
             time.sleep(0.25)
 
         if page_shows_not_found(page):
-            _log(progress, "오류", "6) 팝업 not found — 중단")
+            _log(
+                progress,
+                "오류",
+                f"5) '{btn_label}' 클릭 후 not found · KEY={row_url[:100]} · 중단",
+            )
             return False
         if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=800):
-            _log(progress, "로직", f"6) '{btn_label}' 팝업 확인 OK", major=True)
+            _log(
+                progress,
+                "로직",
+                f"5) '{btn_label}' 클릭 → 팝업 확인 OK · KEY={row_url[:100]}",
+                major=True,
+            )
             if shot_dir is not None and shot_count > 0:
                 screenshot_after_edit_click_series(
                     page,
@@ -1870,7 +1852,8 @@ def click_edit_on_row(
     _log(
         progress,
         "오류",
-        "6) '수집조건수정' 버튼 클릭 실패 — 버튼은 찾았으나 팝업 미오픈 (href 재시도 없음)",
+        f"5) '수집조건수정' 버튼 클릭 실패 · KEY={row_url[:100]} · "
+        "버튼은 찾았으나 팝업 미오픈 (href 재시도 없음)",
     )
     return False
 
@@ -2888,7 +2871,7 @@ def run_update(
                 progress,
                 step_no="0",
                 action="검색필터 목록 화면 (연동 동작 시작)",
-                dwell_s=1.5,
+                dwell_s=0.3,
             )
             shot_dir = new_shot_dir()
             _log(progress, "준비", f"스크린샷 폴더: {shot_dir}")
@@ -2919,56 +2902,31 @@ def run_update(
                 d_filter = (drow.get("filterName") or "").strip()
                 row_idx = int(drow.get("index") or 0)
                 edit_href = (drow.get("editHref") or "").strip()
+                key_short = d_url[:100] if d_url else "(URL없음)"
                 # ★요건1: 더망고 URL을 기준값(KEY)으로 엑셀에서 동일 URL 검색
                 ex = find_excel_by_demango_url(by_url, d_url)
 
-                # ★요건2: 더망고 처음 10건 — 더망고/엑셀 검색필터·URL 두 줄 (참고용, 비주요 로그)
-                log_first10_compare(
-                    progress,
-                    ordinal=i,
-                    d_filter=d_filter,
-                    d_url=d_url,
-                    ex=ex,
-                )
-
-                # 2) 망고 URL(KEY)로 엑셀자료 조회 — 매칭 안되면 3) 다음 행
+                # 2)/3) KEY 불일치 또는 필터 불일치 → 조용히 다음 행
+                # ★매칭되지 않는 정보는 로그에 남기지 않는다.
                 if not ex:
                     result.skipped += 1
-                    if i > FIRST_COMPARE_LOG_N:
-                        _log(
-                            progress,
-                            "로직",
-                            f"3) 엑셀 KEY 불일치 → 다음 행 · URL={d_url}",
-                            major=True,
-                        )
                     continue
-
-                # 3) 검색필터 불일치 → 다음 행 (공백→_ 재비교 포함)
                 if ex.filter_name and d_filter and not filters_equal(
                     ex.filter_name, d_filter
                 ):
                     result.skipped += 1
-                    if i > FIRST_COMPARE_LOG_N:
-                        _log(
-                            progress,
-                            "로직",
-                            f"3) 필터 불일치 → 다음 행 · "
-                            f"엑셀필터={ex.filter_name} · 망고필터={d_filter}",
-                            major=True,
-                        )
                     continue
 
                 _log(
                     progress,
                     "로직",
-                    f"2) 망고 URL(KEY) 조회 → 엑셀매칭 OK · "
-                    f"행{i}/{result.total_demango} · 엑셀행={ex.excel_row} · "
-                    f"필터={d_filter} · 수집가능개수={ex.collectible}",
+                    f"2) KEY매칭 성공 · 필터={d_filter} · KEY={key_short} · "
+                    f"엑셀행={ex.excel_row} · 수집가능개수={ex.collectible}",
                     major=True,
                 )
                 note = filter_compare_note(ex.filter_name, d_filter)
                 if note:
-                    _log(progress, "로직", f"2) {note}", major=True)
+                    _log(progress, "로직", f"2) {note} · KEY={key_short}", major=True)
 
                 reveal_browser_page(
                     page,
@@ -2999,7 +2957,7 @@ def run_update(
                     progress,
                     step_no="2",
                     action="더망고 목록 창 앞으로",
-                    dwell_s=0.5,
+                    dwell_s=0.2,
                 )
 
                 # 2) URL 클릭 → 스토어/팝업을 브라우저에 표시
@@ -3008,7 +2966,12 @@ def run_update(
                 )
                 if store is None:
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 2) URL 클릭 실패")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 2) URL 클릭 실패 · 필터={d_filter} · KEY={key_short} · "
+                        f"엑셀행={ex.excel_row} · 사유=스토어/팝업 오픈 실패(행index={row_idx})",
+                    )
                     screenshot_step(
                         list_page,
                         shot_dir,
@@ -3019,7 +2982,6 @@ def run_update(
                     )
                     _return_to_list(list_page, mango)
                     continue
-                _log(progress, "로직", "2) 망고 URL 클릭 → 스토어/팝업 표시 OK", major=True)
                 screenshot_step(
                     store,
                     shot_dir,
@@ -3061,7 +3023,12 @@ def run_update(
                 )
                 if page is None:
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 더망고 목록 탭 재연결 실패")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 필터={d_filter} · KEY={key_short} · "
+                        "더망고 목록 탭 재연결 실패(스토어 닫기 후 핸들 유실)",
+                    )
                     continue
                 reveal_browser_page(
                     page,
@@ -3071,7 +3038,7 @@ def run_update(
                     dwell_s=STEP_VIEW_DWELL_SEC,
                 )
                 # ★필수: 목록 복귀창 표시 후 → 망고 창 최대화 → 그 다음 행 재탐색
-                maximize_mango_chrome_window(page, progress, dwell_s=0.8)
+                maximize_mango_chrome_window(page, progress, dwell_s=0.2)
 
                 # 복귀 후 URL로 행 index 재확정 (stale index 방지)
                 row_idx2 = resolve_demango_row_index_by_url(
@@ -3082,20 +3049,25 @@ def run_update(
                 )
                 if row_idx2 is None:
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 더망고 목록에서 URL 행 재탐색 실패")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 필터={d_filter} · KEY={key_short} · "
+                        f"더망고 목록에서 URL 행 재탐색 실패(fallback_index={row_idx})",
+                    )
                     continue
                 row_idx = int(row_idx2)
 
-                # 5) LABEL '수집조건수정' 버튼 클릭 → 저장상품수 입력 → 저장
-                _log(
-                    progress,
-                    "로직",
-                    "5) LABEL '수집조건수정' 버튼 찾아 실제 클릭 (좌표계산 없음)",
-                    major=True,
-                )
+                # 5) LABEL '수집조건수정' 버튼 클릭 → 저장상품수 입력 → '저장하기' 클릭
+                target = map_save_count(ex.collectible)
                 if not page_is_usable(page):
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 더망고 페이지 핸들 사용불가")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 필터={d_filter} · KEY={key_short} · "
+                        "더망고 페이지 핸들 사용불가(닫힘/크래시)",
+                    )
                     continue
                 if not click_edit_on_row(
                     page,
@@ -3106,10 +3078,16 @@ def run_update(
                     shot_dir=shot_dir,
                     row_no=i,
                     max_tries=EDIT_CLICK_MAX_TRIES,
-                    try_interval_s=2.0,
+                    try_interval_s=0.6,  # ★테스트 속도 우선
                 ):
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 5) 수집조건수정 클릭 실패")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 5) '수집조건수정' 버튼 클릭 실패 · 필터={d_filter} · "
+                        f"KEY={key_short} · 목표저장상품수={target} · "
+                        "사유=버튼 미검출 또는 클릭 후 팝업 미오픈(상세는 위 재시도 로그 참조)",
+                    )
                     screenshot_step(
                         page,
                         shot_dir,
@@ -3122,14 +3100,17 @@ def run_update(
                     continue
                 if not wait_modify_page(page):
                     result.failed += 1
-                    if page_shows_not_found(page):
-                        _log(
-                            progress,
-                            "오류",
-                            f"행{i} · 5) 수집조건수정 후 not found — 잘못된 버튼/링크 가능",
-                        )
-                    else:
-                        _log(progress, "오류", f"행{i} · 5) 검색필터 수정 화면 미진입")
+                    reason = (
+                        "not found — 잘못된 버튼/링크 가능"
+                        if page_shows_not_found(page)
+                        else "검색필터 수정 화면 미진입(팝업 열렸으나 화면 미표시)"
+                    )
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 5) 수집조건수정 클릭 후 화면 확인 실패 · 필터={d_filter} · "
+                        f"KEY={key_short} · 사유={reason}",
+                    )
                     screenshot_step(
                         page,
                         shot_dir,
@@ -3160,14 +3141,7 @@ def run_update(
                     progress=progress,
                 )
 
-                # 5) 「저장상품수」란 「검색결과 상위 [ ]개만 상품만 저장」에 엑셀 상품수 입력 → 저장
-                target = map_save_count(ex.collectible)
-                _log(
-                    progress,
-                    "로직",
-                    f"5) 저장상품수 입력 — 엑셀 수집가능={ex.collectible} → 저장상품수={target}",
-                    major=True,
-                )
+                # 5) 「저장상품수」란 「검색결과 상위 [ ]개만 상품만 저장」에 엑셀 상품수 입력
                 if not set_save_count(
                     page,
                     target,
@@ -3176,7 +3150,12 @@ def run_update(
                     row_no=i,
                 ):
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 5) 저장상품수 입력칸 실패")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 5) 저장상품수 입력칸 실패 · 필터={d_filter} · "
+                        f"KEY={key_short} · 목표저장상품수={target}",
+                    )
                     try:
                         page.keyboard.press("Escape")
                     except Exception:
@@ -3184,17 +3163,21 @@ def run_update(
                     _return_to_list(page, mango)
                     continue
 
-                # 5) LABEL '저장' 버튼 클릭
+                # 5) LABEL '저장하기' 버튼 클릭 (★'저장'이 아닌 '저장하기' 텍스트를 찾아 클릭)
                 dialog_state = attach_native_dialog_handler(page)
-                _log(progress, "로직", "5) LABEL '저장' 버튼 클릭", major=True)
                 if not click_save_button(page):
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 5) 저장 버튼 클릭 실패")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 5) '저장하기' 버튼 클릭 실패 · 필터={d_filter} · "
+                        f"KEY={key_short} · 목표저장상품수={target}",
+                    )
                     screenshot_step(
                         page,
                         shot_dir,
                         step_tag="05_save_click_fail",
-                        label="5)저장 클릭 실패",
+                        label="5)저장하기 클릭 실패",
                         row_no=i,
                         progress=progress,
                     )
@@ -3204,13 +3187,25 @@ def run_update(
                     page,
                     shot_dir,
                     step_tag="05_after_save_click",
-                    label="5)저장 클릭 후",
+                    label="5)저장하기 클릭 후",
                     row_no=i,
                     progress=progress,
                 )
+                _log(
+                    progress,
+                    "로직",
+                    f"5) 수집조건수정→저장상품수={target} 입력→'저장하기' 클릭 완료 · "
+                    f"필터={d_filter} · KEY={key_short}",
+                    major=True,
+                )
 
                 if not wait_modify_page_closed(page, timeout_ms=20_000):
-                    _log(progress, "경고", f"행{i} 수정팝업 닫힘 대기 시간초과 — 확인 팝업 계속 시도")
+                    _log(
+                        progress,
+                        "경고",
+                        f"행{i} 수정팝업 닫힘 대기 시간초과 · KEY={key_short} — "
+                        "확인 팝업 계속 시도",
+                    )
                 screenshot_step(
                     page,
                     shot_dir,
@@ -3221,17 +3216,17 @@ def run_update(
                 )
 
                 # 6) '수정되었습니다' 메세지 하단 LABEL '확인' 버튼 클릭
-                _log(
-                    progress,
-                    "로직",
-                    "6) '수정되었습니다' 메세지 하단 LABEL '확인' 버튼 클릭",
-                    major=True,
-                )
                 if not click_modified_confirm(
                     page, timeout_ms=20_000, dialog_state=dialog_state
                 ):
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} · 6) 확인 클릭 실패")
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} · 6) '확인' 버튼 클릭 실패 · 필터={d_filter} · "
+                        f"KEY={key_short} · 목표저장상품수={target} · "
+                        f"수정팝업닫힘여부={dialog_state.get('seen')}",
+                    )
                     screenshot_step(
                         page,
                         shot_dir,
@@ -3250,12 +3245,19 @@ def run_update(
                     row_no=i,
                     progress=progress,
                 )
+                _log(
+                    progress,
+                    "로직",
+                    f"6) '수정되었습니다' 확인 클릭 완료 · 필터={d_filter} · KEY={key_short}",
+                    major=True,
+                )
 
                 result.updated += 1
                 _log(
                     progress,
                     "완료",
-                    f"행{i} 갱신완료 · 엑셀행{ex.excel_row} · 저장상품수={target}",
+                    f"행{i} 갱신성공 · 필터={d_filter} · KEY={key_short} · "
+                    f"엑셀행={ex.excel_row} · 저장상품수={target}",
                 )
                 _return_to_list(page, mango)
                 screenshot_step(
@@ -3266,8 +3268,14 @@ def run_update(
                     row_no=i,
                     progress=progress,
                 )
-                _log(progress, "로직", f"7) 2~6단계 반복 → 다음 행 (행{i} 완료)", major=True)
-                time.sleep(0.35)
+                _log(
+                    progress,
+                    "로직",
+                    f"7) 갱신성공 → 다음 행 반복 · 필터={d_filter} · KEY={key_short} · "
+                    f"저장상품수={target}",
+                    major=True,
+                )
+                time.sleep(0.1)  # ★테스트 속도 우선
 
                 if stop_requested():
                     break
