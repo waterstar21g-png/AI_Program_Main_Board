@@ -121,6 +121,57 @@ DEMANGO_LIST_WITH_DECOY_HTML = """
 </body></html>
 """
 
+# ★사용자 실사용 데이터: 같은 「URL 검색」 주소가 여러 행에 있고 필터이름만 다르다.
+#   URL 만 보고 첫 행을 잡으면 2번째·3번째 행을 갱신할 때 1번째 행이 바뀌어 버린다.
+DEMANGO_LIST_DUP_URL_HTML = """
+<html><body>
+<table>
+<tr>
+  <th>사이트</th><th>필터이름(수정가능)</th><th>검색필터(저장조건)</th>
+</tr>
+<tr>
+  <td>Zara.com/de</td>
+  <td><input type="text" value="남성_니트롱슬리브"></td>
+  <td>
+    URL 검색:
+    <a href="https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237">
+      https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237
+    </a>
+    | <span>수집개수: 76개 | 전체저장</span>
+    <input type="button" value="수집조건수정"
+      onclick="document.body.setAttribute('data-clicked','row1')">
+  </td>
+</tr>
+<tr>
+  <td>Zara.com/de</td>
+  <td><input type="text" value="남성의류_니트"></td>
+  <td>
+    URL 검색:
+    <a href="https://www.zara.com/de/en/man-linen-sweaters-l17547.html?v1=2720371">
+      https://www.zara.com/de/en/man-linen-sweaters-l17547.html?v1=2720371
+    </a>
+    | <span>수집개수: 3개 | 전체저장</span>
+    <input type="button" value="수집조건수정"
+      onclick="document.body.setAttribute('data-clicked','row2')">
+  </td>
+</tr>
+<tr>
+  <td>Zara.com/de</td>
+  <td><input type="text" value="남성의류_니트2"></td>
+  <td>
+    URL 검색:
+    <a href="https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237">
+      https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237
+    </a>
+    | <span>수집개수: 3개 | 전체저장</span>
+    <input type="button" value="수집조건수정"
+      onclick="document.body.setAttribute('data-clicked','row3')">
+  </td>
+</tr>
+</table>
+</body></html>
+"""
+
 MODIFY_HTML = """
 <html><body>
 <h1>검색필터 수정</h1>
@@ -511,7 +562,7 @@ def test_run_update_uses_canonical_7step_log_messages():
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
     assert "1) 망고 수집 URL 링크로 진입" in src
     assert "2) 망고행: " in src  # 2단계 = 망고 행 정보 그대로
-    assert "2) 엑셀 KEY매칭 성공 · 필터=" in src
+    assert "URL KEY → 망고행 찾음 · 필터=" in src
     assert "4) 상품노출수(카드수) 추출 — 주석처리(URL 화면 열지 않음)" in src
     assert "'저장하기' 클릭 완료" in src
     assert "6) '수정되었습니다' 확인 클릭 완료" in src
@@ -882,6 +933,141 @@ def test_set_save_count_reports_before_after_counts():
         assert io["before"] == "3"  # 화면 기본값
         assert io["after"] == "73"
         browser.close()
+
+
+def test_dup_url_rows_click_their_own_edit_button():
+    """★버그: 같은 URL이 여러 행에 있으면 2·3번째 행이 1번째 행 '수집조건수정'을 눌렀다.
+
+    필터이름으로 그 행을 정확히 골라, 각 행이 자기 버튼을 누르는지 확인한다.
+    """
+    from playwright.sync_api import sync_playwright
+    from update_filters import _find_and_mark_edit_button
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_DUP_URL_HTML)
+        rows = list_demango_rows(page)
+        assert [r["filterName"] for r in rows] == [
+            "남성_니트롱슬리브",
+            "남성의류_니트",
+            "남성의류_니트2",
+        ]
+        for expect, row in zip(("row1", "row2", "row3"), rows):
+            page.evaluate("() => document.body.removeAttribute('data-clicked')")
+            info = _find_and_mark_edit_button(
+                page,
+                int(row["index"]),
+                row["url"],
+                row["filterName"],
+            )
+            assert info.get("ok") is True, info
+            page.locator('[data-p3-edit-target="1"]').first.click()
+            assert page.locator("body").get_attribute("data-clicked") == expect, (
+                f"{row['filterName']} 행이 {expect} 이 아닌 다른 행을 클릭"
+            )
+        browser.close()
+
+
+def test_click_edit_on_row_refuses_other_row():
+    """지정 필터이름과 다른 행이 잡히면 클릭하지 않고 False (다른 행 갱신 방지)."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_DUP_URL_HTML)
+        rows = list_demango_rows(page)
+        logs: list[tuple[str, str]] = []
+        ok = click_edit_on_row(
+            page,
+            int(rows[0]["index"]),
+            "",
+            row_url=rows[0]["url"],
+            filter_hint="엑셀에만_있는_필터",
+            progress=lambda s, m: logs.append((s, m)),
+            row_no=1,
+            max_tries=1,
+            try_interval_s=0.2,
+        )
+        assert ok is False
+        assert page.locator("body").get_attribute("data-clicked") is None
+        browser.close()
+
+
+def test_find_demango_row_for_excel_prefers_matching_filter():
+    """★요건2: 엑셀 URL KEY → 망고 행 찾기 (같은 URL이면 필터이름으로 구분)."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import ExcelRow, find_demango_row_for_excel, row_done_key
+
+    url = "https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237"
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_DUP_URL_HTML)
+
+        first = find_demango_row_for_excel(
+            page, ExcelRow(excel_row=2, url=url, filter_name="남성의류_니트2", collectible=3)
+        )
+        assert first is not None
+        assert first["filterName"] == "남성의류_니트2"
+
+        # 같은 URL 두 번째 엑셀행 — 이미 처리한 행은 건너뛰고 남은 행을 잡는다
+        done = {row_done_key(url, "남성의류_니트2")}
+        second = find_demango_row_for_excel(
+            page,
+            ExcelRow(excel_row=3, url=url, filter_name="", collectible=3),
+            done_keys=done,
+        )
+        assert second is not None
+        assert second["filterName"] == "남성_니트롱슬리브"
+
+        # 망고에 없는 URL → None (조용히 skip)
+        assert (
+            find_demango_row_for_excel(
+                page,
+                ExcelRow(excel_row=9, url="https://example.com/none", filter_name="", collectible=1),
+            )
+            is None
+        )
+        browser.close()
+
+
+def test_find_demango_rows_for_excel_returns_all_same_url_rows():
+    """★요건: 같은 URL 행이 여러 개면 전체를 갱신 대상으로 돌려준다."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import ExcelRow, find_demango_rows_for_excel
+
+    url = "https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237"
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_DUP_URL_HTML)
+        found = find_demango_rows_for_excel(
+            page, ExcelRow(excel_row=2, url=url, filter_name="남성의류_니트2", collectible=3)
+        )
+        # 같은 URL 2개 행 전체 · 엑셀 필터이름 일치 행이 앞
+        assert [r["filterName"] for r in found] == ["남성의류_니트2", "남성_니트롱슬리브"]
+        browser.close()
+
+
+def test_dup_url_count_and_url_marked_red():
+    """★요건: 동일 URL 행 2개 이상이면 개수·URL 을 적색으로 구분 표시."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "if len(matches) >= 2:" in src
+    assert "동일 URL 망고행 {len(matches)}개 — 전체 갱신" in src
+    assert "_red(" in src
+    # 보드는 ##RED## 표식이 붙은 줄을 적색 행으로 표시한다
+    assert 'RED_PREFIX = "##RED##"' in src
+
+
+def test_run_update_is_excel_driven_in_order():
+    """★요건: 1) 엑셀 첫행부터 순차 → 2) 그 URL KEY로 망고 행 찾기 (방향 반대 아님)."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "for i, ex in enumerate(rows, start=1):" in src
+    assert "find_demango_row_for_excel(" in src
+    # 망고 목록을 훑는 방향(옛 로직)은 없어야 한다
+    assert "for i, drow in enumerate(demango_rows" not in src
 
 
 def test_step2_shows_mango_row_text_as_is():

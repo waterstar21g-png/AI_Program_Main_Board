@@ -13,6 +13,7 @@ from log_protocol import (  # noqa: E402
     format_meta_line,
     main_tag_p3,
     parse_line,
+    split_red,
     step_label_p3,
     step_tag,
     step_tag_p3,
@@ -96,6 +97,15 @@ def test_main_tag_p3_marks_failures_red():
     assert main_tag_p3(6, "6) 확인 클릭 완료") == "save"
 
 
+def test_split_red_marks_row_red():
+    """##RED## 표식이 붙은 줄은 적색 행으로 구분 표시하고 표식은 지운다."""
+    red, msg = split_red("##RED##2) 동일 URL 망고행 3개 — 전체 갱신 · URL=https://x")
+    assert red is True
+    assert msg.startswith("2) 동일 URL 망고행 3개")
+    assert "##RED##" not in msg
+    assert split_red("2) 일반 로그") == (False, "2) 일반 로그")
+
+
 def test_parse_meta_line():
     parsed = parse_line("##META##총건수##42")
     assert parsed == ("meta", "총건수", "42")
@@ -170,6 +180,7 @@ if __name__ == "__main__":
         ("step_tag_p3_map", test_step_tag_p3_mapping),
         ("step_label_p3_map", test_step_label_p3_mapping),
         ("main_tag_p3_fail_red", test_main_tag_p3_marks_failures_red),
+        ("split_red", test_split_red_marks_row_red),
         ("full_pipeline", test_full_pipeline_timestamp_then_parse),
     ]
     for name, fn in tests:

@@ -3,8 +3,9 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
 
 로직 순서 (1~7단계 — 실행 로그 MAIN 도 이 7단계만 표시):
 1) 망고 수집 URL 링크로 진입 (입력 항목 정보로 제공)
-2) 망고 행의 "URL 검색" 주소를 KEY로 엑셀자료 조회 (★비교만 — 그 주소로 화면을 열지 않음)
-3) 망고 필터와 엑셀 필터가 불일치하면 다음 행으로 진행 (매칭 안 되는 행은 로그에 남기지 않음)
+2) ★엑셀 자료를 첫행부터 순차로 읽어, 그 "URL KEY"로 망고의 같은 "URL KEY" 행을 찾는다
+   (엑셀이 기준 — 망고 목록을 훑는 방향이 아니다. 그 주소로 화면을 열지도 않는다)
+3) 망고 필터와 엑셀 필터가 불일치하면 다음 엑셀행으로 진행 (매칭 안 되는 행은 로그에 남기지 않음)
 4) 상품노출수(카드수) 추출 — ★전부 주석처리. "URL 검색" 주소로는 어떤 화면도 불러오지
    않으며, 상품수는 엑셀 값만 사용한다 (추후 완성본에서 주석 해제)
 5) LABEL "수집조건수정" 버튼 클릭 → 팝업의 "저장상품수"(검색결과 상위 [ ]개) 필드에
@@ -176,6 +177,15 @@ def _current_seq() -> int:
     if not _SEQ_STATE["cur_seq"]:
         _SEQ_STATE["cur_seq"] = _next_seq()
     return _SEQ_STATE["cur_seq"]
+
+
+# 보드 실행로그에서 그 줄을 적색으로 구분 표시하게 하는 표식
+#   (그리드 셀 안에서 일부 글자만 색을 바꿀 수 없어 행 단위로 구분한다)
+RED_PREFIX = "##RED##"
+
+
+def _red(message: str) -> str:
+    return f"{RED_PREFIX}{message}"
 
 
 def _step_no_of(message: str) -> int:
@@ -647,11 +657,99 @@ def excel_by_url(rows: list[ExcelRow]) -> dict[str, ExcelRow]:
 def find_excel_by_demango_url(
     by_url: dict[str, ExcelRow], demango_url: str
 ) -> ExcelRow | None:
-    """★요건: 더망고 URL을 기준값으로 엑셀에서 동일 URL 행을 찾는다."""
+    """더망고 URL로 엑셀 행을 찾는다 (역방향 조회 — 호환용)."""
     key = normalize_url(demango_url)
     if not key:
         return None
     return by_url.get(key)
+
+
+def _compact(text: str) -> str:
+    return "".join((text or "").split())
+
+
+def row_done_key(url: str, filter_name: str, fuid: str = "") -> tuple[str, str]:
+    """처리 완료 행 식별키.
+
+    행 고유 id(수집조건수정 버튼의 ps_fuid)가 있으면 그것만으로 유일하다.
+    없으면 (정규화 URL, 공백제거 필터이름) 을 쓴다.
+    목록이 수정일 정렬로 재배치되어도 유효하도록 DOM index 는 쓰지 않는다.
+    """
+    fid = _compact(fuid)
+    if fid:
+        return ("fuid", fid)
+    return (normalize_url(url), _compact(filter_name))
+
+
+def find_demango_rows_for_excel(
+    page,
+    excel_row: ExcelRow,
+    *,
+    progress: ProgressFn | None = None,
+    done_keys: set[tuple[str, str]] | None = None,
+) -> list[dict]:
+    """★요건2: 엑셀 「URL KEY」로 망고 목록에서 그 행들을 찾는다 (여러 개면 전부).
+
+    - 매번 현재 목록을 다시 스캔한다 (수정일 정렬로 순서가 바뀌어도 정확한 행을 잡음)
+    - 같은 URL이 망고에 여러 행이면 **전체를 갱신 대상으로** 돌려준다
+      (필터이름이 엑셀과 같은 행을 앞에 둔다)
+    - 이미 처리한 행(done_keys)은 제외한다
+    """
+    try:
+        rows = list_demango_rows(page)
+    except Exception as e:  # noqa: BLE001
+        _log(progress, "경고", f"망고 목록 스캔 실패: {str(e).split(chr(10))[0][:100]}")
+        return []
+
+    done = done_keys or set()
+    key = normalize_url(excel_row.url)
+    stem = (excel_row.url or "").split("?")[0]
+    want_filter = _compact(excel_row.filter_name)
+
+    def _pool(match) -> list[dict]:
+        out: list[dict] = []
+        for r in rows:
+            r_url = (r.get("url") or "").strip()
+            if row_done_key(
+                r_url, str(r.get("filterName") or ""), str(r.get("fuid") or "")
+            ) in done:
+                continue
+            try:
+                if match(r_url):
+                    out.append(r)
+            except Exception:  # noqa: BLE001
+                continue
+        return out
+
+    pool = _pool(lambda u: bool(key) and normalize_url(u) == key)
+    if not pool:
+        pool = _pool(lambda u: bool(stem) and stem in u)
+    if not pool:
+        return []
+
+    def _rank(r: dict) -> int:
+        name = str(r.get("filterName") or "")
+        if want_filter and _compact(name) == want_filter:
+            return 0
+        if filters_equal(excel_row.filter_name, name):
+            return 1
+        return 2
+
+    return sorted(pool, key=_rank)
+
+
+def find_demango_row_for_excel(
+    page,
+    excel_row: ExcelRow,
+    *,
+    progress: ProgressFn | None = None,
+    done_keys: set[tuple[str, str]] | None = None,
+) -> dict | None:
+    """엑셀 「URL KEY」로 찾은 망고 행 중 첫 행 (없으면 None)."""
+    found = find_demango_rows_for_excel(
+        page, excel_row, progress=progress, done_keys=done_keys
+    )
+    return found[0] if found else None
 
 
 def filters_equal(excel_filter: str, demango_filter: str) -> bool:
@@ -917,12 +1015,17 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
     }
 
     if (!url && !hasEdit && !filterName) continue;
+    // 행 고유 id — 같은 URL·같은 필터이름 행이 여러 개여도 이것으로 구분한다
+    let fuid = '';
+    const fm = String(editHref || '').match(/ps_fuid=(\d+)/);
+    if (fm) fuid = fm[1];
     out.push({
       index: i,
       url,
       filterName,
       hasEdit,
       editHref,
+      fuid,
       // 2단계에서 망고 행 정보를 그대로 표출하므로 넉넉히 담는다
       text: t.slice(0, 400),
     });
@@ -943,10 +1046,97 @@ def list_demango_rows(page) -> list[dict]:
     return list(data or [])
 
 
-def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
+# ★행 지정 공통 규칙 (JS) — 같은 「URL 검색」 주소가 여러 행에 있을 수 있으므로
+#   URL 만 보고 첫 행을 잡으면 2번째 행부터 첫 행을 갱신해 버린다.
+#   그래서 (행 index) + (필터이름) 으로 그 행만 정확히 고른다.
+ROW_PICK_JS = r"""
+  const __p3Trs = () => Array.from(document.querySelectorAll('table tr, form tr, tr'));
+  const __p3Compact = (s) => String(s || '').replace(/\s+/g, '');
+  const __p3FilterNames = (tr) => Array.from(tr.querySelectorAll('input'))
+    .filter(inp => {
+      const ty = (inp.getAttribute('type') || 'text').toLowerCase();
+      return ty === 'text' || ty === 'search' || ty === '';
+    })
+    .map(inp => __p3Compact(inp.value || inp.getAttribute('value') || ''))
+    .filter(Boolean);
+  const __p3UrlScore = (tr, urlHint) => {
+    if (!urlHint) return 0;
+    const stem = urlHint.split('?')[0];
+    let best = 0;
+    for (const a of Array.from(tr.querySelectorAll('a[href]'))) {
+      const h = a.href || a.getAttribute('href') || '';
+      if (!h) continue;
+      if (h === urlHint) return 100;
+      if (h.split('?')[0] === stem) { best = Math.max(best, 80); continue; }
+      if (h.startsWith(stem) || urlHint.startsWith(h.split('?')[0])) {
+        best = Math.max(best, 40);
+      }
+    }
+    if (!best) {
+      const text = tr.innerText || '';
+      if (urlHint && text.includes(urlHint)) best = 30;
+      else if (stem && text.includes(stem)) best = 20;
+    }
+    return best;
+  };
+  // 행 고유 id (수집조건수정 버튼의 ps_fuid) — 같은 URL·같은 필터이름 행도 구분한다
+  const __p3RowFuid = (tr) => {
+    for (const el of Array.from(tr.querySelectorAll('a, button, input'))) {
+      const label = __p3Compact(el.value || el.textContent || '');
+      const src = (el.getAttribute('onclick') || '')
+        + ' ' + (el.getAttribute('href') || '') + ' ' + (el.href || '');
+      if (!/^수집조건(수정|저장)/.test(label) && !/ps_fuid=/.test(src)) continue;
+      const m = src.match(/ps_fuid=(\d+)/);
+      if (m) return m[1];
+    }
+    return '';
+  };
+  const __p3PickRow = (rowIndex, urlHint, filterHint, fuidHint) => {
+    const trs = __p3Trs();
+    const want = __p3Compact(filterHint);
+    const wantFuid = String(fuidHint || '').trim();
+    // 0) 행 고유 id 가 있으면 그 행이 정답 (가장 정확)
+    if (wantFuid) {
+      for (let i = 0; i < trs.length; i++) {
+        if (__p3RowFuid(trs[i]) === wantFuid) {
+          return { tr: trs[i], index: i, by: 'fuid' };
+        }
+      }
+    }
+    const fits = (tr) => {
+      if (!tr) return false;
+      if (urlHint && __p3UrlScore(tr, urlHint) <= 0) return false;
+      if (want && !__p3FilterNames(tr).includes(want)) return false;
+      return true;
+    };
+    // 1) 지정된 행 index 가 URL·필터이름과 맞으면 그 행 (순차처리의 기준)
+    const at = (rowIndex >= 0 && rowIndex < trs.length) ? trs[rowIndex] : null;
+    if (at && fits(at)) return { tr: at, index: rowIndex, by: 'index' };
+    // 2) 아니면 URL·필터이름이 맞는 행 중 지정 index 에 가장 가까운 행
+    const ranked = trs
+      .map((tr, i) => ({ tr: tr, i: i, s: __p3UrlScore(tr, urlHint) }))
+      .filter(x => fits(x.tr))
+      .sort((a, b) => (b.s - a.s)
+        || (Math.abs(a.i - rowIndex) - Math.abs(b.i - rowIndex)));
+    if (ranked.length) {
+      return { tr: ranked[0].tr, index: ranked[0].i, by: 'match' };
+    }
+    return null;
+  };
+"""
+
+
+def _find_and_mark_edit_button(
+    page,
+    row_index: int,
+    row_url: str = "",
+    filter_hint: str = "",
+    fuid_hint: str = "",
+) -> dict:
     """URL 바로 오른쪽·수집개수|전체저장 옆 「수집조건수정」을 data-p3-edit-target 마킹."""
     info = page.evaluate(
         """(args) => {
+          __ROW_PICK__
           const rowIndex = args.rowIndex;
           const urlHint = (args.urlHint || '').trim();
           const urlStem = urlHint.split('?')[0];
@@ -1034,52 +1224,43 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
             return s;
           };
 
-          const rowMatchesUrl = (tr) => {
-            if (!urlHint) return false;
-            const anchors = Array.from(tr.querySelectorAll('a[href]'));
-            for (const a of anchors) {
-              const h = a.href || a.getAttribute('href') || '';
-              if (h && (h === urlHint || h.startsWith(urlStem) || urlHint.startsWith(h.split('?')[0]))) {
-                return true;
-              }
-            }
-            const text = tr.innerText || '';
-            return text.includes(urlStem) || text.includes(urlHint);
+          const picked = __p3PickRow(rowIndex, urlHint, args.filterHint || '', args.fuidHint || '');
+          if (!picked) return { ok: false, reason: 'row-not-found' };
+
+          const tr = picked.tr;
+          const urlA = findUrlAnchor(tr);
+          const edits = Array.from(tr.querySelectorAll('a, button, input')).filter(isEditControl);
+          if (!edits.length) return { ok: false, reason: 'button-not-found' };
+          edits.sort((a, b) => score(b, urlA) - score(a, urlA));
+          const right = edits.filter(e => rightOfUrl(e, urlA));
+          const near = edits.filter(nearCollectCount);
+          const pick = (right.length ? right : (near.length ? near : edits))[0];
+          try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+          pick.setAttribute('data-p3-edit-target', '1');
+          if (urlA) urlA.setAttribute('data-p3-url-target', '1');
+          const oc = pick.getAttribute('onclick') || '';
+          return {
+            ok: true,
+            tag: pick.tagName,
+            text: ((pick.value || pick.textContent || '') + '').replace(/\\s+/g, ' ').trim().slice(0, 40),
+            nearCollect: nearCollectCount(pick),
+            rightOfUrl: rightOfUrl(pick, urlA),
+            score: score(pick, urlA),
+            onclick: oc.slice(0, 160),
+            // 어느 행을 잡았는지 — 호출부에서 지정 행과 같은지 검증한다
+            rowIndexUsed: picked.index,
+            rowPickedBy: picked.by,
+            rowFuid: __p3RowFuid(tr),
+            rowFilterNames: __p3FilterNames(tr).slice(0, 4),
+            rowHref: ((urlA && (urlA.href || urlA.getAttribute('href'))) || '').slice(0, 200),
           };
-
-          const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
-          let candidates = [];
-          if (urlHint) candidates = trs.filter(rowMatchesUrl);
-          if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
-            candidates = [trs[rowIndex]];
-          }
-          if (!candidates.length) return { ok: false, reason: 'row-not-found' };
-
-          for (const tr of candidates) {
-            const urlA = findUrlAnchor(tr);
-            const edits = Array.from(tr.querySelectorAll('a, button, input')).filter(isEditControl);
-            if (!edits.length) continue;
-            edits.sort((a, b) => score(b, urlA) - score(a, urlA));
-            const right = edits.filter(e => rightOfUrl(e, urlA));
-            const near = edits.filter(nearCollectCount);
-            const pick = (right.length ? right : (near.length ? near : edits))[0];
-            try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
-            pick.setAttribute('data-p3-edit-target', '1');
-            if (urlA) urlA.setAttribute('data-p3-url-target', '1');
-            const oc = pick.getAttribute('onclick') || '';
-            return {
-              ok: true,
-              tag: pick.tagName,
-              text: ((pick.value || pick.textContent || '') + '').replace(/\\s+/g, ' ').trim().slice(0, 40),
-              nearCollect: nearCollectCount(pick),
-              rightOfUrl: rightOfUrl(pick, urlA),
-              score: score(pick, urlA),
-              onclick: oc.slice(0, 160),
-            };
-          }
-          return { ok: false, reason: 'button-not-found' };
-        }""",
-        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
+        }""".replace("__ROW_PICK__", ROW_PICK_JS),
+        {
+            "rowIndex": int(row_index),
+            "urlHint": (row_url or "").strip(),
+            "filterHint": (filter_hint or "").strip(),
+            "fuidHint": str(fuid_hint or "").strip(),
+        },
     )
     return info if isinstance(info, dict) else {"ok": False, "reason": "evaluate-failed"}
 
@@ -1207,9 +1388,16 @@ def resolve_demango_row_index_by_url(
     row_url: str,
     *,
     fallback_index: int | None = None,
+    filter_hint: str = "",
+    fuid_hint: str = "",
     progress: ProgressFn | None = None,
 ) -> int | None:
-    """더망고 목록에서 URL로 행 index를 다시 찾는다 (복귀 후 stale index 방지)."""
+    """더망고 목록에서 URL(+필터이름)로 행 index를 다시 찾는다.
+
+    ★목록은 수정일 정렬(ft_sort=modify_asc)이라 한 행을 갱신하면 순서가 바뀔 수 있고,
+    같은 URL이 여러 행에 있을 수도 있다. 그래서 URL 뿐 아니라 필터이름까지 같은 행을
+    찾아야 "2번째 행을 갱신했는데 1번째 행이 바뀌는" 사고를 막을 수 있다.
+    """
     url = (row_url or "").strip()
     if not url:
         return fallback_index
@@ -1219,88 +1407,112 @@ def resolve_demango_row_index_by_url(
         _log(progress, "경고", f"행 재탐색 실패(목록스캔): {str(e).split(chr(10))[0][:100]}")
         return fallback_index
 
+    want_filter = "".join((filter_hint or "").split())
+    want_fuid = "".join((fuid_hint or "").split())
+    if want_fuid:
+        for r in rows:
+            if str(r.get("fuid") or "").strip() == want_fuid:
+                idx = int(r.get("index") or 0)
+                _log(
+                    progress,
+                    "로직",
+                    f"행 재탐색 OK(행id={want_fuid}) · index={idx} · "
+                    f"필터={r.get('filterName') or ''}",
+                )
+                return idx
+
+    def _same_filter(r: dict) -> bool:
+        if not want_filter:
+            return True
+        return "".join(str(r.get("filterName") or "").split()) == want_filter
+
     target = normalize_url(url)
-    for r in rows:
-        ru = normalize_url((r.get("url") or "").strip())
-        if ru and target and ru == target:
-            idx = int(r.get("index") or 0)
-            _log(
-                progress,
-                "로직",
-                f"더망고 행 재탐색 OK · index={idx} · url={url[:100]}",
-            )
-            return idx
-    # 느슨 매칭: stem
     stem = url.split("?")[0]
-    for r in rows:
-        ru = (r.get("url") or "").strip()
-        if stem and stem in ru:
+    # 1) URL 완전일치 + 필터이름 일치 → 2) URL stem + 필터이름 → 3) URL 만
+    for label, match in (
+        ("정확", lambda r: normalize_url((r.get("url") or "").strip()) == target
+            and _same_filter(r)),
+        ("stem", lambda r: stem and stem in (r.get("url") or "") and _same_filter(r)),
+        ("URL만", lambda r: normalize_url((r.get("url") or "").strip()) == target),
+    ):
+        for r in rows:
+            try:
+                hit = bool(match(r))
+            except Exception:  # noqa: BLE001
+                hit = False
+            if not hit:
+                continue
             idx = int(r.get("index") or 0)
             _log(
                 progress,
                 "로직",
-                f"더망고 행 재탐색(느슨) OK · index={idx} · url={url[:100]}",
+                f"행 재탐색 OK({label}) · index={idx} · 필터={r.get('filterName') or ''} · "
+                f"url={url[:100]}",
             )
             return idx
 
     _log(
         progress,
         "경고",
-        f"더망고 행 재탐색 실패 → fallback index={fallback_index} · url={url[:100]}",
+        f"행 재탐색 실패 → fallback index={fallback_index} · 필터={filter_hint} · "
+        f"url={url[:100]}",
     )
     return fallback_index
 
 
-def _find_and_mark_row_url(page, row_index: int, row_url: str = "") -> dict:
+def _find_and_mark_row_url(
+    page,
+    row_index: int,
+    row_url: str = "",
+    filter_hint: str = "",
+    fuid_hint: str = "",
+) -> dict:
     """행의 URL 검색 링크를 data-p3-url-target 으로 마킹."""
     info = page.evaluate(
         """(args) => {
+          __ROW_PICK__
           const rowIndex = args.rowIndex;
           const urlHint = (args.urlHint || '').trim();
           const urlStem = urlHint.split('?')[0];
           document.querySelectorAll('[data-p3-url-target]').forEach(el => {
             el.removeAttribute('data-p3-url-target');
           });
-          const rowMatchesUrl = (tr) => {
-            if (!urlHint) return false;
-            const text = tr.innerText || '';
-            if (text.includes(urlStem) || text.includes(urlHint)) return true;
-            return Array.from(tr.querySelectorAll('a[href]')).some(a => {
-              const h = a.href || a.getAttribute('href') || '';
-              return h === urlHint || h.startsWith(urlStem);
+          const picked = __p3PickRow(rowIndex, urlHint, args.filterHint || '', args.fuidHint || '');
+          if (!picked) return { ok: false, reason: 'row-not-found' };
+          const tr = picked.tr;
+          const anchors = Array.from(tr.querySelectorAll('a[href]'));
+          let pick = null;
+          for (const a of anchors) {
+            const h = a.href || a.getAttribute('href') || '';
+            const label = (a.textContent || '').replace(/\\s+/g, '');
+            if (/수집조건(수정|저장)/.test(label)) continue;
+            if (h.indexOf('http') !== 0) continue;
+            if (!urlHint || h === urlHint || h.startsWith(urlStem) || urlHint.startsWith(h.split('?')[0])) {
+              pick = a; break;
+            }
+          }
+          if (!pick) {
+            pick = anchors.find(a => {
+              const h = a.href || '';
+              return h.indexOf('http') === 0 && !/수집조건(수정|저장)/.test((a.textContent||''));
             });
+          }
+          if (!pick) return { ok: false, reason: 'url-not-found' };
+          try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+          pick.setAttribute('data-p3-url-target', '1');
+          return {
+            ok: true,
+            href: (pick.href || '').slice(0, 200),
+            rowIndexUsed: picked.index,
+            rowPickedBy: picked.by,
           };
-          const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
-          let candidates = urlHint ? trs.filter(rowMatchesUrl) : [];
-          if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
-            candidates = [trs[rowIndex]];
-          }
-          for (const tr of candidates) {
-            const anchors = Array.from(tr.querySelectorAll('a[href]'));
-            let pick = null;
-            for (const a of anchors) {
-              const h = a.href || a.getAttribute('href') || '';
-              const label = (a.textContent || '').replace(/\\s+/g, '');
-              if (/수집조건(수정|저장)/.test(label)) continue;
-              if (h.indexOf('http') !== 0) continue;
-              if (!urlHint || h === urlHint || h.startsWith(urlStem) || urlHint.startsWith(h.split('?')[0])) {
-                pick = a; break;
-              }
-            }
-            if (!pick) {
-              pick = anchors.find(a => {
-                const h = a.href || '';
-                return h.indexOf('http') === 0 && !/수집조건(수정|저장)/.test((a.textContent||''));
-              });
-            }
-            if (!pick) continue;
-            try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
-            pick.setAttribute('data-p3-url-target', '1');
-            return { ok: true, href: (pick.href || '').slice(0, 200) };
-          }
-          return { ok: false, reason: 'url-not-found' };
-        }""",
-        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
+        }""".replace("__ROW_PICK__", ROW_PICK_JS),
+        {
+            "rowIndex": int(row_index),
+            "urlHint": (row_url or "").strip(),
+            "filterHint": (filter_hint or "").strip(),
+            "fuidHint": str(fuid_hint or "").strip(),
+        },
     )
     return info if isinstance(info, dict) else {"ok": False}
 
@@ -1673,57 +1885,53 @@ def _log_text_find_phase(
     )
 
 
-def _check_allsave_text_present(page, row_index: int, row_url: str) -> dict:
+def _check_allsave_text_present(
+    page,
+    row_index: int,
+    row_url: str,
+    filter_hint: str = "",
+    fuid_hint: str = "",
+) -> dict:
     """검색필터 URL 바로 우측에 '전체저장' 텍스트가 있는지만 확인 (검증·로그용).
 
     ★클릭 좌표 계산에는 사용하지 않는다 — 버튼 클릭은 항상 실제 버튼요소를 찾아 수행.
     """
     result = page.evaluate(
         """(args) => {
+          __ROW_PICK__
           const rowIndex = args.rowIndex;
           const urlHint = (args.urlHint || '').trim();
-          const urlStem = urlHint.split('?')[0];
           const needle = '전체저장';
 
-          const rowMatchesUrl = (tr) => {
-            if (!urlHint) return false;
-            const text = tr.innerText || '';
-            if (text.includes(urlStem) || text.includes(urlHint)) return true;
-            return Array.from(tr.querySelectorAll('a[href]')).some(a => {
-              const h = a.href || a.getAttribute('href') || '';
-              return h === urlHint || h.startsWith(urlStem);
-            });
-          };
+          const picked = __p3PickRow(rowIndex, urlHint, args.filterHint || '', args.fuidHint || '');
+          if (!picked) return { found: false };
 
-          const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
-          let candidates = urlHint ? trs.filter(rowMatchesUrl) : [];
-          if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
-            candidates = [trs[rowIndex]];
-          }
-
-          for (const tr of candidates) {
-            const txt = (tr.innerText || '').replace(/\\s+/g, '');
-            if (!txt.includes(needle)) continue;
-            const walker = document.createTreeWalker(tr, NodeFilter.SHOW_TEXT);
-            let node;
-            while ((node = walker.nextNode())) {
-              const t = node.textContent || '';
-              const i = t.indexOf(needle);
-              if (i < 0) continue;
-              const range = document.createRange();
-              range.setStart(node, i);
-              range.setEnd(node, i + needle.length);
-              const rects = range.getClientRects();
-              if (rects && rects.length) {
-                const r = rects[rects.length - 1];
-                return { found: true, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-              }
+          const tr = picked.tr;
+          const txt = (tr.innerText || '').replace(/\\s+/g, '');
+          if (!txt.includes(needle)) return { found: false };
+          const walker = document.createTreeWalker(tr, NodeFilter.SHOW_TEXT);
+          let node;
+          while ((node = walker.nextNode())) {
+            const t = node.textContent || '';
+            const i = t.indexOf(needle);
+            if (i < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, i);
+            range.setEnd(node, i + needle.length);
+            const rects = range.getClientRects();
+            if (rects && rects.length) {
+              const r = rects[rects.length - 1];
+              return { found: true, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
             }
-            return { found: true };
           }
-          return { found: false };
-        }""",
-        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
+          return { found: true };
+        }""".replace("__ROW_PICK__", ROW_PICK_JS),
+        {
+            "rowIndex": int(row_index),
+            "urlHint": (row_url or "").strip(),
+            "filterHint": (filter_hint or "").strip(),
+            "fuidHint": str(fuid_hint or "").strip(),
+        },
     )
     return result if isinstance(result, dict) else {"found": False}
 
@@ -1733,6 +1941,8 @@ def _find_edit_button_with_log(
     row_index: int,
     row_url: str,
     *,
+    filter_hint: str = "",
+    fuid_hint: str = "",
     progress: ProgressFn | None = None,
     shot_dir: Path | None = None,
     row_no: int = 0,
@@ -1745,7 +1955,7 @@ def _find_edit_button_with_log(
        DOM에서 찾아 data-p3-edit-target 로 마킹 (전/후 로그·샷)
        ★좌표 계산 없음 — 찾은 요소를 그대로 클릭 대상으로 사용한다.
     """
-    _find_and_mark_row_url(page, row_index, row_url)
+    _find_and_mark_row_url(page, row_index, row_url, filter_hint, fuid_hint)
 
     if log_find:
         _log_text_find_phase(
@@ -1758,7 +1968,9 @@ def _find_edit_button_with_log(
             label="전체저장",
         )
 
-    allsave = _check_allsave_text_present(page, row_index, row_url)
+    allsave = _check_allsave_text_present(
+        page, row_index, row_url, filter_hint, fuid_hint
+    )
     allsave_found = bool(allsave.get("found"))
 
     if log_find:
@@ -1788,13 +2000,18 @@ def _find_edit_button_with_log(
             label="수집조건수정/수집조건저장",
         )
 
-    info = _find_and_mark_edit_button(page, row_index, row_url)
+    info = _find_and_mark_edit_button(
+        page, row_index, row_url, filter_hint, fuid_hint
+    )
     btn_found = bool(info.get("ok"))
     matched_label = str(info.get("text") or "") if btn_found else ""
 
     if log_find:
         detail = (
-            f"매칭={matched_label} · tag={info.get('tag', '')}"
+            f"매칭={matched_label} · tag={info.get('tag', '')} · "
+            f"행index={info.get('rowIndexUsed')}({info.get('rowPickedBy')}) · "
+            f"행id={info.get('rowFuid') or '-'} · "
+            f"행필터명={info.get('rowFilterNames')}"
             if btn_found
             else str(info.get("reason") or "")
         )
@@ -1821,6 +2038,8 @@ def click_edit_on_row(
     edit_href: str = "",  # 미사용 — href 재시도 금지(호출부 호환용)
     *,
     row_url: str = "",
+    filter_hint: str = "",
+    fuid_hint: str = "",
     progress: ProgressFn | None = None,
     shot_dir: Path | None = None,
     row_no: int = 0,
@@ -1849,6 +2068,8 @@ def click_edit_on_row(
             page,
             row_index,
             row_url,
+            filter_hint=filter_hint,
+            fuid_hint=fuid_hint,
             progress=progress,
             shot_dir=shot_dir,
             row_no=row_no,
@@ -1866,6 +2087,32 @@ def click_edit_on_row(
             if attempt < tries:
                 time.sleep(gap)
             continue
+
+        # ★다른 행을 절대 건드리지 않는다 — 잡은 행이 이 행인지 검증
+        #   (행 고유 id 우선, 없으면 필터이름)
+        got_fuid = str(info.get("rowFuid") or "")
+        want_fuid = str(fuid_hint or "").strip()
+        wrong_row = False
+        if want_fuid and got_fuid and got_fuid != want_fuid:
+            wrong_row = True
+        elif not want_fuid and filter_hint:
+            names = [
+                "".join(str(n or "").split())
+                for n in (info.get("rowFilterNames") or [])
+            ]
+            want = "".join(filter_hint.split())
+            wrong_row = bool(want and want not in names)
+        if wrong_row:
+            _log(
+                progress,
+                "오류",
+                f"5) 다른 행을 잡았습니다 — 클릭하지 않고 중단 · 요청필터={filter_hint} · "
+                f"요청행id={want_fuid or '-'} · 잡은행id={got_fuid or '-'} · "
+                f"잡은행필터={info.get('rowFilterNames')} · 요청행index={row_index} · "
+                f"잡은행index={info.get('rowIndexUsed')}({info.get('rowPickedBy')}) · "
+                f"KEY={row_url[:100]}",
+            )
+            return False
 
         locator = page.locator('[data-p3-edit-target="1"]').first
         try:
@@ -3001,11 +3248,11 @@ def run_update(
     if not rows:
         result.errors.append("엑셀에 URL 행이 없습니다.")
         return result
-    by_url = excel_by_url(rows)
     _log(
         progress,
         "준비",
-        f"엑셀 {path.name} · URL {len(rows)}건 · 망고URL={mango[:120]}",
+        f"엑셀 {path.name} · URL {len(rows)}건 (엑셀 첫행부터 순차 처리) · "
+        f"망고URL={mango[:120]}",
     )
     _log(
         progress,
@@ -3062,324 +3309,385 @@ def run_update(
                 return result
 
             processed_no = 0  # 실제 처리(매칭)한 행 순번 — 지연 적용 판단용
-            for i, drow in enumerate(demango_rows, start=1):
+            done_keys: set[tuple[str, str]] = set()  # 이미 갱신한 망고 행
+            # ★요건: 1) 엑셀 첫행부터 순차로 읽고 → 2) 그 「URL KEY」로 망고 행을 찾는다
+            for i, ex in enumerate(rows, start=1):
                 if stop_requested():
                     _log(progress, "중단", "사용자 중단 요청")
                     break
 
-                d_url = (drow.get("url") or "").strip()
-                d_filter = (drow.get("filterName") or "").strip()
-                row_idx = int(drow.get("index") or 0)
-                edit_href = (drow.get("editHref") or "").strip()
-                # 망고 행에 보이는 정보 원문(필터명·URL 검색·수집계수·전체저장 …)
-                d_row_text = " ".join((drow.get("text") or "").split())
-                key_short = d_url[:100] if d_url else "(URL없음)"
-                # ★요건1: 더망고 URL을 기준값(KEY)으로 엑셀에서 동일 URL 검색
-                ex = find_excel_by_demango_url(by_url, d_url)
-
-                # 2)/3) KEY 불일치 또는 필터 불일치 → 조용히 다음 행
+                # 2) 엑셀 URL KEY → 망고행 찾기 (같은 URL 행이 여러 개면 전체 갱신)
+                matches = find_demango_rows_for_excel(
+                    page, ex, progress=progress, done_keys=done_keys
+                )
                 # ★매칭되지 않는 정보는 로그에 남기지 않는다.
-                if not ex:
+                if not matches:
                     result.skipped += 1
                     continue
-                if ex.filter_name and d_filter and not filters_equal(
-                    ex.filter_name, d_filter
-                ):
-                    result.skipped += 1
-                    continue
-
-                # 처음 5개 처리행만 동작마다 3초 대기 (요건) — 건너뛴 행은 세지 않는다
-                processed_no += 1
-                # ★요건: 2단계는 망고 행의 정보를 그대로 표출한다
-                _log(
-                    progress,
-                    "로직",
-                    f"2) 망고행: {d_row_text or '(행 텍스트 없음)'}",
-                    major=True,
-                )
-                _log(
-                    progress,
-                    "로직",
-                    f"2) 엑셀 KEY매칭 성공 · 필터={d_filter} · KEY={key_short} · "
-                    f"엑셀행={ex.excel_row} · 수집가능개수={ex.collectible}",
-                )
-                note = filter_compare_note(ex.filter_name, d_filter)
-                if note:
-                    _log(progress, "로직", f"2) {note} · KEY={key_short}")
-
-                # ★요건: 4) 망고 행 「URL 검색」 주소로 상품수를 읽어오는 부분은 전부
-                #   주석처리한다. 그 주소로는 어떤 화면도 불러오지 않는다(절대 금지).
-                #   「URL 검색」 주소는 엑셀자료 비교(KEY)에만 쓴다.
-                #   (추후 완성본에서 되살릴 때 아래 주석을 해제한다)
-                #
-                # list_page = page
-                # store = click_demango_row_url(
-                #     list_page, row_idx, d_url, progress=progress
-                # )
-                # if store is None:
-                #     _log(progress, "오류", f"행{i} · 4) URL 클릭 실패 · …")
-                #     _return_to_list(list_page, mango)
-                # else:
-                #     card_n, matched = browse_store_count_cards(
-                #         store, excel_count=ex.collectible, progress=progress,
-                #         shot_dir=shot_dir, row_no=i,
-                #     )
-                #     page = close_store_return_list(
-                #         list_page, store, mango, progress=progress
-                #     )
-                #     row_idx2 = resolve_demango_row_index_by_url(
-                #         page, d_url, fallback_index=row_idx, progress=progress
-                #     )
-                #     if row_idx2 is not None:
-                #         row_idx = int(row_idx2)
-                _log(
-                    progress,
-                    "로직",
-                    "4) 상품노출수(카드수) 추출 — 주석처리(URL 화면 열지 않음) · "
-                    f"엑셀 수집가능개수={ex.collectible} 만 사용",
-                    major=True,
-                )
-
-                # 5) LABEL '수집조건수정' 버튼 클릭 → 저장상품수 입력 → '저장하기' 클릭
-                target = map_save_count(ex.collectible)
-                if not page_is_usable(page):
-                    result.failed += 1
+                if len(matches) >= 2:
+                    # ★요건: 동일 URL 행이 2개 이상이면 몇 개인지·URL 을 적색으로 구분 표시
                     _log(
                         progress,
-                        "오류",
-                        f"행{i} · 필터={d_filter} · KEY={key_short} · "
-                        "더망고 페이지 핸들 사용불가(닫힘/크래시)",
+                        "로직",
+                        _red(
+                            f"2) 동일 URL 망고행 {len(matches)}개 — 전체 갱신 · "
+                            f"URL={ex.url}"
+                        ),
+                        major=True,
                     )
-                    continue
-                if not click_edit_on_row(
-                    page,
-                    row_idx,
-                    edit_href,
-                    row_url=d_url,
-                    progress=progress,
-                    shot_dir=shot_dir,
-                    row_no=i,
-                    max_tries=EDIT_CLICK_MAX_TRIES,
-                    try_interval_s=0.6,  # ★테스트 속도 우선
-                ):
-                    result.failed += 1
                     _log(
                         progress,
-                        "오류",
-                        f"행{i} · 5) '수집조건수정' 버튼 클릭 실패 · 필터={d_filter} · "
-                        f"KEY={key_short} · 목표저장상품수={target} · "
-                        "사유=버튼 미검출 또는 클릭 후 팝업 미오픈(상세는 위 재시도 로그 참조)",
+                        "로직",
+                        _red(
+                            f"2) 동일 URL {len(matches)}개 행 필터이름="
+                            + ", ".join(
+                                str(m.get("filterName") or "?") for m in matches
+                            )
+                            + f" · URL={ex.url}"
+                        ),
                     )
-                    screenshot_step(
+
+                for drow in matches:
+                    if stop_requested():
+                        break
+                    d_url = (drow.get("url") or "").strip()
+                    d_filter = (drow.get("filterName") or "").strip()
+                    row_idx = int(drow.get("index") or 0)
+                    edit_href = (drow.get("editHref") or "").strip()
+                    # 망고 행에 보이는 정보 원문(필터명·URL 검색·수집계수·전체저장 …)
+                    d_row_text = " ".join((drow.get("text") or "").split())
+                    key_short = d_url[:100] if d_url else "(URL없음)"
+
+                    d_fuid = str(drow.get("fuid") or "").strip()
+                    same_filter = filters_equal(ex.filter_name, d_filter)
+                    # 동일 URL 행이 여러 개면 필터이름이 달라도 전체 갱신한다(요건).
+                    # 행이 하나뿐일 때는 기존대로 필터 불일치면 건너뛴다.
+                    if (
+                        len(matches) == 1
+                        and ex.filter_name
+                        and d_filter
+                        and not same_filter
+                    ):
+                        result.skipped += 1
+                        continue
+                    done_keys.add(row_done_key(d_url, d_filter, d_fuid))
+
+                    # 처음 5개 처리행만 동작마다 3초 대기 (요건) — 건너뛴 행은 세지 않는다
+                    processed_no += 1
+                    # ★요건: 2단계는 망고 행의 정보를 그대로 표출한다
+                    _log(
+                        progress,
+                        "로직",
+                        f"2) 망고행: {d_row_text or '(행 텍스트 없음)'}",
+                        major=True,
+                    )
+                    _log(
+                        progress,
+                        "로직",
+                        f"2) 엑셀 {ex.excel_row}행 URL KEY → 망고행 찾음 · 필터={d_filter} · "
+                        f"KEY={key_short} · 수집가능개수={ex.collectible} · "
+                        f"망고행index={row_idx}",
+                    )
+                    note = filter_compare_note(ex.filter_name, d_filter)
+                    if note:
+                        _log(progress, "로직", f"2) {note} · KEY={key_short}")
+                    if not same_filter and ex.filter_name and d_filter:
+                        _log(
+                            progress,
+                            "로직",
+                            _red(
+                                f"2) 필터이름 다름(동일 URL이라 갱신) · 엑셀={ex.filter_name} · "
+                                f"망고={d_filter} · URL={d_url}"
+                            ),
+                        )
+
+                    # ★요건: 4) 망고 행 「URL 검색」 주소로 상품수를 읽어오는 부분은 전부
+                    #   주석처리한다. 그 주소로는 어떤 화면도 불러오지 않는다(절대 금지).
+                    #   「URL 검색」 주소는 엑셀자료 비교(KEY)에만 쓴다.
+                    #   (추후 완성본에서 되살릴 때 아래 주석을 해제한다)
+                    #
+                    # list_page = page
+                    # store = click_demango_row_url(
+                    #     list_page, row_idx, d_url, progress=progress
+                    # )
+                    # if store is None:
+                    #     _log(progress, "오류", f"엑셀{ex.excel_row}행 · 4) URL 클릭 실패 · …")
+                    #     _return_to_list(list_page, mango)
+                    # else:
+                    #     card_n, matched = browse_store_count_cards(
+                    #         store, excel_count=ex.collectible, progress=progress,
+                    #         shot_dir=shot_dir, row_no=i,
+                    #     )
+                    #     page = close_store_return_list(
+                    #         list_page, store, mango, progress=progress
+                    #     )
+                    #     row_idx2 = resolve_demango_row_index_by_url(
+                    #         page, d_url, fallback_index=row_idx, progress=progress
+                    #     )
+                    #     if row_idx2 is not None:
+                    #         row_idx = int(row_idx2)
+                    _log(
+                        progress,
+                        "로직",
+                        "4) 상품노출수(카드수) 추출 — 주석처리(URL 화면 열지 않음) · "
+                        f"엑셀 수집가능개수={ex.collectible} 만 사용",
+                        major=True,
+                    )
+
+                    # 5) LABEL '수집조건수정' 버튼 클릭 → 저장상품수 입력 → '저장하기' 클릭
+                    target = map_save_count(ex.collectible)
+                    if not page_is_usable(page):
+                        result.failed += 1
+                        _log(
+                            progress,
+                            "오류",
+                            f"엑셀{ex.excel_row}행 · 필터={d_filter} · KEY={key_short} · "
+                            "더망고 페이지 핸들 사용불가(닫힘/크래시)",
+                        )
+                        continue
+                    # ★목록은 수정일 정렬이라 앞 행을 갱신하면 순서가 바뀐다. 클릭 직전에
+                    #   현재 화면에서 이 행(URL+필터이름)의 index 를 다시 확정한다.
+                    row_idx2 = resolve_demango_row_index_by_url(
                         page,
-                        shot_dir,
-                        step_tag="05_edit_fail",
-                        label="5)수집조건수정 실패",
-                        row_no=i,
+                        d_url,
+                        fallback_index=row_idx,
+                        filter_hint=d_filter,
+                        fuid_hint=d_fuid,
                         progress=progress,
                     )
-                    _return_to_list(page, mango)
-                    continue
-                if not wait_modify_page(page):
-                    result.failed += 1
-                    reason = (
-                        "not found — 잘못된 버튼/링크 가능"
-                        if page_shows_not_found(page)
-                        else "검색필터 수정 화면 미진입(팝업 열렸으나 화면 미표시)"
-                    )
-                    _log(
-                        progress,
-                        "오류",
-                        f"행{i} · 5) 수집조건수정 클릭 후 화면 확인 실패 · 필터={d_filter} · "
-                        f"KEY={key_short} · 사유={reason}",
-                    )
-                    screenshot_step(
+                    if row_idx2 is not None:
+                        row_idx = int(row_idx2)
+                    if not click_edit_on_row(
                         page,
-                        shot_dir,
-                        step_tag="05_modify_missing",
-                        label="5)검색필터수정 미진입/notfound",
-                        row_no=i,
+                        row_idx,
+                        edit_href,
+                        row_url=d_url,
+                        filter_hint=d_filter,
+                        fuid_hint=d_fuid,
                         progress=progress,
-                    )
-                    _return_to_list(page, mango)
-                    continue
-                try:
-                    mod_page, _kind = resolve_modify_target(page)
-                except Exception:
-                    mod_page = page
-                reveal_browser_page(
-                    mod_page if mod_page is not None else page,
-                    progress,
-                    step_no="5",
-                    action="검색필터 수정 팝업/화면 표시",
-                    # 6번째 처리행부터는 화면 표시 대기도 없이 최고속
-                    dwell_s=(
-                        STEP_VIEW_DWELL_SEC
-                        if step_delay_sec(processed_no) > 0
-                        else 0.0
-                    ),
-                )
-                screenshot_step(
-                    mod_page if mod_page is not None else page,
-                    shot_dir,
-                    step_tag="05_modify_opened",
-                    label="5)검색필터 수정 화면",
-                    row_no=i,
-                    progress=progress,
-                )
-                _demo_pause(
-                    progress, processed_no, step_no="5", what="'수집조건수정' 클릭"
-                )
-
-                # 5) 「저장상품수」란 「검색결과 상위 [ ]개만 상품만 저장」에 엑셀 상품수 입력
-                count_io: dict = {}
-                if not set_save_count(
-                    page,
-                    target,
-                    shot_dir=shot_dir,
-                    progress=progress,
-                    row_no=i,
-                    out=count_io,
-                ):
-                    result.failed += 1
-                    _log(
-                        progress,
-                        "오류",
-                        f"행{i} · 5) 저장상품수 입력칸 실패 · 필터={d_filter} · "
-                        f"KEY={key_short} · 목표저장상품수={target}",
-                    )
+                        shot_dir=shot_dir,
+                        row_no=i,
+                        max_tries=EDIT_CLICK_MAX_TRIES,
+                        try_interval_s=0.6,  # ★테스트 속도 우선
+                    ):
+                        result.failed += 1
+                        _log(
+                            progress,
+                            "오류",
+                            f"엑셀{ex.excel_row}행 · 5) '수집조건수정' 버튼 클릭 실패 · 필터={d_filter} · "
+                            f"KEY={key_short} · 목표저장상품수={target} · "
+                            "사유=버튼 미검출 또는 클릭 후 팝업 미오픈(상세는 위 재시도 로그 참조)",
+                        )
+                        screenshot_step(
+                            page,
+                            shot_dir,
+                            step_tag="05_edit_fail",
+                            label="5)수집조건수정 실패",
+                            row_no=i,
+                            progress=progress,
+                        )
+                        _return_to_list(page, mango)
+                        continue
+                    if not wait_modify_page(page):
+                        result.failed += 1
+                        reason = (
+                            "not found — 잘못된 버튼/링크 가능"
+                            if page_shows_not_found(page)
+                            else "검색필터 수정 화면 미진입(팝업 열렸으나 화면 미표시)"
+                        )
+                        _log(
+                            progress,
+                            "오류",
+                            f"엑셀{ex.excel_row}행 · 5) 수집조건수정 클릭 후 화면 확인 실패 · 필터={d_filter} · "
+                            f"KEY={key_short} · 사유={reason}",
+                        )
+                        screenshot_step(
+                            page,
+                            shot_dir,
+                            step_tag="05_modify_missing",
+                            label="5)검색필터수정 미진입/notfound",
+                            row_no=i,
+                            progress=progress,
+                        )
+                        _return_to_list(page, mango)
+                        continue
                     try:
-                        page.keyboard.press("Escape")
+                        mod_page, _kind = resolve_modify_target(page)
                     except Exception:
-                        pass
-                    _return_to_list(page, mango)
-                    continue
-
-                # 5) LABEL '저장하기' 버튼 클릭 (★'저장'이 아닌 '저장하기' 텍스트를 찾아 클릭)
-                dialog_state = attach_native_dialog_handler(page)
-                if not click_save_button(page):
-                    result.failed += 1
-                    _log(
+                        mod_page = page
+                    reveal_browser_page(
+                        mod_page if mod_page is not None else page,
                         progress,
-                        "오류",
-                        f"행{i} · 5) '저장하기' 버튼 클릭 실패 · 필터={d_filter} · "
-                        f"KEY={key_short} · 목표저장상품수={target}",
+                        step_no="5",
+                        action="검색필터 수정 팝업/화면 표시",
+                        # 6번째 처리행부터는 화면 표시 대기도 없이 최고속
+                        dwell_s=(
+                            STEP_VIEW_DWELL_SEC
+                            if step_delay_sec(processed_no) > 0
+                            else 0.0
+                        ),
                     )
                     screenshot_step(
-                        page,
+                        mod_page if mod_page is not None else page,
                         shot_dir,
-                        step_tag="05_save_click_fail",
-                        label="5)저장하기 클릭 실패",
+                        step_tag="05_modify_opened",
+                        label="5)검색필터 수정 화면",
                         row_no=i,
                         progress=progress,
                     )
-                    _return_to_list(page, mango)
-                    continue
-                screenshot_step(
-                    page,
-                    shot_dir,
-                    step_tag="05_after_save_click",
-                    label="5)저장하기 클릭 후",
-                    row_no=i,
-                    progress=progress,
-                )
-                # ★요건: 상품수 갱신 전·후를 5단계 '저장하기' 로그에 그대로 표출
-                before_cnt = str(count_io.get("before") or "?")
-                after_cnt = str(count_io.get("after") or target)
-                _log(
-                    progress,
-                    "로직",
-                    f"5) '저장하기' 클릭 완료 · 상품수 갱신전={before_cnt} → "
-                    f"갱신후={after_cnt} · 엑셀 수집가능개수={ex.collectible} · "
-                    f"필터={d_filter} · KEY={key_short}",
-                    major=True,
-                )
-                _demo_pause(
-                    progress, processed_no, step_no="5", what="'저장하기' 클릭"
-                )
-
-                if not wait_modify_page_closed(page, timeout_ms=20_000):
-                    _log(
-                        progress,
-                        "경고",
-                        f"행{i} 수정팝업 닫힘 대기 시간초과 · KEY={key_short} — "
-                        "확인 팝업 계속 시도",
+                    _demo_pause(
+                        progress, processed_no, step_no="5", what="'수집조건수정' 클릭"
                     )
-                screenshot_step(
-                    page,
-                    shot_dir,
-                    step_tag="05_modify_closed",
-                    label="5)수정팝업 닫힘/확인대기",
-                    row_no=i,
-                    progress=progress,
-                )
 
-                # 6) '수정되었습니다' 메세지 하단 LABEL '확인' 버튼 클릭
-                if not click_modified_confirm(
-                    page, timeout_ms=20_000, dialog_state=dialog_state
-                ):
-                    result.failed += 1
-                    _log(
-                        progress,
-                        "오류",
-                        f"행{i} · 6) '확인' 버튼 클릭 실패 · 필터={d_filter} · "
-                        f"KEY={key_short} · 목표저장상품수={target} · "
-                        f"네이티브다이얼로그감지={dialog_state.get('seen')} · "
-                        f"수정화면여전히열림={is_modify_page_open(page)}",
-                    )
+                    # 5) 「저장상품수」란 「검색결과 상위 [ ]개만 상품만 저장」에 엑셀 상품수 입력
+                    count_io: dict = {}
+                    if not set_save_count(
+                        page,
+                        target,
+                        shot_dir=shot_dir,
+                        progress=progress,
+                        row_no=i,
+                        out=count_io,
+                    ):
+                        result.failed += 1
+                        _log(
+                            progress,
+                            "오류",
+                            f"엑셀{ex.excel_row}행 · 5) 저장상품수 입력칸 실패 · 필터={d_filter} · "
+                            f"KEY={key_short} · 목표저장상품수={target}",
+                        )
+                        try:
+                            page.keyboard.press("Escape")
+                        except Exception:
+                            pass
+                        _return_to_list(page, mango)
+                        continue
+
+                    # 5) LABEL '저장하기' 버튼 클릭 (★'저장'이 아닌 '저장하기' 텍스트를 찾아 클릭)
+                    dialog_state = attach_native_dialog_handler(page)
+                    if not click_save_button(page):
+                        result.failed += 1
+                        _log(
+                            progress,
+                            "오류",
+                            f"엑셀{ex.excel_row}행 · 5) '저장하기' 버튼 클릭 실패 · 필터={d_filter} · "
+                            f"KEY={key_short} · 목표저장상품수={target}",
+                        )
+                        screenshot_step(
+                            page,
+                            shot_dir,
+                            step_tag="05_save_click_fail",
+                            label="5)저장하기 클릭 실패",
+                            row_no=i,
+                            progress=progress,
+                        )
+                        _return_to_list(page, mango)
+                        continue
                     screenshot_step(
                         page,
                         shot_dir,
-                        step_tag="06_confirm_fail",
-                        label="6)확인 클릭 실패",
+                        step_tag="05_after_save_click",
+                        label="5)저장하기 클릭 후",
                         row_no=i,
                         progress=progress,
                     )
+                    # ★요건: 상품수 갱신 전·후를 5단계 '저장하기' 로그에 그대로 표출
+                    before_cnt = str(count_io.get("before") or "?")
+                    after_cnt = str(count_io.get("after") or target)
+                    _log(
+                        progress,
+                        "로직",
+                        f"5) '저장하기' 클릭 완료 · 상품수 갱신전={before_cnt} → "
+                        f"갱신후={after_cnt} · 엑셀 수집가능개수={ex.collectible} · "
+                        f"필터={d_filter} · KEY={key_short}",
+                        major=True,
+                    )
+                    _demo_pause(
+                        progress, processed_no, step_no="5", what="'저장하기' 클릭"
+                    )
+
+                    if not wait_modify_page_closed(page, timeout_ms=20_000):
+                        _log(
+                            progress,
+                            "경고",
+                            f"엑셀{ex.excel_row}행 수정팝업 닫힘 대기 시간초과 · KEY={key_short} — "
+                            "확인 팝업 계속 시도",
+                        )
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="05_modify_closed",
+                        label="5)수정팝업 닫힘/확인대기",
+                        row_no=i,
+                        progress=progress,
+                    )
+
+                    # 6) '수정되었습니다' 메세지 하단 LABEL '확인' 버튼 클릭
+                    if not click_modified_confirm(
+                        page, timeout_ms=20_000, dialog_state=dialog_state
+                    ):
+                        result.failed += 1
+                        _log(
+                            progress,
+                            "오류",
+                            f"엑셀{ex.excel_row}행 · 6) '확인' 버튼 클릭 실패 · 필터={d_filter} · "
+                            f"KEY={key_short} · 목표저장상품수={target} · "
+                            f"네이티브다이얼로그감지={dialog_state.get('seen')} · "
+                            f"수정화면여전히열림={is_modify_page_open(page)}",
+                        )
+                        screenshot_step(
+                            page,
+                            shot_dir,
+                            step_tag="06_confirm_fail",
+                            label="6)확인 클릭 실패",
+                            row_no=i,
+                            progress=progress,
+                        )
+                        _return_to_list(page, mango)
+                        continue
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="06_confirmed",
+                        label="6)확인 클릭 완료",
+                        row_no=i,
+                        progress=progress,
+                    )
+                    _log(
+                        progress,
+                        "로직",
+                        f"6) '수정되었습니다' 확인 클릭 완료 · 필터={d_filter} · KEY={key_short}",
+                        major=True,
+                    )
+                    _demo_pause(progress, processed_no, step_no="6", what="'확인' 클릭")
+
+                    result.updated += 1
+                    _log(
+                        progress,
+                        "완료",
+                        f"엑셀{ex.excel_row}행 갱신성공 · 필터={d_filter} · KEY={key_short} · "
+                        f"저장상품수={target}",
+                    )
                     _return_to_list(page, mango)
-                    continue
-                screenshot_step(
-                    page,
-                    shot_dir,
-                    step_tag="06_confirmed",
-                    label="6)확인 클릭 완료",
-                    row_no=i,
-                    progress=progress,
-                )
-                _log(
-                    progress,
-                    "로직",
-                    f"6) '수정되었습니다' 확인 클릭 완료 · 필터={d_filter} · KEY={key_short}",
-                    major=True,
-                )
-                _demo_pause(progress, processed_no, step_no="6", what="'확인' 클릭")
+                    screenshot_step(
+                        page,
+                        shot_dir,
+                        step_tag="07_back_to_list",
+                        label="7)목록복귀 → 다음 행 반복",
+                        row_no=i,
+                        progress=progress,
+                    )
+                    _log(
+                        progress,
+                        "로직",
+                        f"7) 갱신성공 → 다음 행 반복 · 필터={d_filter} · KEY={key_short} · "
+                        f"저장상품수={target}",
+                        major=True,
+                    )
+                    time.sleep(0.1)  # ★테스트 속도 우선
 
-                result.updated += 1
-                _log(
-                    progress,
-                    "완료",
-                    f"행{i} 갱신성공 · 필터={d_filter} · KEY={key_short} · "
-                    f"엑셀행={ex.excel_row} · 저장상품수={target}",
-                )
-                _return_to_list(page, mango)
-                screenshot_step(
-                    page,
-                    shot_dir,
-                    step_tag="07_back_to_list",
-                    label="7)목록복귀 → 다음 행 반복",
-                    row_no=i,
-                    progress=progress,
-                )
-                _log(
-                    progress,
-                    "로직",
-                    f"7) 갱신성공 → 다음 행 반복 · 필터={d_filter} · KEY={key_short} · "
-                    f"저장상품수={target}",
-                    major=True,
-                )
-                time.sleep(0.1)  # ★테스트 속도 우선
-
-                if stop_requested():
-                    break
+                    if stop_requested():
+                        break
 
     except Exception as e:  # noqa: BLE001
         result.errors.append(f"실행 실패: {e}")
@@ -3392,7 +3700,7 @@ def run_update(
         progress,
         "완료",
         f"갱신 {result.updated} · 건너뜀 {result.skipped} · 실패 {result.failed} "
-        f"/ 더망고 {result.total_demango}행",
+        f"/ 엑셀 {len(rows)}행 (망고 목록 {result.total_demango}행)",
     )
     return result
 
