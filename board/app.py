@@ -121,8 +121,8 @@ class BoardApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(f"{APP_TITLE}  v{VERSION}")
-        self.geometry("960x720")
-        self.minsize(820, 600)
+        self.geometry("1280x900")
+        self.minsize(1024, 760)
         self.configure(bg="#1a4d5c")
 
         self._p1_result = None
@@ -1665,21 +1665,9 @@ class BoardApp(tk.Tk):
         tk.Entry(r3, textvariable=self.var_p3_mango_url).pack(
             side="left", fill="x", expand=True
         )
-        tk.Label(
-            search,
-            text=(
-                "더망고 URL 고정초기값=getGoodsCategory.php(filter_delete·zara_de). "
-                "로그인 없이 이 URL로 이동합니다."
-            ),
-            bg="#ffffff",
-            fg="#64748b",
-            anchor="w",
-            font=("Malgun Gothic", 8),
-        ).pack(fill="x")
-
         # ★실행로그를 최대로 키우기 위해 위쪽 목록은 최소 높이만
-        self._p3_file_list_height = 3
-        self._p3_url_list_height = 4
+        self._p3_file_list_height = 2
+        self._p3_url_list_height = 3
 
         found_wrap = tk.Frame(search, bg="#ffffff")
         found_wrap.pack(fill="x", pady=4)
@@ -1801,6 +1789,10 @@ class BoardApp(tk.Tk):
 
         log_area = tk.Frame(log_wrap, bg="#f1f5f9")
         log_area.pack(fill="both", expand=True)
+        # ★MAIN/SUB/스크린샷 3단을 항상 함께 보이게 — 남는 높이를 균등 분배한다
+        log_area.columnconfigure(0, weight=1)
+        for _r in range(3):
+            log_area.rowconfigure(_r, weight=1)
 
         style = ttk.Style(self)
         try:
@@ -1819,13 +1811,13 @@ class BoardApp(tk.Tk):
             padx=6,
             pady=4,
         )
-        self.p3_main_frame.pack(fill="both", expand=True)
+        self.p3_main_frame.grid(row=0, column=0, sticky="nsew")
 
         self.p3_main_log = ttk.Treeview(
             self.p3_main_frame,
             columns=("time", "step", "message"),
             show="headings",
-            height=16,
+            height=3,
             style="P3Log.Treeview",
         )
         self.p3_main_log.heading("time", text="시각")
@@ -1853,13 +1845,13 @@ class BoardApp(tk.Tk):
             padx=6,
             pady=4,
         )
-        self.p3_sub_frame.pack(fill="both", expand=True, pady=(6, 0))
+        self.p3_sub_frame.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
 
         self.p3_sub_log = ttk.Treeview(
             self.p3_sub_frame,
             columns=("time", "message"),
             show="headings",
-            height=8,
+            height=3,
             style="P3Log.Treeview",
         )
         self.p3_sub_log.heading("time", text="시각")
@@ -1884,13 +1876,13 @@ class BoardApp(tk.Tk):
             padx=6,
             pady=4,
         )
-        self.p3_shot_frame.pack(fill="both", expand=True, pady=(6, 0))
+        self.p3_shot_frame.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
 
         self.p3_shot_log = ttk.Treeview(
             self.p3_shot_frame,
             columns=("time", "label"),
             show="headings",
-            height=6,
+            height=3,
             style="P3Log.Treeview",
         )
         self.p3_shot_log.heading("time", text="시각")
@@ -2060,23 +2052,26 @@ class BoardApp(tk.Tk):
 
         표시 순서(위→아래)는 항상 MAIN → SUB → 스크린샷으로 고정.
         """
-        show_main = bool(self.var_p3_show_main.get())
-        show_sub = bool(self.var_p3_show_sub.get())
-        show_shot = bool(self.var_p3_show_shot.get())
         panels = (
-            (getattr(self, "p3_main_frame", None), show_main),
-            (getattr(self, "p3_sub_frame", None), show_sub),
-            (getattr(self, "p3_shot_frame", None), show_shot),
+            (getattr(self, "p3_main_frame", None), bool(self.var_p3_show_main.get())),
+            (getattr(self, "p3_sub_frame", None), bool(self.var_p3_show_sub.get())),
+            (getattr(self, "p3_shot_frame", None), bool(self.var_p3_show_shot.get())),
         )
-        for frame, _ in panels:
+        area = getattr(self, "_p3_log_area", None)
+        for frame, _show in panels:
             if frame is not None:
-                frame.pack_forget()
-        first = True
+                frame.grid_remove()
+        row = 0
         for frame, show in panels:
             if frame is None or not show:
                 continue
-            frame.pack(fill="both", expand=True, pady=(0, 0) if first else (6, 0))
-            first = False
+            frame.grid(
+                row=row, column=0, sticky="nsew", pady=(0, 0) if row == 0 else (6, 0)
+            )
+            row += 1
+        if area is not None:
+            for r in range(3):
+                area.rowconfigure(r, weight=1 if r < row else 0)
 
     def _handle_p3_line(self, message: str) -> None:
         """update_filters.py stdout 한 줄 처리 — MAIN/SUB/스크린샷 3단 그리드에 반영.
