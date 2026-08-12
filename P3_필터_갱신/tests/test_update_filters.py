@@ -791,6 +791,36 @@ def test_set_save_count_always_before_after_shots(tmp_path: Path):
         browser.close()
 
 
+def test_confirm_click_finds_button_in_different_browser_context():
+    """'수정되었습니다' + '확인' 페이지가 원래 page 와 다른 BrowserContext(별도
+    팝업/창)에 열려도 찾아서 클릭해야 한다 (admin_etc_ok.php 류 확인창)."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import _all_pages_and_frames
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ctx1 = browser.new_context()
+        page = ctx1.new_page()
+        page.set_content("<html><body><div>검색필터 수정 화면</div></body></html>")
+
+        ctx2 = browser.new_context()
+        confirm_page = ctx2.new_page()
+        confirm_page.set_content(
+            "<html><body>수정되었습니다."
+            "<button id='ok'>확인</button>"
+            "<script>document.getElementById('ok').onclick="
+            "function(){document.body.setAttribute('data-ok','1');};</script>"
+            "</body></html>"
+        )
+
+        found = [kind for kind, _p in _all_pages_and_frames(page)]
+        assert found.count("page") >= 2
+
+        assert click_modified_confirm(page, timeout_ms=3000) is True
+        assert confirm_page.locator("body").get_attribute("data-ok") == "1"
+        browser.close()
+
+
 def test_confirm_prompt_message_never_treated_as_done():
     """'저장하시겠습니까?' 류 confirm(질문형)은 현재 흐름에 나타날 수 없고,
     '수정되었습니다' 완료 안내와 절대 혼동해서는 안 된다."""
