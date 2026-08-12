@@ -1,7 +1,7 @@
 """
 P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품수 갱신.
 
-0) 보드에 입력한 더망고 URL(검색필터 저장조건 화면)로 이동
+0) 이미 열린 현재 망고 화면에서 진행 (로그인·진입 없음)
 1) ★더망고 행의 URL을 기준값으로 엑셀에서 동일 URL을 찾음
    → 검색필터 동일 시 진행 (엑셀 중간공백→'_' 재비교 포함)
 
@@ -16,7 +16,7 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
 
 로그:
 - 더망고 처음 10건: 더망고/엑셀 각각 1줄(검색필터·URL)
-- ★망고 연동: P2와 동일 — CDP Chrome · 확장설정 · 수동로그인 대기 · 이후 필터URL 이동
+- ★망고: 이미 열려 있는 현재 망고 화면에서만 진행 (로그인·URL진입 없음)
 - ★필터 매칭 시: 팝업/탭을 bring_to_front 로 실제 Chrome에 표시 + 단계샷
 - 불일치 행: 검색필터·URL만
 
@@ -60,18 +60,32 @@ P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
 DETAIL_EXCEL_ROWS = 5  # 엑셀 1~5행 매칭 시 세부 로그
 FIRST_COMPARE_LOG_N = 10  # 더망고 처음 10건: 더망고/엑셀 비교 2줄 로그
 
-# ★요건: 보드 「더망고 URL」입력창 기본값(=망고 url). 사용자가 변경 가능.
-DEFAULT_MANGO_URL = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+# ★요건: 보드 「더망고 URL」초기값 (검색필터·저장조건 화면)
+DEFAULT_MANGO_URL = (
+    "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsCategory.php"
+    "?pmode=filter_delete&uids=&pg=1&date_type=modify"
+    "&start_yy=2026&start_mm=8&start_dd=12"
+    "&end_yy=2026&end_mm=8&end_dd=12"
+    "&site_id=zara_de&sales_yn=&sch_keyword="
+    "&ft_num=all&ft_show=&ft_sort=modify_asc"
+)
 LAST_MANGO_URL_PATH = Path(__file__).resolve().parent / ".last_mango_url"
+# 예전 초기값(admin.php)이 .last 에 남아 있으면 새 초기값으로 교체
+_LEGACY_DEFAULT_MANGO_URLS = (
+    "https://tmg1898.cafe24.com/mall/admin/admin.php",
+)
 
 
 def load_mango_url_default() -> str:
-    """마지막 사용 URL이 있으면 그 값, 없으면 DEFAULT_MANGO_URL."""
+    """초기값=DEFAULT_MANGO_URL. 사용자가 바꾼 값이 있으면 그 값(레거시 초기값 제외)."""
     try:
         if LAST_MANGO_URL_PATH.is_file():
             saved = LAST_MANGO_URL_PATH.read_text(encoding="utf-8").strip()
             if saved.lower().startswith("http"):
-                return saved
+                if saved.rstrip("/") not in {
+                    u.rstrip("/") for u in _LEGACY_DEFAULT_MANGO_URLS
+                }:
+                    return saved
     except Exception:
         pass
     return DEFAULT_MANGO_URL
@@ -194,91 +208,48 @@ def reveal_browser_page(
         time.sleep(dwell)
 
 
-def ensure_mango_ready_like_p2(p2, page, *, progress: ProgressFn | None = None):
-    """P2 main() 망고 연동 절차를 그대로 재현 (대량수집 메뉴 진입은 제외).
+def attach_current_mango_page(p2, playwright, *, progress: ProgressFn | None = None):
+    """이미 열려 있는 망고 Chrome 화면에만 연결한다.
 
-    P2 순서:
-      1) connect_browser  (호출측)
-      2) ensure_mango_extension_settings
-      3) refresh_if_closed
-      4) MAIN_URL 이동 → 로그인 게이트면 wait_for_user_login
-      5) (P3) 이후 검색필터 URL로 이동 — 호출측 navigate_mango_url
+    ★로그인 / MAIN·LOGIN URL 이동 / 확장설정 팝업 / 필터URL 진입 — 전부 하지 않음.
+    CDP(9222)로 떠 있는 Chrome이 없으면 오류.
     """
-    _log(progress, "준비", "P2와 동일 — 더망고 솔루션 확장 URL/KEY 설정")
-    try:
-        p2.ensure_mango_extension_settings(page.context, shot_ctx=None)
-    except Exception as e:  # noqa: BLE001
-        # 확장이 없어도 로그인·목록 작업은 가능 — 경고 후 계속
-        _log(
-            progress,
-            "경고",
-            f"확장 설정 건너뜀/실패: {str(e).split(chr(10))[0][:160]}",
+    cdp_open = getattr(p2, "cdp_port_open", None)
+    if callable(cdp_open) and not cdp_open():
+        raise RuntimeError(
+            "이미 열려 있는 더망고 Chrome(CDP)이 없습니다.\n"
+            "검색필터(저장조건) 화면을 연 상태로 다시 실행하세요.\n"
+            "(로그인·화면 진입은 하지 않습니다)"
         )
 
-    page = p2.refresh_if_closed(page)
-    admin_host = getattr(p2, "ADMIN_HOST", "tmg1898.cafe24.com")
-    main_url = getattr(p2, "MAIN_URL", DEFAULT_MANGO_URL)
-    login_url = getattr(p2, "LOGIN_URL", main_url)
-
+    cdp_url = getattr(p2, "CDP_URL", "http://127.0.0.1:9222")
+    _log(progress, "준비", "현재 망고 Chrome에 연결 (로그인·진입 없음)")
+    browser = playwright.chromium.connect_over_cdp(cdp_url)
+    context = browser.contexts[0] if browser.contexts else browser.new_context()
+    if hasattr(p2, "pick_working_page"):
+        page = p2.pick_working_page(context)
+    else:
+        open_pages = [pg for pg in context.pages if not pg.is_closed()]
+        page = open_pages[0] if open_pages else context.new_page()
+    if hasattr(p2, "refresh_if_closed"):
+        page = p2.refresh_if_closed(page)
     try:
-        cur = page.url or ""
+        page.set_default_timeout(120_000)
+    except Exception:
+        pass
+    reveal_browser_page(
+        page,
+        progress,
+        step_no="0",
+        action="현재 망고 화면 사용",
+        dwell_s=0.4,
+    )
+    try:
+        cur = (page.url or "").strip()
     except Exception:
         cur = ""
-    if admin_host not in cur or cur in ("about:blank", "", "chrome://newtab/"):
-        _log(progress, "준비", f"P2와 동일 — 메인화면 이동: {main_url}")
-        p2.safe_goto(page, main_url)
-        page = p2.refresh_if_closed(page)
-
-    need_login = False
-    try:
-        cur = page.url or ""
-        need_login = "admin_login" in cur or "m_login" in cur
-    except Exception:
-        need_login = False
-    if not need_login:
-        try:
-            if page.locator('input[name="login_id"]').count() > 0:
-                need_login = True
-        except Exception:
-            pass
-
-    if need_login or admin_host not in (page.url or ""):
-        try:
-            if "admin_login" not in (page.url or ""):
-                _log(progress, "준비", f"P2와 동일 — 로그인창 이동: {login_url}")
-                p2.safe_goto(page, login_url)
-                page = p2.refresh_if_closed(page)
-        except Exception:
-            pass
-        _log(
-            progress,
-            "준비",
-            "P2와 동일 — 더망고 로그인창에서 직접 로그인하세요 (자동 입력 없음)",
-        )
-        reveal_browser_page(
-            page, progress, step_no="0", action="로그인창 표시", dwell_s=0.5
-        )
-        page = p2.wait_for_user_login(page)
-        page = p2.refresh_if_closed(page)
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=15_000)
-        except Exception:
-            pass
-        page = p2.refresh_if_closed(page)
-        try:
-            if "admin_login" in (page.url or "") or admin_host not in (page.url or ""):
-                p2.safe_goto(page, main_url)
-                page = p2.refresh_if_closed(page)
-        except Exception:
-            pass
-        _log(progress, "준비", "P2와 동일 — 로그인 완료")
-    else:
-        _log(progress, "준비", "P2와 동일 — 이미 로그인된 세션 재사용")
-
-    reveal_browser_page(
-        page, progress, step_no="0", action="망고 세션 준비 완료", dwell_s=0.4
-    )
-    return page
+    _log(progress, "준비", f"현재 화면 URL={cur[:160] or '(없음)'}")
+    return browser, page
 
 
 def clear_stop_flag() -> None:
@@ -2710,10 +2681,7 @@ def run_update(
     if not path.is_file():
         result.errors.append(f"파일 없음: {path}")
         return result
-    mango = (mango_url or "").strip()
-    if not mango:
-        result.errors.append("더망고 URL을 입력하세요.")
-        return result
+    mango = (mango_url or "").strip()  # 참고용(이동하지 않음)
 
     clear_stop_flag()
     try:
@@ -2725,11 +2693,16 @@ def run_update(
         result.errors.append("엑셀에 URL 행이 없습니다.")
         return result
     by_url = excel_by_url(rows)
-    _log(progress, "준비", f"엑셀 {path.name} · URL {len(rows)}건 · 더망고URL 지정됨")
     _log(
         progress,
         "준비",
-        "P2와 동일 망고 연동: CDP Chrome · 확장설정 · 로그인대기 · 필터URL 이동",
+        f"엑셀 {path.name} · URL {len(rows)}건 · 현재 망고 화면에서 진행"
+        + (f" · (참고URL={mango[:80]})" if mango else ""),
+    )
+    _log(
+        progress,
+        "준비",
+        "로그인·화면진입 없음 — 이미 열린 검색필터(저장조건) 화면만 사용",
     )
 
     try:
@@ -2746,14 +2719,19 @@ def run_update(
 
     try:
         with sync_playwright() as p:
-            # ★P2 main()과 동일 순서
-            browser, page = p2.connect_browser(p)
+            # ★현재 망고 화면만 — 로그인/진입/URL이동 없음
             try:
-                page.set_default_timeout(120_000)
+                browser, page = attach_current_mango_page(p2, p, progress=progress)
+            except Exception as e:  # noqa: BLE001
+                result.errors.append(str(e))
+                return result
+            # 목록 복귀용 — 입력 URL이 비면 현재 탭 URL 사용 (이동은 하지 않음)
+            try:
+                cur_u = (page.url or "").strip()
             except Exception:
-                pass
-            page = ensure_mango_ready_like_p2(p2, page, progress=progress)
-            navigate_mango_url(page, mango, progress=progress, p2=p2)
+                cur_u = ""
+            if not mango:
+                mango = cur_u
             shot_dir = new_shot_dir()
             _log(progress, "준비", f"스크린샷 폴더: {shot_dir}")
 
@@ -2763,8 +2741,8 @@ def run_update(
 
             if result.total_demango == 0:
                 result.errors.append(
-                    "더망고 화면에서 검색필터 행을 찾지 못했습니다. "
-                    "URL이 검색필터(저장조건) 화면인지 확인하세요."
+                    "현재 망고 화면에서 검색필터 행을 찾지 못했습니다. "
+                    "검색필터(저장조건) 목록 화면을 연 뒤 다시 실행하세요."
                 )
                 return result
 
@@ -3142,8 +3120,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("excel", help="엑셀 파일 경로")
     parser.add_argument(
         "--mango-url",
-        default=load_mango_url_default(),
-        help="더망고 검색필터(저장조건) 화면 URL (기본=망고 url, 변경 가능)",
+        default="",
+        help="참고용 더망고 URL(이동하지 않음). 비우면 현재 화면 URL 사용",
     )
     args = parser.parse_args(argv)
     result = run_update(args.excel, args.mango_url)
