@@ -93,6 +93,15 @@ class RowJob:
 
 
 @dataclass
+class RowResult:
+    """행별 최종출력용."""
+
+    label: str
+    count: int | None  # None = 수집 실패
+    url: str
+
+
+@dataclass
 class ExtractResult:
     ok: bool
     excel_path: str
@@ -101,6 +110,7 @@ class ExtractResult:
     failed: int = 0
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    rows: list[RowResult] = field(default_factory=list)
 
 
 def _log(progress: ProgressFn | None, step: str, message: str) -> None:
@@ -108,6 +118,28 @@ def _log(progress: ProgressFn | None, step: str, message: str) -> None:
     print(f"[{step}] {message}", flush=True)
     if progress:
         progress(step, message)
+
+
+def format_final_output(label: str, count: int | None, url: str) -> str:
+    """실행로그 최종출력 1행 — 상위 최종 카테고리명 · 상품갯수 · url."""
+    name = (label or "").strip() or "(이름없음)"
+    cnt = "실패" if count is None else str(count)
+    return f"상위 최종 카테고리명={name} · 상품갯수={cnt} · url={url}"
+
+
+def log_final_outputs(
+    progress: ProgressFn | None,
+    rows: list[RowResult],
+    *,
+    title: str = "최종출력",
+) -> None:
+    """수집 결과를 실행로그에 최종출력 형식으로 일괄 표시."""
+    _log(progress, "최종", f"===== {title} ({len(rows)}건) =====")
+    if not rows:
+        _log(progress, "최종", "(출력할 행 없음)")
+        return
+    for r in rows:
+        _log(progress, "최종", format_final_output(r.label, r.count, r.url))
 
 
 def clear_stop_flag() -> None:
@@ -455,7 +487,7 @@ def run_extract(
                     _log(progress, "중단", "사용자 중단 요청 — 현재까지 UPDATE 저장")
                     break
 
-                label = job.label or urlparse(job.url).path
+                label = (job.label or "").strip() or urlparse(job.url).path
                 _log(
                     progress,
                     "URL",
@@ -465,7 +497,15 @@ def run_extract(
                     page.goto(job.url, wait_until="domcontentloaded", timeout=90_000)
                 except Exception as e:  # noqa: BLE001
                     result.failed += 1
+                    result.rows.append(
+                        RowResult(label=label, count=None, url=job.url)
+                    )
                     _log(progress, "오류", f"행{job.excel_row} 접속 실패: {e}")
+                    _log(
+                        progress,
+                        "최종",
+                        format_final_output(label, None, job.url),
+                    )
                     continue
 
                 closed = dismiss_popups(page)
@@ -508,10 +548,12 @@ def run_extract(
                         value=count,
                     )
                 result.updated += 1
+                result.rows.append(RowResult(label=label, count=count, url=job.url))
+                # ★요건: 실행로그 최종출력 = 상위 최종 카테고리명 · 상품갯수 · url
                 _log(
                     progress,
-                    "상품수",
-                    f"행{job.excel_row} 상품수={count} → 엑셀 UPDATE",
+                    "최종",
+                    format_final_output(label, count, job.url),
                 )
 
             browser.close()
@@ -533,6 +575,9 @@ def run_extract(
         return result
 
     clear_stop_flag()
+    # ★요건: 종료 시 최종출력을 상위 최종 카테고리명 · 상품갯수 · url 로 모아 표시
+    log_final_outputs(progress, result.rows)
+
     if stopped:
         result.ok = result.updated > 0
         result.warnings.append("사용자 중단으로 일부만 UPDATE")

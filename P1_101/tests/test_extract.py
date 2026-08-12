@@ -16,6 +16,7 @@ from extract import (  # noqa: E402
     clear_stop_flag,
     ensure_column,
     find_header_index,
+    format_final_output,
     parse_product_count_from_html,
     read_url_jobs,
     stop_requested,
@@ -52,6 +53,15 @@ def test_parse_korean_and_english_labels():
     assert parse_product_count_from_html("Showing 15 products") == 15
 
 
+def test_format_final_output():
+    line = format_final_output("MEN 스니커즈", 77, "https://example.com/a")
+    assert "상위 최종 카테고리명=MEN 스니커즈" in line
+    assert "상품갯수=77" in line
+    assert "url=https://example.com/a" in line
+    fail = format_final_output("WOMEN", None, "https://example.com/b")
+    assert "상품갯수=실패" in fail
+
+
 def test_find_url_and_ensure_count_column(tmp_path: Path):
     fp = tmp_path / "sample.xlsx"
     wb = openpyxl.Workbook()
@@ -83,6 +93,7 @@ if __name__ == "__main__":
     test_stop_flag_helpers()
     test_parse_art_total_count()
     test_parse_korean_and_english_labels()
+    test_format_final_output()
     with tempfile.TemporaryDirectory() as d:
         test_find_url_and_ensure_count_column(Path(d))
     print("PASS P1_101 tests")
