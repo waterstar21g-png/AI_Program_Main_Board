@@ -70,32 +70,18 @@ DEFAULT_MANGO_URL = (
     "&ft_num=all&ft_show=&ft_sort=modify_asc"
 )
 LAST_MANGO_URL_PATH = Path(__file__).resolve().parent / ".last_mango_url"
-# 예전 초기값(admin.php)이 .last 에 남아 있으면 새 초기값으로 교체
-_LEGACY_DEFAULT_MANGO_URLS = (
-    "https://tmg1898.cafe24.com/mall/admin/admin.php",
-)
 
 
 def load_mango_url_default() -> str:
-    """초기값=DEFAULT_MANGO_URL. 사용자가 바꾼 값이 있으면 그 값(레거시 초기값 제외)."""
-    try:
-        if LAST_MANGO_URL_PATH.is_file():
-            saved = LAST_MANGO_URL_PATH.read_text(encoding="utf-8").strip()
-            if saved.lower().startswith("http"):
-                if saved.rstrip("/") not in {
-                    u.rstrip("/") for u in _LEGACY_DEFAULT_MANGO_URLS
-                }:
-                    return saved
-    except Exception:
-        pass
+    """★고정 초기값 — 검색필터(저장조건) getGoodsCategory.php URL."""
     return DEFAULT_MANGO_URL
 
 
 def save_mango_url(url: str) -> None:
-    """사용자가 변경한 더망고 URL을 다음에 기본값으로 쓰도록 저장."""
-    u = (url or "").strip()
+    """더망고 URL 기억 파일에 저장 (보드 표시용). 비어 있으면 초기값 저장."""
+    u = (url or "").strip() or DEFAULT_MANGO_URL
     if not u.lower().startswith("http"):
-        return
+        u = DEFAULT_MANGO_URL
     try:
         LAST_MANGO_URL_PATH.write_text(u + "\n", encoding="utf-8")
     except Exception:
@@ -2681,7 +2667,8 @@ def run_update(
     if not path.is_file():
         result.errors.append(f"파일 없음: {path}")
         return result
-    mango = (mango_url or "").strip()  # 참고용(이동하지 않음)
+    # ★고정: 비어 있으면 지정된 검색필터 URL 초기값 사용
+    mango = (mango_url or "").strip() or DEFAULT_MANGO_URL
 
     clear_stop_flag()
     try:
@@ -2696,13 +2683,12 @@ def run_update(
     _log(
         progress,
         "준비",
-        f"엑셀 {path.name} · URL {len(rows)}건 · 현재 망고 화면에서 진행"
-        + (f" · (참고URL={mango[:80]})" if mango else ""),
+        f"엑셀 {path.name} · URL {len(rows)}건 · 망고URL={mango[:120]}",
     )
     _log(
         progress,
         "준비",
-        "로그인·화면진입 없음 — 이미 열린 검색필터(저장조건) 화면만 사용",
+        "로그인 없음 — 열린 Chrome에 연결 후 검색필터 URL로 이동",
     )
 
     try:
@@ -2719,19 +2705,13 @@ def run_update(
 
     try:
         with sync_playwright() as p:
-            # ★현재 망고 화면만 — 로그인/진입/URL이동 없음
+            # ★로그인 없이 CDP 연결 → 지정 검색필터 URL로 이동
             try:
                 browser, page = attach_current_mango_page(p2, p, progress=progress)
             except Exception as e:  # noqa: BLE001
                 result.errors.append(str(e))
                 return result
-            # 목록 복귀용 — 입력 URL이 비면 현재 탭 URL 사용 (이동은 하지 않음)
-            try:
-                cur_u = (page.url or "").strip()
-            except Exception:
-                cur_u = ""
-            if not mango:
-                mango = cur_u
+            navigate_mango_url(page, mango, progress=progress, p2=p2)
             shot_dir = new_shot_dir()
             _log(progress, "준비", f"스크린샷 폴더: {shot_dir}")
 
@@ -3120,8 +3100,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("excel", help="엑셀 파일 경로")
     parser.add_argument(
         "--mango-url",
-        default="",
-        help="참고용 더망고 URL(이동하지 않음). 비우면 현재 화면 URL 사용",
+        default=DEFAULT_MANGO_URL,
+        help="더망고 검색필터 URL (기본=getGoodsCategory.php filter_delete)",
     )
     args = parser.parse_args(argv)
     result = run_update(args.excel, args.mango_url)
