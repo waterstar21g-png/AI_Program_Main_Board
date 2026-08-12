@@ -450,8 +450,25 @@ def dismiss_popups(page) -> int:
     return closed
 
 
+FOOTER_SELECTORS = (
+    "footer",
+    "[role='contentinfo']",
+    "#footer",
+    ".layout-footer",
+    ".footer",
+    "[data-qa-qualifier='footer']",
+    ".page-footer",
+)
+
+# ★요건: 푸터까지 스크롤해 총갯수 파악 (조기 중단 방지)
+SCROLL_MAX_ROUNDS = 160
+SCROLL_PAUSE_SEC = 1.2
+SCROLL_STABLE_ROUNDS = 6  # 개수·높이 불변 연속 횟수
+FOOTER_STABLE_ROUNDS = 4  # 푸터/하단 도달 연속 확인
+
+
 def count_product_cards(page) -> int:
-    """DOM에 렌더된 상품 카드/링크 개수 (Zara 그리드 등)."""
+    """현재 DOM에 보이는 상품 카드/링크 개수 (가상스크롤이면 일부만)."""
     best = 0
     for sel in PRODUCT_CARD_SELECTORS:
         try:
@@ -460,7 +477,6 @@ def count_product_cards(page) -> int:
                 best = c
         except Exception:
             continue
-    # 상품 상세 링크(-p123.html) 고유 개수
     try:
         n = page.evaluate(
             """() => {
@@ -476,43 +492,245 @@ def count_product_cards(page) -> int:
     return best
 
 
-def scroll_load_products(page, *, max_rounds: int = 25, pause: float = 0.7) -> int:
-    """무한스크롤 카테고리에서 상품을 더 불러온 뒤 카드 수를 반환."""
-    prev = -1
+def collect_visible_product_ids(page) -> set[str]:
+    """현재 화면의 상품 ID를 수집 (스크롤 누적용)."""
+    try:
+        ids = page.evaluate(
+            """() => {
+              const out = new Set();
+              document.querySelectorAll('[data-productid]').forEach(el => {
+                const id = el.getAttribute('data-productid');
+                if (id) out.add(String(id));
+              });
+              document.querySelectorAll('[data-product-id]').forEach(el => {
+                const id = el.getAttribute('data-product-id');
+                if (id) out.add(String(id));
+              });
+              document.querySelectorAll('a[href]').forEach(a => {
+                const h = a.href || a.getAttribute('href') || '';
+                const m = h.match(/-p(\\d+)\\.html/i);
+                if (m) out.add(m[1]);
+              });
+              return Array.from(out);
+            }"""
+        )
+        return {str(x) for x in (ids or []) if x is not None}
+    except Exception:
+        return set()
+
+
+def _collect_ids_from_json(data: object, out: set[str], depth: int = 0) -> None:
+    if depth > 8 or data is None:
+        return
+    if isinstance(data, dict):
+        pid = data.get("id") or data.get("productId") or data.get("product_id")
+        # 상품 객체처럼 보이면 id 채택
+        if pid is not None and (
+            "price" in data
+            or "seo" in data
+            or "detail" in data
+            or "name" in data
+            or "brand" in data
+            or "sectionName" in data
+            or "productType" in data
+        ):
+            out.add(str(pid))
+        for v in data.values():
+            if isinstance(v, (dict, list)):
+                _collect_ids_from_json(v, out, depth + 1)
+    elif isinstance(data, list):
+        for item in data[:500]:
+            _collect_ids_from_json(item, out, depth + 1)
+
+
+def is_near_page_bottom(page) -> bool:
+    try:
+        return bool(
+            page.evaluate(
+                """() => {
+                  const el = document.scrollingElement || document.documentElement;
+                  const remain = el.scrollHeight - el.scrollTop - el.clientHeight;
+                  return remain < 120;
+                }"""
+            )
+        )
+    except Exception:
+        return False
+
+
+def footer_in_view(page) -> bool:
+    """푸터 영역이 뷰포트에 들어왔는지."""
+    for sel in FOOTER_SELECTORS:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() == 0:
+                continue
+            if loc.is_visible(timeout=200):
+                box = loc.bounding_box()
+                if not box:
+                    continue
+                vh = (page.viewport_size or {}).get("height") or 900
+                # 푸터 상단이 화면 하단 근처·안쪽
+                if box["y"] < vh + 40:
+                    return True
+        except Exception:
+            continue
+    return is_near_page_bottom(page)
+
+
+def scroll_step_toward_footer(page) -> None:
+    """무한스크롤 트리거 — 작은 간격으로 내려 중간 상품을 놓치지 않게 한다."""
+    try:
+        page.evaluate(
+            """() => {
+              const el = document.scrollingElement || document.documentElement;
+              // 큰 jump는 가상리스트 ID를 건너뛰므로 뷰포트의 ~55%만 이동
+              const step = Math.max(420, Math.floor(window.innerHeight * 0.55));
+              window.scrollBy(0, step);
+              const remain = el.scrollHeight - el.scrollTop - el.clientHeight;
+              if (remain < 160) {
+                window.scrollTo(0, el.scrollHeight);
+              }
+            }"""
+        )
+    except Exception:
+        try:
+            page.mouse.wheel(0, 900)
+        except Exception:
+            pass
+
+
+def _page_scroll_height(page) -> int:
+    try:
+        return int(
+            page.evaluate(
+                "() => (document.scrollingElement||document.documentElement).scrollHeight"
+            )
+            or 0
+        )
+    except Exception:
+        return 0
+
+
+def scroll_to_footer_and_count(
+    page,
+    *,
+    progress: ProgressFn | None = None,
+    accumulated_ids: set[str] | None = None,
+    max_rounds: int = SCROLL_MAX_ROUNDS,
+    pause: float = SCROLL_PAUSE_SEC,
+) -> int:
+    """페이지 맨 하단(푸터)까지 스크롤하며 상품 ID를 누적 → 총갯수.
+
+    - 가상스크롤로 DOM에 일부만 남아도, 스크롤 중 본 ID를 모두 합산
+    - 문서 높이(scrollHeight)가 아직 늘어나면 종료하지 않음 (무한스크롤 로딩 중)
+    - 푸터 도달 + 개수·높이 안정화가 모두 만족할 때만 종료
+    """
+    seen: set[str] = accumulated_ids if accumulated_ids is not None else set()
+    prev_n = -1
+    prev_h = -1
     stable = 0
-    last = 0
-    for _ in range(max_rounds):
-        last = count_product_cards(page)
-        if last > 0 and last == prev:
+    footer_hits = 0
+
+    def log(msg: str) -> None:
+        _log(progress, "스크롤", msg)
+
+    for i in range(1, max_rounds + 1):
+        seen |= collect_visible_product_ids(page)
+        n = len(seen)
+        h = _page_scroll_height(page)
+        at_bottom = is_near_page_bottom(page)
+        at_footer = at_bottom or footer_in_view(page)
+
+        # 상품수·페이지높이가 둘 다 不动일 때만 안정으로 간주
+        if n > 0 and n == prev_n and h > 0 and h == prev_h:
             stable += 1
-            if stable >= 2:
-                break
         else:
             stable = 0
-        prev = last
-        try:
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-        except Exception:
+        prev_n = n
+        prev_h = h
+
+        if at_footer:
+            footer_hits += 1
+        else:
+            footer_hits = 0
+
+        if i == 1 or i % 5 == 0 or at_footer:
+            log(
+                f"{i}/{max_rounds} 누적상품={n} · 높이={h} · "
+                f"푸터={'Y' if at_footer else 'N'} · 안정={stable}"
+            )
+
+        # ★푸터(맨하단) 도달 + 더 이상 상품/높이 증가 없음
+        if footer_hits >= FOOTER_STABLE_ROUNDS and stable >= SCROLL_STABLE_ROUNDS:
+            log(f"푸터 도달·안정화 — 총갯수 확정 누적={n}")
             break
+
+        scroll_step_toward_footer(page)
         time.sleep(pause)
         dismiss_popups(page)
-    return count_product_cards(page) or last
+
+        if stop_requested():
+            log(f"중단 요청 — 현재 누적={n}")
+            break
+    else:
+        log(f"최대 스크롤 도달 — 누적={len(seen)}")
+
+    # 하단 고정 대기 후 한 번 더 수집
+    try:
+        page.evaluate(
+            "() => window.scrollTo(0, (document.scrollingElement||document.documentElement).scrollHeight)"
+        )
+    except Exception:
+        pass
+    time.sleep(1.5)
+    dismiss_popups(page)
+    seen |= collect_visible_product_ids(page)
+
+    # 2차 패스: 놓친 구간 보완 — 맨 위→맨 아래 재스크롤(짧게)
+    log(f"2차 패스(상단→하단) 시작 — 현재 누적={len(seen)}")
+    try:
+        page.evaluate("() => window.scrollTo(0, 0)")
+    except Exception:
+        pass
+    time.sleep(0.5)
+    for j in range(1, 41):
+        seen |= collect_visible_product_ids(page)
+        scroll_step_toward_footer(page)
+        time.sleep(max(0.45, pause * 0.5))
+        dismiss_popups(page)
+        if is_near_page_bottom(page) and j > 5:
+            # 하단에서 추가 로드 대기
+            time.sleep(1.0)
+            seen |= collect_visible_product_ids(page)
+            if j >= 8:
+                break
+        if stop_requested():
+            break
+
+    dom_now = count_product_cards(page)
+    total = max(len(seen), dom_now)
+    log(f"최종 누적 ID={len(seen)} · 현재DOM={dom_now} · 채택={total}")
+    return total
 
 
-def extract_count_from_page(page, *, api_totals: list[int] | None = None) -> int:
+def extract_count_from_page(
+    page,
+    *,
+    api_totals: list[int] | None = None,
+    api_ids: set[str] | None = None,
+    progress: ProgressFn | None = None,
+) -> int:
     """현재 페이지에서 상품수 추출.
 
-    우선순위:
-    1) 네트워크 API 총합(있을 때)
-    2) 화면 카운터/HTML 문구
-    3) Zara형 상품 그리드 카드 수(스크롤 로드 포함)
+    ★그리드(Zara 등)는 반드시 푸터까지 스크롤한 뒤 누적 총갯수를 쓴다.
+    첫 화면 HTML 개수로 조기 return 하지 않는다.
     """
-    if api_totals:
-        api_best = max(api_totals)
-        if api_best > 0:
-            return api_best
+    api_best = max(api_totals) if api_totals else 0
+    api_id_n = len(api_ids) if api_ids else 0
 
-    # 눈에 띄는 카운터 요소
+    # 명시적 카운터 문구(총 N개 등) — 스크롤 전에도 신뢰 가능하면 사용
+    label_count = 0
     selectors = (
         ".result-cnt",
         'input[name="totalCount"]',
@@ -538,28 +756,11 @@ def extract_count_from_page(page, *, api_totals: list[int] | None = None) -> int
                 )
                 n = _parse_int_count(attr) if attr else _parse_int_count(loc.inner_text())
             if n:
-                return n
+                label_count = n
+                break
         except Exception:
             continue
 
-    try:
-        html = page.content() or ""
-    except Exception:
-        html = ""
-    n = parse_product_count_from_html(html)
-    if n:
-        return n
-
-    # 보이는 텍스트 폴백
-    try:
-        visible = page.locator("body").inner_text(timeout=2000)
-        n = parse_product_count_from_html(visible)
-        if n:
-            return n
-    except Exception:
-        pass
-
-    # ★Zara 등: "N products" 문구 없이 그리드만 있는 경우 → 카드 수
     cards = count_product_cards(page)
     if cards <= 0:
         try:
@@ -570,16 +771,46 @@ def extract_count_from_page(page, *, api_totals: list[int] | None = None) -> int
         except Exception:
             pass
         cards = count_product_cards(page)
-    if cards > 0:
-        # 추가 로드(무한스크롤) 후 재집계
-        loaded = scroll_load_products(page)
-        return max(cards, loaded)
-    return 0
+
+    page_url = ""
+    try:
+        page_url = page.url or ""
+    except Exception:
+        pass
+    looks_grid = cards > 0 or "zara.com" in page_url.lower()
+
+    if looks_grid:
+        # ★요건: 푸터까지 스크롤 → 총갯수 (가상리스트 대비 ID 누적)
+        acc: set[str] = set(api_ids or ())
+        scrolled = scroll_to_footer_and_count(
+            page, progress=progress, accumulated_ids=acc
+        )
+        # API total 이 페이지크기(24 등)로 올 수 있어 항상 max
+        best = max(scrolled, api_best, api_id_n, label_count, cards)
+        return best
+
+    # 비그리드: HTML/문구 폴백
+    try:
+        html = page.content() or ""
+    except Exception:
+        html = ""
+    n = parse_product_count_from_html(html)
+    if n:
+        return max(n, api_best, label_count)
+    try:
+        visible = page.locator("body").inner_text(timeout=2000)
+        n = parse_product_count_from_html(visible)
+        if n:
+            return max(n, api_best, label_count)
+    except Exception:
+        pass
+    return max(api_best, label_count, cards)
 
 
-def attach_api_total_listener(page) -> list[int]:
-    """카테고리/상품 API 응답에서 total 후보를 수집."""
+def attach_api_total_listener(page) -> tuple[list[int], set[str]]:
+    """카테고리/상품 API 응답에서 total 후보 + 상품 ID 누적."""
     found: list[int] = []
+    ids: set[str] = set()
 
     def _on_response(response) -> None:
         try:
@@ -606,11 +837,12 @@ def attach_api_total_listener(page) -> list[int]:
             n = _total_from_json_obj(data)
             if n > 0:
                 found.append(n)
+            _collect_ids_from_json(data, ids)
         except Exception:
             return
 
     page.on("response", _on_response)
-    return found
+    return found, ids
 
 
 def _default_headless() -> bool:
@@ -686,7 +918,7 @@ def run_extract(
                 locale="en-GB",
             )
             page = context.new_page()
-            api_totals = attach_api_total_listener(page)
+            api_totals, api_ids = attach_api_total_listener(page)
 
             for i, job in enumerate(jobs, start=1):
                 if stop_requested():
@@ -701,6 +933,7 @@ def run_extract(
                     f"{i}/{result.total} 행{job.excel_row} 열기: {label} · {job.url}",
                 )
                 api_totals.clear()
+                api_ids.clear()
                 try:
                     page.goto(job.url, wait_until="domcontentloaded", timeout=90_000)
                 except Exception as e:  # noqa: BLE001
@@ -726,7 +959,8 @@ def run_extract(
                 _log(
                     progress,
                     "대기",
-                    f"행{job.excel_row} {post_popup_wait_sec:g}초 대기 후 상품수 수집",
+                    f"행{job.excel_row} {post_popup_wait_sec:g}초 대기 후 "
+                    f"푸터까지 스크롤·총갯수 수집",
                 )
                 # 대기 중에도 중단 플래그 확인
                 waited = 0.0
@@ -747,20 +981,25 @@ def run_extract(
                     _log(progress, "팝업", f"행{job.excel_row} 추가 팝업 {closed2}건 닫기")
                     time.sleep(0.5)
 
-                count = extract_count_from_page(page, api_totals=api_totals)
+                count = extract_count_from_page(
+                    page,
+                    api_totals=api_totals,
+                    api_ids=api_ids,
+                    progress=progress,
+                )
                 if count == 0:
                     _log(
                         progress,
                         "경고",
                         f"행{job.excel_row} 상품수 0 — 그리드/API 미검출(사이트 지연·차단 가능)",
                     )
-                elif api_totals and count == max(api_totals):
-                    _log(progress, "상품수", f"행{job.excel_row} API total={count}")
                 else:
                     _log(
                         progress,
                         "상품수",
-                        f"행{job.excel_row} 그리드/문구 집계={count}",
+                        f"행{job.excel_row} 푸터스크롤 누적 총갯수={count}"
+                        f" (API후보={max(api_totals) if api_totals else 0}"
+                        f", API_ID={len(api_ids)})",
                     )
                 ws.cell(row=job.excel_row, column=count_idx + 1, value=count)
                 if collectible_idx is not None:
