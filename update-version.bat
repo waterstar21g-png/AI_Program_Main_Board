@@ -1,14 +1,39 @@
 @echo off
-REM ASCII alias -> 버전갱신.bat
+chcp 65001 >nul
 cd /d "%~dp0"
-if exist "%~dp0버전갱신.bat" (
-  call "%~dp0버전갱신.bat" %*
-  exit /b %ERRORLEVEL%
+title AI Board Force Update
+echo.
+echo ========================================
+echo   AI Board - Force Update from GitHub
+echo ========================================
+echo.
+echo Project: %CD%
+if exist "VERSION.txt" (
+  set /p CURVER=<VERSION.txt
+  echo Current VERSION.txt: %CURVER%
+) else (
+  echo Current VERSION.txt: (none)
 )
-REM fallback if Korean filename missing
-if exist "%~dp0stop-board.ps1" (
-  powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-board.ps1"
-)
+echo.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0force-update-main.ps1"
-if errorlevel 1 ( pause & exit /b 1 )
-call "%~dp0run.bat" --noupdate
+set ERR=%ERRORLEVEL%
+echo.
+if exist "VERSION.txt" (
+  set /p NEWVER=<VERSION.txt
+  echo VERSION.txt after update: %NEWVER%
+)
+if exist "update-last.log" (
+  echo.
+  echo --- update-last.log ---
+  type "update-last.log"
+  echo -----------------------
+)
+echo.
+if %ERR% NEQ 0 (
+  echo UPDATE FAILED. See update-last.log in project folder.
+  pause
+  exit /b %ERR%
+)
+echo UPDATE OK. Starting board...
+timeout /t 2 /nobreak >nul
+call "%~dp0run.bat"

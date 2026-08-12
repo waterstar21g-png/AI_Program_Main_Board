@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.0.90** (Python B안)
+# AI_Program_Main_Board **v2.0.93** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
@@ -46,9 +46,10 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
   (실행 중 pull 하면 Windows 파일 잠금으로 버전이 안 바뀌던 문제 수정)
 - (v2.0.58부터) 파일 하나하나를 GitHub에서 개별로 다시 받는 단계는 없앴습니다.
 
-아이콘이 없거나 옛 대상이면 `아이콘새로만들기.bat` 을 한 번 실행.
+아이콘이 없거나 생성 실패하면 `아이콘새로만들기.bat` 또는 `make-desktop-icon.cmd` 을 한 번 실행.
+실패 시 `icon-last.log` 를 확인하고, 프로젝트 폴더에 생긴 `.lnk` 를 바탕화면으로 드래그해도 됩니다.
 
-또는 `.\make-desktop-icon.cmd` / `.\바로가기만들기.bat` (동일 — 바탕화면+작업표시줄 새 아이콘).
+또는 `.\바로가기만들기.bat` (동일 — 바탕화면+작업표시줄 새 아이콘).
 
 ### `git pull`이 계속 실패하는 PC (사내망/방화벽 등)
 
