@@ -2038,7 +2038,7 @@ class BoardApp(tk.Tk):
         self.p3_status.configure(
             text=(
                 f"작업시작: {Path(path).name} / 총 {len(self._p3_excel_rows)}행 — "
-                "검색필터 URL로 이동 (로그인 없음)"
+                "망고 Chrome 창이 뜨는지 확인하세요 (P2와 동일 연동)"
             ),
             fg="#15803d",
         )
@@ -2046,7 +2046,7 @@ class BoardApp(tk.Tk):
         self._append_p3_log("실행", f"더망고URL={mango}")
         self._append_p3_log(
             "실행",
-            "지정 검색필터 URL로 이동 — 로그인 절차 없음",
+            "P2와 동일 — 망고 Chrome 창 표시 후 검색필터 URL 이동 (로그인대기 없음)",
         )
 
         try:
