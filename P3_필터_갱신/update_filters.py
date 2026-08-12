@@ -325,67 +325,191 @@ def navigate_mango_url(page, mango_url: str, *, progress: ProgressFn | None) -> 
         pass
 
 
+
+# 더망고 목록 행 스캔 JS (스크린샷 컬럼 구조 기준) — 테스트에서도 재사용
+LIST_DEMANGO_ROWS_JS = r"""() => {
+  const out = [];
+  const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
+  let filterCol = -1;
+  let condCol = -1;
+  let headerIdx = -1;
+
+  const isBadFilterName = (v) => {
+    if (!v) return true;
+    const s = String(v).trim();
+    if (!s) return true;
+    if (/^https?:/i.test(s)) return true;
+    if (/^\d+$/.test(s)) return true;
+    if (/\.com(\/|$)/i.test(s)) return true;           // Zara.com/de 등 사이트열
+    if (/\d+\s*개\s*\/\s*\d+\s*개/.test(s)) return true;
+    if (/^\d{4}-\d{2}-\d{2}/.test(s)) return true;
+    if (/URL\s*검색|수집조건|전체저장|상품확인|검색필터관리|별도관리/.test(s)) return true;
+    if (s.length > 120) return true;
+    return false;
+  };
+
+  const readInputValue = (inp) => {
+    if (!inp) return '';
+    return (inp.value || inp.getAttribute('value') || '').trim();
+  };
+
+  // 헤더: '필터이름(수정가능)' / '검색필터(저장조건)'
+  for (let i = 0; i < trs.length; i++) {
+    const cells = Array.from(trs[i].querySelectorAll('th, td'));
+    if (cells.length < 2) continue;
+    const labels = cells.map(c => (c.innerText || '').replace(/\s+/g, ''));
+    const fi = labels.findIndex(t => t.includes('필터이름'));
+    const ci = labels.findIndex(t =>
+      t.includes('검색필터') && (t.includes('저장조건') || t.includes('저장'))
+    );
+    if (fi >= 0 || ci >= 0) {
+      filterCol = fi;
+      condCol = ci;
+      headerIdx = i;
+      break;
+    }
+  }
+
+  for (let i = 0; i < trs.length; i++) {
+    if (i === headerIdx) continue;
+    const tr = trs[i];
+    const t = (tr.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!t) continue;
+    if (!/URL\s*검색|수집\s*조건\s*수정|https?:\/\//i.test(t)) continue;
+    if (/필터이름\(수정가능\)/.test(t) && !/https?:\/\//i.test(t)) continue;
+
+    const cells = Array.from(tr.querySelectorAll(':scope > td, :scope > th'));
+    const cellsFallback = cells.length ? cells : Array.from(tr.querySelectorAll('td, th'));
+    let filterName = '';
+    let url = '';
+    let editHref = '';
+    let hasEdit = false;
+
+    // 1) 검색필터 필드값 = '필터이름(수정가능)' 열의 <input> value
+    const filterCell = (filterCol >= 0 && filterCol < cellsFallback.length)
+      ? cellsFallback[filterCol] : null;
+    if (filterCell) {
+      const inp = filterCell.querySelector(
+        'input[type="text"], input[type="search"], input:not([type])'
+      );
+      filterName = readInputValue(inp);
+      if (isBadFilterName(filterName)) filterName = '';
+    }
+    if (!filterName) {
+      // 폴백: 행 내 텍스트 input (사이트·숫자·URL 제외)
+      const inputs = Array.from(tr.querySelectorAll('input')).filter(inp => {
+        const ty = (inp.getAttribute('type') || 'text').toLowerCase();
+        return ty === 'text' || ty === 'search' || ty === '';
+      });
+      for (const inp of inputs) {
+        const v = readInputValue(inp);
+        if (isBadFilterName(v)) continue;
+        filterName = v;
+        break;
+      }
+    }
+
+    // 2) URL = '검색필터(저장조건)' 열의 'URL 검색:' 뒤 링크/텍스트
+    const condCell = (condCol >= 0 && condCol < cellsFallback.length)
+      ? cellsFallback[condCol] : tr;
+    const scope = condCell || tr;
+    const aHttp = scope.querySelector('a[href^="http"], a[href*="://"]');
+    if (aHttp) {
+      url = (aHttp.href || aHttp.getAttribute('href') || '').trim();
+    }
+    if (!url) {
+      const raw = (scope.innerText || scope.textContent || '');
+      const m = raw.match(/URL\s*검색\s*[:：]?\s*(https?:\/\/\S+)/i);
+      if (m) url = m[1].replace(/[|｜].*$/, '').trim();
+    }
+    if (!url) {
+      const m2 = t.match(/(https?:\/\/www\.zara\.com[^\s|]+)/i)
+        || t.match(/(https?:\/\/[^\s|]+)/i);
+      if (m2) url = m2[1].trim();
+    }
+    url = url.replace(/[\)\]\>,\;]+$/, '');
+
+    // 3) 수집조건수정 버튼 → href / ps_fuid
+    const editNodes = Array.from(tr.querySelectorAll('a, button, input, span'));
+    for (const el of editNodes) {
+      const label = (el.value || el.textContent || '').replace(/\s+/g, '');
+      if (!/수집조건수정/.test(label)) continue;
+      hasEdit = true;
+      if (el.tagName === 'A') {
+        editHref = el.href || el.getAttribute('href') || '';
+      } else if (el.closest && el.closest('a')) {
+        const a = el.closest('a');
+        editHref = a.href || a.getAttribute('href') || '';
+      }
+      if (!editHref) {
+        const oc = el.getAttribute('onclick') || '';
+        const hrefInOc = oc.match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)
+          || oc.match(/['"]([^'"]*admin_group_modify\.php[^'"]*)['"]/i);
+        if (hrefInOc) editHref = hrefInOc[1];
+        if (!editHref) {
+          const fm = oc.match(/ps_fuid\s*=\s*(\d+)/)
+            || oc.match(/modify_filter[^0-9]*(\d+)/i)
+            || oc.match(/fuid["'\s:=]+(\d+)/i)
+            || oc.match(/(?:go|open|modify|edit)\s*\(\s*(\d+)\s*\)/i);
+          if (fm) {
+            editHref = 'admin_group_modify.php?ps_mode=modify_filter&ps_fuid=' + fm[1];
+          }
+        }
+      }
+      break;
+    }
+
+    if (!url && !hasEdit && !filterName) continue;
+    out.push({
+      index: i,
+      url,
+      filterName,
+      hasEdit,
+      editHref,
+      text: t.slice(0, 240),
+    });
+  }
+  return out;
+}"""
+
+
 def list_demango_rows(page) -> list[dict]:
-    """더망고 검색필터 목록 행 수집 (검색필터 URL · 검색필터명 · 행 인덱스)."""
-    data = page.evaluate(
-        """() => {
-          const out = [];
-          const trs = Array.from(document.querySelectorAll('tr'));
-          trs.forEach((tr, idx) => {
-            const t = (tr.innerText || '').replace(/\\s+/g, ' ').trim();
-            if (!t) return;
-            if (!/수집\\s*조건\\s*수정|조건\\s*수정/.test(t) && !/https?:\\/\\//i.test(t)) {
-              return;
-            }
-            // skip header-like
-            if (/검색\\s*필터\\s*URL|번호/.test(t) && !/https?:\\/\\//i.test(t)) return;
-            let url = '';
-            const link = tr.querySelector('a[href^="http"], a[href*="http"]');
-            if (link) url = link.href || link.getAttribute('href') || '';
-            if (!url) {
-              const m = t.match(/https?:\\/\\/[^\\s]+/i);
-              if (m) url = m[0];
-            }
-            // 검색필터명: URL이 아닌 짧은 텍스트 셀 후보
-            let filterName = '';
-            const tds = Array.from(tr.querySelectorAll('td, th'));
-            for (const td of tds) {
-              const s = (td.innerText || '').replace(/\\s+/g, ' ').trim();
-              if (!s || /^\\d+$/.test(s)) continue;
-              if (/https?:\\/\\//i.test(s)) continue;
-              if (/수집\\s*조건\\s*수정|수정|삭제|선택/.test(s) && s.length < 12) continue;
-              if (s.length >= 2 && s.length <= 80) { filterName = s; break; }
-            }
-            const hasEdit = /수집\\s*조건\\s*수정|조건\\s*수정/.test(t);
-            if (url || hasEdit) {
-              out.push({ index: idx, url, filterName, hasEdit, text: t.slice(0, 200) });
-            }
-          });
-          return out;
-        }"""
-    )
+    """더망고 검색필터 목록 행 수집.
+
+    스크린샷 순서·구조:
+    1) 검색필터 필드값 = 열 '필터이름(수정가능)' 의 input.value (예: 여성헤어_헤어)
+    2) URL = 열 '검색필터(저장조건)' 안의 'URL 검색:' 뒤 링크/텍스트
+    3) 수집조건수정 = 같은 영역 버튼/링크 (href 또는 ps_fuid)
+    """
+    data = page.evaluate(LIST_DEMANGO_ROWS_JS)
     return list(data or [])
 
 
-def click_edit_on_row(page, row_index: int) -> bool:
-    return bool(
+def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
+    """수집조건수정 — 가능하면 수정 페이지로 직접 이동, 아니면 행 버튼 클릭."""
+    href = (edit_href or "").strip()
+    if href:
+        try:
+            if href.startswith("http"):
+                page.goto(href, wait_until="domcontentloaded", timeout=60_000)
+            else:
+                page.evaluate("""(h) => { location.href = h; }""", href)
+                page.wait_for_load_state("domcontentloaded", timeout=60_000)
+            time.sleep(0.6)
+            return True
+        except Exception:
+            pass
+
+    ok = bool(
         page.evaluate(
             """(idx) => {
-              const trs = document.querySelectorAll('tr');
+              const trs = document.querySelectorAll('table tr, form tr, tr');
               const tr = trs[idx];
               if (!tr) return false;
               const nodes = Array.from(tr.querySelectorAll('a, button, span, input'));
               for (const el of nodes) {
                 const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
-                if (/수집조건수정|조건수정/.test(t)) {
-                  el.click();
-                  return true;
-                }
-              }
-              // fallback: any clickable with 수정
-              for (const el of nodes) {
-                const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
-                if (t === '수정' || /수정$/.test(t)) {
+                if (/수집조건수정/.test(t)) {
                   el.click();
                   return true;
                 }
@@ -395,62 +519,89 @@ def click_edit_on_row(page, row_index: int) -> bool:
             row_index,
         )
     )
-
-
-def find_save_count_input(page):
-    """팝업/모달의 저장상품수 입력칸."""
-    # label-near input
-    try:
-        loc = page.locator(
-            "xpath=//*[contains(normalize-space(.),'저장상품수') or "
-            "contains(normalize-space(.),'저장 상품 수') or "
-            "contains(normalize-space(.),'검색결과상위') or "
-            "contains(normalize-space(.),'수집상품수')]"
-            "/following::input[1]"
-        ).first
-        if loc.count() > 0 and loc.is_visible(timeout=800):
-            return loc
-    except Exception:
-        pass
-    for sel in (
-        'input[name*="save"]',
-        'input[name*="count"]',
-        'input[name*="goods"]',
-        'input[type="text"]',
-        'input[type="number"]',
-    ):
+    if ok:
+        time.sleep(0.8)
         try:
-            cands = page.locator(sel)
-            n = min(cands.count(), 12)
-            for i in range(n):
-                el = cands.nth(i)
-                if not el.is_visible(timeout=200):
-                    continue
-                # prefer numeric-looking fields near modal
-                return el
+            page.wait_for_load_state("domcontentloaded", timeout=15_000)
         except Exception:
-            continue
-    return None
+            pass
+    return ok
 
 
 def set_save_count(page, value: int) -> bool:
-    loc = find_save_count_input(page)
-    if loc is None:
-        return False
+    """팝업 '검색필터 수정'의 저장상품수 입력.
+
+    스크린샷: 저장상품수 | 검색결과 상위 [ N ] 개 상품만 저장
+    """
+    loc = None
     try:
-        loc.click(timeout=1500)
-        loc.fill("")
-        loc.type(str(value), delay=20)
-        return True
+        loc = page.locator(
+            "xpath=//tr[.//th[contains(normalize-space(.),'저장상품수')] or "
+            ".//td[normalize-space()='저장상품수'] or "
+            ".//td[starts-with(normalize-space(.),'저장상품수')]]"
+            "//input[@type='text' or @type='number' or not(@type)]"
+        ).first
+        if loc.count() == 0 or not loc.is_visible(timeout=800):
+            loc = None
     except Exception:
+        loc = None
+
+    if loc is None:
         try:
-            loc.fill(str(value))
+            loc = page.locator(
+                "xpath=//*[contains(normalize-space(.),'검색결과 상위') or "
+                "contains(normalize-space(.),'검색결과상위')]"
+                "//input[@type='text' or @type='number' or not(@type)]"
+            ).first
+            if loc.count() == 0 or not loc.is_visible(timeout=500):
+                loc = None
+        except Exception:
+            loc = None
+
+    if loc is not None:
+        try:
+            loc.click(timeout=1500)
+            loc.fill("")
+            loc.type(str(int(value)), delay=20)
             return True
         except Exception:
-            return False
+            try:
+                loc.fill(str(int(value)))
+                return True
+            except Exception:
+                pass
+
+    try:
+        ok = page.evaluate(
+            """(n) => {
+              const trs = Array.from(document.querySelectorAll('tr'));
+              for (const tr of trs) {
+                const t = (tr.innerText || '').replace(/\\s+/g, '');
+                if (!(t.includes('저장상품수') ||
+                      (t.includes('검색결과') && t.includes('상위')))) {
+                  continue;
+                }
+                const inp = tr.querySelector(
+                  'input[type="text"], input[type="number"], input:not([type])'
+                );
+                if (!inp) continue;
+                inp.focus();
+                inp.value = String(n);
+                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                inp.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+              }
+              return false;
+            }""",
+            int(value),
+        )
+        return bool(ok)
+    except Exception:
+        return False
 
 
 def click_save_button(page) -> bool:
+    """검색필터 수정 화면 하단 '저장하기' (옆에 '닫기')."""
     selectors = (
         'input[type="submit"][value="저장하기"]',
         'input[type="button"][value="저장하기"]',
@@ -469,7 +620,7 @@ def click_save_button(page) -> bool:
     try:
         clicked = page.evaluate(
             """() => {
-              const nodes = Array.from(document.querySelectorAll('a,button,input,span'));
+              const nodes = Array.from(document.querySelectorAll('a,button,input'));
               for (const el of nodes) {
                 const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
                 if (t === '저장하기') { el.click(); return true; }
@@ -480,6 +631,41 @@ def click_save_button(page) -> bool:
         return bool(clicked)
     except Exception:
         return False
+
+
+def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
+    """수집조건수정 후 '검색필터 수정' / 저장상품수 화면 대기."""
+    end = time.time() + timeout_ms / 1000.0
+    while time.time() < end:
+        try:
+            url = page.url or ""
+            if "modify_filter" in url or "admin_group_modify" in url:
+                return True
+            body = page.locator("body").inner_text(timeout=500) or ""
+            if "저장상품수" in body and (
+                "검색필터 수정" in body or "검색결과" in body
+            ):
+                return True
+        except Exception:
+            pass
+        time.sleep(0.25)
+    return False
+
+
+def _return_to_list(page, list_url: str) -> None:
+    """저장 후 검색필터 목록으로 복귀."""
+    url = (list_url or "").strip()
+    if not url:
+        return
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+        time.sleep(0.5)
+    except Exception:
+        try:
+            page.go_back(wait_until="domcontentloaded", timeout=30_000)
+            time.sleep(0.4)
+        except Exception:
+            pass
 
 
 def run_update(
@@ -516,7 +702,6 @@ def run_update(
         result.errors.append(f"Playwright 미설치: {e}")
         return result
 
-    # P2 CDP 브라우저 재사용
     try:
         import collect as p2  # type: ignore
     except Exception as e:  # noqa: BLE001
@@ -548,6 +733,7 @@ def run_update(
                 d_url = (drow.get("url") or "").strip()
                 d_filter = (drow.get("filterName") or "").strip()
                 row_idx = int(drow.get("index") or 0)
+                edit_href = (drow.get("editHref") or "").strip()
                 # ★요건1: 더망고 URL을 기준값으로 엑셀에서 동일 URL 검색
                 ex = find_excel_by_demango_url(by_url, d_url)
 
@@ -576,7 +762,6 @@ def run_update(
                     ex.filter_name, d_filter
                 ):
                     result.skipped += 1
-                    # ★요건: 불일치 행은 검색필터·URL만 (첫 10건은 비교 2줄로 이미 표시)
                     if i > FIRST_COMPARE_LOG_N:
                         _log(
                             progress,
@@ -602,13 +787,26 @@ def run_update(
                 if note:
                     lg.step("로직", f"1) {note}", note)
 
+                # 목록에 있는지 확인 (이전 저장 후 복귀)
+                try:
+                    cur = page.url or ""
+                    if "modify_filter" in cur or "admin_group_modify" in cur:
+                        _return_to_list(page, mango)
+                except Exception:
+                    pass
+
                 # 2) 수집조건수정
                 lg.step("로직", "2) 수집조건수정 클릭", "2) 조건수정")
-                if not click_edit_on_row(page, row_idx):
+                if not click_edit_on_row(page, row_idx, edit_href):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 수집조건수정 클릭 실패")
+                    _return_to_list(page, mango)
                     continue
-                time.sleep(0.7)
+                if not wait_modify_page(page):
+                    result.failed += 1
+                    _log(progress, "오류", f"행{i} 검색필터 수정 화면 미진입")
+                    _return_to_list(page, mango)
+                    continue
 
                 # 3) 저장상품수 갱신
                 target = map_save_count(ex.collectible)
@@ -624,6 +822,7 @@ def run_update(
                         page.keyboard.press("Escape")
                     except Exception:
                         pass
+                    _return_to_list(page, mango)
                     continue
 
                 # 4) 저장하기
@@ -631,9 +830,9 @@ def run_update(
                 if not click_save_button(page):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 저장하기 클릭 실패")
+                    _return_to_list(page, mango)
                     continue
                 time.sleep(0.9)
-                # 저장 후 알림 닫기
                 try:
                     page.keyboard.press("Escape")
                 except Exception:
@@ -649,8 +848,9 @@ def run_update(
                     f"갱신OK · 저장상품수={target}",
                 )
 
-                # 목록이 리로드됐을 수 있어 다음 루프 전 재스캔은 비용 큼 —
-                # 인덱스 기반이므로 저장 후 화면 유지 가정. 깨지면 재진입.
+                # 다음 행을 위해 목록 복귀
+                _return_to_list(page, mango)
+
                 if stop_requested():
                     break
 
@@ -683,7 +883,6 @@ def main(argv: list[str] | None = None) -> int:
     if result.errors:
         for e in result.errors:
             print(f"[오류] {e}", flush=True)
-    # 부분 성공도 0
     if result.updated > 0 or (result.ok and not result.errors):
         return 0
     if result.skipped > 0 and result.failed == 0 and not result.errors:
