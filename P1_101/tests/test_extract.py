@@ -12,15 +12,27 @@ import openpyxl  # noqa: E402
 from extract import (  # noqa: E402
     COUNT_HEADER,
     POST_POPUP_WAIT_SEC,
+    STOP_FLAG_PATH,
+    clear_stop_flag,
     ensure_column,
     find_header_index,
     parse_product_count_from_html,
     read_url_jobs,
+    stop_requested,
 )
 
 
 def test_post_popup_wait_is_3_seconds():
     assert POST_POPUP_WAIT_SEC == 3.0
+
+
+def test_stop_flag_helpers():
+    clear_stop_flag()
+    assert stop_requested() is False
+    STOP_FLAG_PATH.write_text("stop\n", encoding="utf-8")
+    assert stop_requested() is True
+    clear_stop_flag()
+    assert stop_requested() is False
 
 
 def test_parse_art_total_count():
@@ -68,6 +80,7 @@ if __name__ == "__main__":
     import tempfile
 
     test_post_popup_wait_is_3_seconds()
+    test_stop_flag_helpers()
     test_parse_art_total_count()
     test_parse_korean_and_english_labels()
     with tempfile.TemporaryDirectory() as d:

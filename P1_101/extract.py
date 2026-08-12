@@ -41,6 +41,9 @@ DEFAULT_UA = (
 # ★요건: 팝업 닫기 후 3초 대기 → 상품수 수집
 POST_POPUP_WAIT_SEC = 3.0
 
+# 메인보드 직접실행 시 중단 플래그 (P2와 동일 패턴)
+STOP_FLAG_PATH = Path(__file__).resolve().parent / ".extract_stop"
+
 URL_HEADER_CANDIDATES = (
     "최종 카테고리 URL주소",
     "최종 카테고리 URL",
@@ -101,10 +104,27 @@ class ExtractResult:
 
 
 def _log(progress: ProgressFn | None, step: str, message: str) -> None:
+    # 보드 서브프로세스 stdout 파싱용 — 항상 출력
+    print(f"[{step}] {message}", flush=True)
     if progress:
         progress(step, message)
-    else:
-        print(f"[{step}] {message}", flush=True)
+
+
+def clear_stop_flag() -> None:
+    try:
+        STOP_FLAG_PATH.unlink(missing_ok=True)  # type: ignore[call-arg]
+    except TypeError:
+        if STOP_FLAG_PATH.exists():
+            try:
+                STOP_FLAG_PATH.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def stop_requested() -> bool:
+    return STOP_FLAG_PATH.is_file()
 
 
 def _parse_int_count(raw: str | int | float | None) -> int:
@@ -379,6 +399,8 @@ def run_extract(
         return result
 
     use_headless = _default_headless() if headless is None else headless
+    clear_stop_flag()
+    stopped = False
 
     try:
         from playwright.sync_api import sync_playwright
@@ -428,6 +450,11 @@ def run_extract(
             page = context.new_page()
 
             for i, job in enumerate(jobs, start=1):
+                if stop_requested():
+                    stopped = True
+                    _log(progress, "중단", "사용자 중단 요청 — 현재까지 UPDATE 저장")
+                    break
+
                 label = job.label or urlparse(job.url).path
                 _log(
                     progress,
@@ -453,7 +480,18 @@ def run_extract(
                     "대기",
                     f"행{job.excel_row} {post_popup_wait_sec:g}초 대기 후 상품수 수집",
                 )
-                time.sleep(float(post_popup_wait_sec))
+                # 대기 중에도 중단 플래그 확인
+                waited = 0.0
+                step = 0.25
+                while waited < float(post_popup_wait_sec):
+                    if stop_requested():
+                        stopped = True
+                        break
+                    time.sleep(step)
+                    waited += step
+                if stopped:
+                    _log(progress, "중단", "사용자 중단 요청 — 현재까지 UPDATE 저장")
+                    break
 
                 # 대기 중 다시 뜬 팝업이 있으면 한 번 더 닫고, 짧게만 안정화
                 closed2 = dismiss_popups(page)
@@ -483,6 +521,7 @@ def run_extract(
             wb.close()
         except Exception:
             pass
+        clear_stop_flag()
         return result
 
     try:
@@ -490,6 +529,18 @@ def run_extract(
         wb.close()
     except Exception as e:  # noqa: BLE001
         result.errors.append(f"엑셀 저장 실패: {e}")
+        clear_stop_flag()
+        return result
+
+    clear_stop_flag()
+    if stopped:
+        result.ok = result.updated > 0
+        result.warnings.append("사용자 중단으로 일부만 UPDATE")
+        _log(
+            progress,
+            "중단",
+            f"부분 UPDATE {result.updated}/{result.total} · 파일: {path}",
+        )
         return result
 
     result.ok = result.updated > 0 and not result.errors
@@ -540,8 +591,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not result.ok:
         for e in result.errors:
-            print(f"ERROR: {e}", flush=True)
+            print(f"[오류] {e}", flush=True)
         return 1
+    # 보드: 부분 UPDATE(중단)도 exit 0 — 로그의 구분
     return 0
 
 

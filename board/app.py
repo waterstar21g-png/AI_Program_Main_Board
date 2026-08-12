@@ -117,6 +117,7 @@ class BoardApp(tk.Tk):
         self._p1_result = None
         self._p1_zara_result = None
         self._p1_101_result = None
+        self._p1_101_proc: subprocess.Popen | None = None
         self._p2_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
         self._build()
@@ -442,7 +443,15 @@ class BoardApp(tk.Tk):
         form = tk.Frame(parent, bg="#ffffff", padx=10, pady=10, relief="solid", bd=1)
         form.pack(fill="x")
 
-        self.var_p1_101_excel = tk.StringVar(value="")
+        # 메인보드에서 바로 실행 — 최근 선택 엑셀을 기본값으로
+        initial_excel = ""
+        try:
+            last = str(load().get("last_selected") or "").strip()
+            if last and Path(last).is_file():
+                initial_excel = last
+        except Exception:
+            pass
+        self.var_p1_101_excel = tk.StringVar(value=initial_excel)
         file_row = tk.Frame(form, bg="#ffffff")
         file_row.pack(fill="x", pady=3)
         tk.Label(
@@ -462,7 +471,7 @@ class BoardApp(tk.Tk):
         tk.Label(
             form,
             text=(
-                "흐름: URL 열기 → 팝업 닫기 → "
+                "메인보드 직접실행 · URL 열기 → 팝업 닫기 → "
                 f"{p1_101_extract.POST_POPUP_WAIT_SEC:g}초 대기 → 상품수 수집 → "
                 "동일 엑셀 '총상품수' UPDATE"
             ),
@@ -477,7 +486,7 @@ class BoardApp(tk.Tk):
         actions.pack(fill="x", pady=10)
         self.btn_p1_101_run = tk.Button(
             actions,
-            text="1. 상품수 추출 실행",
+            text="▶ 상품수 추출 실행",
             command=self._run_p1_101,
             bg="#2563eb",
             fg="white",
@@ -486,14 +495,31 @@ class BoardApp(tk.Tk):
             pady=6,
         )
         self.btn_p1_101_run.pack(side="left")
+        self.btn_p1_101_stop = tk.Button(
+            actions,
+            text="중단",
+            command=self._stop_p1_101,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=6,
+            state="disabled",
+        )
+        self.btn_p1_101_stop.pack(side="left", padx=8)
         tk.Button(
             actions,
             text="로그 지우기",
             command=self._clear_p1_101_log,
-        ).pack(side="left", padx=8)
+        ).pack(side="left", padx=4)
 
         self.p1_101_status = tk.Label(
-            parent, text="", bg="#f1f5f9", anchor="w", justify="left"
+            parent,
+            text="엑셀 지정 후 ▶ 실행 (별도 CLI 불필요 · 보드에서 직접 실행)",
+            bg="#f1f5f9",
+            anchor="w",
+            justify="left",
+            fg="#64748b",
         )
         self.p1_101_status.pack(fill="x", pady=4)
 
@@ -534,7 +560,11 @@ class BoardApp(tk.Tk):
 
     def _pick_p1_101_excel(self) -> None:
         initial = self.var_p1_101_excel.get().strip()
-        initial_dir = str(Path(initial).parent) if initial else str(Path.home())
+        if initial and Path(initial).is_file():
+            initial_dir = str(Path(initial).parent)
+        else:
+            roots = default_roots()
+            initial_dir = roots[0] if roots else str(Path.home())
         path = filedialog.askopenfilename(
             title="엑셀자료 파일지정",
             initialdir=initial_dir,
@@ -545,6 +575,11 @@ class BoardApp(tk.Tk):
         )
         if path:
             self.var_p1_101_excel.set(path)
+            try:
+                add_paths([path])
+                set_selected(path)
+            except Exception:
+                pass
 
     def _clear_p1_101_log(self) -> None:
         tv = getattr(self, "p1_101_log", None)
@@ -559,17 +594,21 @@ class BoardApp(tk.Tk):
         ts = time.strftime("%H:%M:%S")
         tag = ()
         s = (step or "").upper()
-        if s in ("오류", "ERROR", "FAIL"):
-            tag = ("err",)
+        if s in ("오류", "ERROR", "FAIL", "중단"):
+            tag = ("err",) if s != "중단" else ()
         elif s in ("완료", "OK") or "완료" in (message or ""):
             tag = ("ok",)
+        if s == "중단":
+            # 주황 계열은 태그 없이 메시지로 구분
+            pass
         item = tv.insert("", "end", values=(ts, step, message), tags=tag)
         tv.see(item)
 
-    def _p1_101_progress(self, step: str, message: str) -> None:
-        self.after(0, lambda s=step, m=message: self._append_p1_101_log(s, m))
+    def _p1_101_stop_flag(self) -> Path:
+        return ROOT / "P1_101" / ".extract_stop"
 
     def _run_p1_101(self) -> None:
+        """메인보드에서 P1_101/extract.py 를 서브프로세스로 직접 실행."""
         excel = self.var_p1_101_excel.get().strip()
         if not excel:
             messagebox.showinfo("안내", "엑셀자료 파일을 지정하세요.")
@@ -577,39 +616,175 @@ class BoardApp(tk.Tk):
         if not Path(excel).is_file():
             messagebox.showerror("오류", f"파일이 없습니다:\n{excel}")
             return
-        self.btn_p1_101_run.configure(state="disabled")
-        self.p1_101_status.configure(text="상품수 추출 중…", fg="#0f172a")
-        self._clear_p1_101_log()
-
-        def work() -> None:
-            result = p1_101_extract.run_extract(
-                excel,
-                progress=self._p1_101_progress,
-            )
-            self.after(0, lambda: self._p1_101_done(result))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _p1_101_done(self, result) -> None:
-        self.btn_p1_101_run.configure(state="normal")
-        self._p1_101_result = result
-        if not result.ok:
-            msg = "실패: " + (
-                "; ".join(result.errors) if result.errors else "알 수 없는 오류"
-            )
-            self.p1_101_status.configure(text=msg, fg="#b91c1c")
+        if self._p1_101_proc and self._p1_101_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 상품수 추출이 진행 중입니다.")
             return
-        msg = (
-            f"완료 · UPDATE {result.updated}/{result.total}"
-            f" · 실패 {result.failed} · {result.excel_path}"
-        )
-        if result.warnings:
-            msg += " · " + " / ".join(result.warnings)
-        self.p1_101_status.configure(text=msg, fg="#15803d")
+
+        extract_py = ROOT / "P1_101" / "extract.py"
+        if not extract_py.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{extract_py}")
+            return
+
         try:
-            add_paths([result.excel_path])
+            add_paths([excel])
+            set_selected(excel)
         except Exception:
             pass
+
+        # 중단 플래그 초기화
+        try:
+            self._p1_101_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except TypeError:
+            fp = self._p1_101_stop_flag()
+            if fp.exists():
+                try:
+                    fp.unlink()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+        args = [sys.executable, str(extract_py), excel]
+        # Windows 로컬: 브라우저 창 표시(팝업 닫기 확인) / 그 외 headless
+        if os.name == "nt":
+            args.append("--headed")
+        else:
+            args.append("--headless")
+
+        self._clear_p1_101_log()
+        self.btn_p1_101_run.configure(state="disabled")
+        self.btn_p1_101_stop.configure(state="normal")
+        self.p1_101_status.configure(
+            text=f"보드 직접실행 중… {Path(excel).name}",
+            fg="#0f172a",
+        )
+        self._append_p1_101_log("실행", f"메인보드 → {extract_py.name} · {excel}")
+
+        try:
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            self._p1_101_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P1_101"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            self.btn_p1_101_run.configure(state="normal")
+            self.btn_p1_101_stop.configure(state="disabled")
+            messagebox.showerror("실행 실패", str(e))
+            self.p1_101_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p1_101_proc,
+            args=(self._p1_101_proc, excel),
+            daemon=True,
+        ).start()
+
+    def _stop_p1_101(self) -> None:
+        proc = self._p1_101_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 상품수 추출이 없습니다.")
+            return
+        try:
+            self._p1_101_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p1_101_status.configure(
+                text=f"중단 플래그 기록 실패: {e}", fg="#b91c1c"
+            )
+            return
+        self.p1_101_status.configure(text="중단 요청 중… (부분 UPDATE 저장)", fg="#b45309")
+        self._append_p1_101_log("중단", "사용자 중단 요청")
+
+        def force() -> None:
+            for _ in range(24):
+                if proc.poll() is not None:
+                    return
+                time.sleep(0.5)
+            if proc.poll() is not None:
+                return
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            time.sleep(1.5)
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
+        threading.Thread(target=force, daemon=True).start()
+
+    def _p1_101_log_ui(self, text: str) -> None:
+        """extract.py stdout 한 줄 → 실행로그 그리드."""
+        line = (text or "").strip()
+        if not line:
+            return
+        m = re.match(r"^\[([^\]]+)\]\s*(.*)$", line)
+        if m:
+            step, msg = m.group(1).strip(), m.group(2).strip()
+        else:
+            step, msg = "로그", line
+        self.after(0, lambda s=step, m=msg: self._append_p1_101_log(s, m))
+
+    def _watch_p1_101_proc(self, proc: subprocess.Popen, path: str) -> None:
+        try:
+            assert proc.stdout is not None
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self._p1_101_log_ui(text)
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self._p1_101_log_ui(text)
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p1_101_status.configure(
+                    text=f"로그 수신 오류: {e}", fg="#b91c1c"
+                ),
+            )
+        code = proc.wait()
+        self.after(0, lambda: self._on_p1_101_finished(path, code))
+
+    def _on_p1_101_finished(self, path: str, code: int) -> None:
+        self.btn_p1_101_run.configure(state="normal")
+        self.btn_p1_101_stop.configure(state="disabled")
+        self._p1_101_proc = None
+        try:
+            self._p1_101_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+        if code == 0:
+            self.p1_101_status.configure(
+                text=f"완료 · 엑셀 UPDATE: {path}",
+                fg="#15803d",
+            )
+            self._append_p1_101_log("완료", f"보드 직접실행 종료 · {path}")
+        else:
+            self.p1_101_status.configure(
+                text=f"실패 (exit={code}) · {path}",
+                fg="#b91c1c",
+            )
+            self._append_p1_101_log("오류", f"종료 코드 {code}")
 
     # ── P1_ZARA_DE ─────────────────────────────────────
     def _build_p1_zara(self, parent: tk.Frame) -> None:
