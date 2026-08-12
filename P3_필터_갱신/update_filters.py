@@ -777,7 +777,8 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
     }
     url = url.replace(/[\)\]\>,\;]+$/, '');
 
-    // 3) 수집조건수정 버튼 → ★「수집개수 … 전체저장」바로 옆 버튼 우선
+    // 3) 수집조건수정/수집조건저장 버튼 → ★「수집개수 … 전체저장」바로 옆 버튼 우선
+    // ※ 실제 화면 버튼명이 '수집조건수정' 또는 '수집조건저장'으로 다를 수 있어 둘 다 인식
     const editNodes = Array.from(tr.querySelectorAll(
       'a, button, input[type="button"], input[type="submit"], input[value], span'
     ));
@@ -800,7 +801,7 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
         const full = (parent.innerText || '').replace(/\s+/g, '');
         const iCnt = full.indexOf('수집개수');
         const iAll = full.indexOf('전체저장');
-        const iBtn = full.indexOf('수집조건수정');
+        const iBtn = full.search(/수집조건(수정|저장)/);
         if (iCnt >= 0 && iBtn > iCnt && (iAll < 0 || (iAll > iCnt && iAll < iBtn))) {
           return true;
         }
@@ -810,7 +811,7 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
     };
     const isEditLabel = (el) => {
       const label = (el.value || el.textContent || '').replace(/\s+/g, '');
-      return label === '수집조건수정' || /^수집조건수정/.test(label);
+      return /^수집조건(수정|저장)/.test(label);
     };
     const ranked = editNodes
       .filter(isEditLabel)
@@ -820,7 +821,7 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
         if (nearCollect(el)) score += 100;
         if (tag === 'INPUT' || tag === 'BUTTON') score += 20;
         if (tag === 'A') score += 10;
-        if (((el.value || el.textContent || '').replace(/\s+/g, '')) === '수집조건수정') {
+        if (/^수집조건(수정|저장)$/.test(((el.value || el.textContent || '').replace(/\s+/g, '')))) {
           score += 15;
         }
         return { el, score, ord };
@@ -900,7 +901,7 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
               if (!(ty === 'button' || ty === 'submit' || ty === '')) return false;
             }
             const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
-            return t === '수집조건수정' || /^수집조건수정/.test(t);
+            return /^수집조건(수정|저장)/.test(t);
           };
 
           const nearCollectCount = (el) => {
@@ -922,7 +923,7 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
               const full = (parent.innerText || '').replace(/\\s+/g, '');
               const iCnt = full.indexOf('수집개수');
               const iAll = full.indexOf('전체저장');
-              const iBtn = full.indexOf('수집조건수정');
+              const iBtn = full.search(/수집조건(수정|저장)/);
               if (iCnt >= 0 && iBtn > iCnt && (iAll < 0 || (iAll > iCnt && iAll < iBtn))) {
                 return true;
               }
@@ -943,7 +944,7 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
             }
             return anchors.find(a => {
               const h = a.href || '';
-              return h.indexOf('http') === 0 && !/수집조건수정/.test((a.textContent||''));
+              return h.indexOf('http') === 0 && !/수집조건(수정|저장)/.test((a.textContent||''));
             }) || null;
           };
 
@@ -964,7 +965,7 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
             if (rightOfUrl(el, urlA)) s += 120;
             if (nearCollectCount(el)) s += 100;
             const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
-            if (t === '수집조건수정') s += 20;
+            if (/^수집조건(수정|저장)$/.test(t)) s += 20;
             const tag = (el.tagName || '').toUpperCase();
             if (tag === 'INPUT' || tag === 'BUTTON') s += 10;
             if (tag === 'A') s += 5;
@@ -1218,7 +1219,7 @@ def _find_and_mark_row_url(page, row_index: int, row_url: str = "") -> dict:
             for (const a of anchors) {
               const h = a.href || a.getAttribute('href') || '';
               const label = (a.textContent || '').replace(/\\s+/g, '');
-              if (/수집조건수정/.test(label)) continue;
+              if (/수집조건(수정|저장)/.test(label)) continue;
               if (h.indexOf('http') !== 0) continue;
               if (!urlHint || h === urlHint || h.startsWith(urlStem) || urlHint.startsWith(h.split('?')[0])) {
                 pick = a; break;
@@ -1227,7 +1228,7 @@ def _find_and_mark_row_url(page, row_index: int, row_url: str = "") -> dict:
             if (!pick) {
               pick = anchors.find(a => {
                 const h = a.href || '';
-                return h.indexOf('http') === 0 && !/수집조건수정/.test((a.textContent||''));
+                return h.indexOf('http') === 0 && !/수집조건(수정|저장)/.test((a.textContent||''));
               });
             }
             if (!pick) continue;
@@ -1608,14 +1609,17 @@ def _log_text_find_phase(
 
 
 def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | None:
-    """검색필터 URL 바로 우측의 '전체저장' 텍스트 + 그 옆 '수집조건수정' 위치."""
+    """검색필터 URL 바로 우측의 '전체저장' 텍스트 + 그 옆 버튼명(수집조건수정/저장) 위치.
+
+    ★실제 화면 버튼명이 '수집조건수정' 또는 '수집조건저장'으로 다를 수 있어 둘 다 인식한다.
+    """
     geo = page.evaluate(
         """(args) => {
           const rowIndex = args.rowIndex;
           const urlHint = (args.urlHint || '').trim();
           const urlStem = urlHint.split('?')[0];
           const needle = '전체저장';
-          const editLabel = '수집조건수정';
+          const editLabels = ['수집조건수정', '수집조건저장'];
           const fixedChars = args.fixedChars || 4;
 
           const rowMatchesUrl = (tr) => {
@@ -1748,8 +1752,13 @@ def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | 
             }
             if (!allsave) continue;
 
-            // 전체저장 우측에서 수집조건수정 텍스트/버튼 확인 (좌측 decoy 제외)
-            let editRect = measureTextRightOf(tr, editLabel, allsave.right);
+            // 전체저장 우측에서 수집조건수정/수집조건저장 텍스트·버튼 확인 (좌측 decoy 제외)
+            let editRect = null;
+            let editLabelFound = '';
+            for (const lbl of editLabels) {
+              const r = measureTextRightOf(tr, lbl, allsave.right);
+              if (r) { editRect = r; editLabelFound = lbl; break; }
+            }
 
             try { tr.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
             return {
@@ -1762,6 +1771,7 @@ def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | 
               charW: allsave.charW,
               midY: allsave.midY,
               foundEditLabel: !!editRect,
+              editLabelFound: editLabelFound,
               editLeft: editRect ? editRect.left : null,
               editMidX: editRect ? (editRect.left + editRect.right) / 2 : null,
               editMidY: editRect ? editRect.midY : null,
@@ -1793,7 +1803,8 @@ def _edit_click_point_from_allsave(
     """「전체저장」우측으로 한글 4글자 떨어진 곳을 버튼 클릭 좌표로 한다.
 
     1) 검색필터 URL 바로 우측에서 「전체저장」텍스트 찾기 (전/후 로그·샷)
-    2) 「전체저장」옆 「수집조건수정」버튼명 찾기 (전/후 로그·샷)
+    2) 「전체저장」옆 버튼명 「수집조건수정」/「수집조건저장」찾기 (전/후 로그·샷)
+       ★실제 화면 버튼명이 둘 중 무엇이든 인식한다.
     3) 전체저장 우측 한글 4글자 위치를 버튼으로 가정하고 클릭 좌표 산출
     """
     _find_and_mark_row_url(page, row_index, row_url)
@@ -1847,14 +1858,18 @@ def _edit_click_point_from_allsave(
             row_no=row_no,
             phase="전",
             kind="버튼명",
-            label="수집조건수정",
+            label="수집조건수정/수집조건저장",
         )
 
     found_edit = bool(geo and geo.get("foundEditLabel"))
+    matched_label = (geo or {}).get("editLabelFound") or ""
     if log_find:
         detail = ""
         if found_edit and geo is not None and geo.get("editMidX") is not None:
-            detail = f"mid=({float(geo['editMidX']):.0f},{float(geo.get('editMidY') or 0):.0f})"
+            detail = (
+                f"매칭={matched_label} · "
+                f"mid=({float(geo['editMidX']):.0f},{float(geo.get('editMidY') or 0):.0f})"
+            )
         _log_text_find_phase(
             page,
             progress,
@@ -1862,7 +1877,7 @@ def _edit_click_point_from_allsave(
             row_no=row_no,
             phase="후",
             kind="버튼명",
-            label="수집조건수정",
+            label="수집조건수정/수집조건저장",
             found=found_edit,
             detail=detail,
         )
@@ -1893,6 +1908,7 @@ def _edit_click_point_from_allsave(
         "start_x": start_x,
         "allsave_right": float(geo["right"]),
         "found_edit_label": found_edit,
+        "matched_label": matched_label or "",
         "offset": int(round(x - start_x)),
     }
 
@@ -1911,10 +1927,11 @@ def click_edit_on_row(
     max_tries: int = EDIT_CLICK_MAX_TRIES,
     try_interval_s: float = 2.0,
 ) -> bool:
-    """6) URL 우측 「전체저장」→ 한글 4글자 우측을 「수집조건수정」버튼으로 클릭.
+    """6) URL 우측 「전체저장」→ 한글 4글자 우측을 버튼으로 클릭.
 
     1) 검색필터 URL 바로 우측에서 텍스트 「전체저장」찾기
-    2) 「전체저장」옆 버튼명 「수집조건수정」찾기
+    2) 「전체저장」옆 버튼명 「수집조건수정」또는 「수집조건저장」찾기
+       ★실제 화면 버튼명이 둘 중 무엇이든 인식 (버튼명 하나만 찾아서 실패하지 않도록)
     3) 전체저장 우측 한글 4글자 위치를 버튼으로 가정하고 클릭 (href 금지)
     """
     _ = edit_href
@@ -1969,10 +1986,11 @@ def click_edit_on_row(
         y = float(point["y"])
         steps = int(point.get("char_offset") or EDIT_CLICK_FIXED_CHARS)
         if attempt == 1:
+            lbl_hint = str(point.get("matched_label") or "수집조건수정/저장")
             _log(
                 progress,
                 "로직",
-                f"6) 수집조건수정 클릭 · 전체저장우측 +{steps}글자 → ({x:.0f},{y:.0f})",
+                f"6) {lbl_hint} 클릭 · 전체저장우측 +{steps}글자 → ({x:.0f},{y:.0f})",
                 major=True,
             )
 

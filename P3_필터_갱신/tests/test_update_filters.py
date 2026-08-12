@@ -445,6 +445,31 @@ def test_edit_click_fixed_4chars_from_allsave():
         browser.close()
 
 
+def test_matches_actual_onscreen_label_su_jip_jo_gun_su_jeong():
+    """실제 화면 버튼명은 '수집조건수정' — 정상 매칭되고 matched_label로 노출."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import _edit_click_point_from_allsave, _find_allsave_anchor_geometry
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
+        rows = list_demango_rows(page)
+        geo = _find_allsave_anchor_geometry(
+            page, int(rows[0]["index"]), rows[0]["url"]
+        )
+        assert geo is not None
+        assert geo.get("foundEditLabel") is True
+        assert geo.get("editLabelFound") == "수집조건수정"
+
+        pt = _edit_click_point_from_allsave(
+            page, int(rows[0]["index"]), rows[0]["url"], log_find=False
+        )
+        assert pt is not None
+        assert pt.get("matched_label") == "수집조건수정"
+        browser.close()
+
+
 def test_allsave_edit_find_logs_text_and_screenshots(tmp_path: Path):
     """전체저장/수집조건수정 찾기 전·후 — 텍스트·버튼명 + 스크린샷 로그."""
     from playwright.sync_api import sync_playwright
