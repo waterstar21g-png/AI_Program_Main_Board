@@ -401,36 +401,46 @@ def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
         browser.close()
 
 
-def test_edit_click_char_steps_and_allsave_point_moves_right():
-    """전체저장 우측에서 시작해 시도마다 한글 1글자씩 오른쪽으로 이동."""
+def test_edit_click_fixed_4chars_from_allsave():
+    """URL 우측 전체저장 → 한글 4글자 우측을 수집조건수정 버튼 좌표로 고정."""
     from playwright.sync_api import sync_playwright
     from update_filters import (
+        EDIT_CLICK_FIXED_CHARS,
         EDIT_CLICK_MAX_TRIES,
         _edit_click_point_from_allsave,
+        _find_allsave_anchor_geometry,
         edit_click_char_steps,
     )
 
-    assert EDIT_CLICK_MAX_TRIES == 10
-    steps = [edit_click_char_steps(i) for i in range(1, 11)]
-    assert steps == list(range(10))
+    assert EDIT_CLICK_FIXED_CHARS == 4
+    assert EDIT_CLICK_MAX_TRIES == 3
+    # 시도 번호와 무관하게 항상 4글자
+    assert [edit_click_char_steps(i) for i in range(1, 6)] == [4, 4, 4, 4, 4]
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
         rows = list_demango_rows(page)
+        geo = _find_allsave_anchor_geometry(
+            page, int(rows[0]["index"]), rows[0]["url"]
+        )
+        assert geo is not None
+        assert geo.get("foundEditLabel") is True
         pts = [
             _edit_click_point_from_allsave(
                 page, int(rows[0]["index"]), rows[0]["url"], attempt=i
             )
-            for i in range(1, 6)
+            for i in range(1, 4)
         ]
         assert all(pt is not None for pt in pts)
-        xs = [float(pt["x"]) for pt in pts]
-        assert xs[0] < xs[1] < xs[2] < xs[3] < xs[4]
-        # 1회차는 전체저장 바로 우측(+0글자)
-        assert int(pts[0]["char_steps"]) == 0
+        # 시도마다 같은 4글자 좌표
+        assert int(pts[0]["char_steps"]) == 4
+        assert abs(float(pts[0]["x"]) - float(pts[1]["x"])) < 1.0
         assert float(pts[0]["x"]) > float(pts[0]["allsave_right"])
+        # 4글자 오프셋: start_x + 3.5*char_w 근처
+        expected = float(pts[0]["start_x"]) + 3.5 * float(pts[0]["char_w"])
+        assert abs(float(pts[0]["x"]) - expected) < 2.0
         browser.close()
 
 
