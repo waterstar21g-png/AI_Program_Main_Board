@@ -149,3 +149,17 @@ def main_tag_p3(n: int, msg: str) -> str:
     if any(hint in (msg or "") for hint in P3_FAIL_HINTS):
         return "err"
     return step_tag_p3(n)
+
+
+# 메시지 앞에 이 표식이 붙어 오면 그 행을 적색으로 구분 표시한다.
+# (그리드 셀 안에서 일부 글자만 색을 바꿀 수 없으므로 행 단위로 구분한다 —
+#  예: 동일 URL 행이 2개 이상일 때 "몇 개"·URL 을 별도 적색 행으로 표출)
+RED_PREFIX = "##RED##"
+
+
+def split_red(msg: str) -> tuple[bool, str]:
+    """("적색 표시 여부", 표식 제거한 메시지)."""
+    text = msg or ""
+    if text.startswith(RED_PREFIX):
+        return True, text[len(RED_PREFIX):].lstrip()
+    return False, text

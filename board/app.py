@@ -76,6 +76,7 @@ from log_protocol import (  # noqa: E402
     format_meta_line,
     main_tag_p3,
     parse_line,
+    split_red,
     step_label_p3,
     step_tag,
     step_tag_p3,
@@ -2112,8 +2113,9 @@ class BoardApp(tk.Tk):
         kind = parsed[0]
         if kind == "main":
             _, seq, n, msg = parsed
+            red, msg = split_red(msg)
             if 1 <= n <= 7:
-                self._insert_p3_main_row(t, seq, n, msg)
+                self._insert_p3_main_row(t, seq, n, msg, red=red)
             else:
                 # 오류/완료/중단(90/91/92) — MAIN엔 표시하지 않고, 마지막 실행단계의
                 # SUB에 요약을 남긴다 (요건: MAIN은 7단계만).
@@ -2123,6 +2125,7 @@ class BoardApp(tk.Tk):
                 self._append_p3_sub_entry(target_seq, t, tag, f"[{label}] {msg}")
         elif kind == "sub":
             _, seq, msg = parsed
+            red, msg = split_red(msg)
             shot_ok = re.match(r"^(.*)\s->\s(.+\.png)\s*$", msg)
             shot_fail = re.match(r"^\[샷 실패\]\s*(.*)$", msg)
             if shot_ok:
@@ -2134,7 +2137,7 @@ class BoardApp(tk.Tk):
                     seq, t, f"[샷 실패] {shot_fail.group(1).strip()}", ""
                 )
             else:
-                self._append_p3_sub_entry(seq, t, "info", msg)
+                self._append_p3_sub_entry(seq, t, "err" if red else "info", msg)
         elif kind == "subshot":
             _, seq, path, label = parsed
             self._capture_p3_shot_dir_from_path(path)
@@ -2158,13 +2161,15 @@ class BoardApp(tk.Tk):
         end = self._p3_main_ts_end.get(seq, start)
         return sub_time_range(start, end)
 
-    def _insert_p3_main_row(self, t: str, seq: int, n: int, msg: str) -> None:
+    def _insert_p3_main_row(
+        self, t: str, seq: int, n: int, msg: str, *, red: bool = False
+    ) -> None:
         if seq > 1:
             self._p3_main_ts_end[seq - 1] = t
             if self._p3_selected_seq == seq - 1:
                 self._render_p3_sub_grid(seq - 1)
                 self._render_p3_shot_grid(seq - 1)
-        tag = main_tag_p3(n, msg)
+        tag = "err" if red else main_tag_p3(n, msg)
         item = self.p3_main_log.insert("", "end", values=(t, n, msg), tags=(tag,))
         self._p3_main_item_by_seq[seq] = item
         self._p3_seq_by_main_item[item] = seq
