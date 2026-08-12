@@ -10,14 +10,76 @@ sys.path.insert(0, str(ROOT))
 
 import openpyxl  # noqa: E402
 from update_filters import (  # noqa: E402
+    click_save_button,
     excel_by_url,
     filter_compare_note,
     find_excel_by_demango_url,
     filters_equal,
+    list_demango_rows,
     map_save_count,
     normalize_url,
     read_excel_rows,
+    set_save_count,
 )
+
+DEMANGO_LIST_HTML = """
+<html><body>
+<table>
+<tr>
+  <th><input type="checkbox"></th>
+  <th>사이트</th>
+  <th>필터이름(수정가능)</th>
+  <th>검색필터(저장조건)</th>
+  <th>저장상품/휴지통</th>
+</tr>
+<tr>
+  <td><input type="checkbox"></td>
+  <td>Zara.com/de</td>
+  <td><input type="text" value="여성헤어_헤어"></td>
+  <td>
+    <b>URL 검색:</b>
+    <a href="https://www.zara.com/de/en/woman-zara-hair-groom-mkt17602.html?v1=2662755">
+      https://www.zara.com/de/en/woman-zara-hair-groom-mkt17602.html?v1=2662755
+    </a>
+    | 수집개수: 3개 | 전체저장
+    <button type="button"
+      onclick="location.href='admin_group_modify.php?ps_mode=modify_filter&amp;ps_fuid=352'">
+      수집조건수정
+    </button>
+  </td>
+  <td>0개 / 0개<br>상품확인 (0원)</td>
+</tr>
+<tr>
+  <td><input type="checkbox"></td>
+  <td>Zara.com/de</td>
+  <td><input type="text" value="여성향수_향수"></td>
+  <td>
+    URL 검색:
+    <a href="https://www.zara.com/de/en/woman-perfumes-l123.html">
+      https://www.zara.com/de/en/woman-perfumes-l123.html
+    </a>
+    | 수집개수: 3개
+    <input type="button" value="수집조건수정" onclick="go(353)">
+  </td>
+  <td>2개 / 0개</td>
+</tr>
+</table>
+</body></html>
+"""
+
+MODIFY_HTML = """
+<html><body>
+<h1>검색필터 수정</h1>
+<table>
+  <tr><th>검색 URL</th>
+      <td><input value="https://www.zara.com/de/en/woman-zara-hair-groom-mkt17602.html?v1=2662755"></td></tr>
+  <tr><th>저장상품수</th>
+      <td>검색결과 상위 <input type="text" value="3"> 개 상품만 저장</td></tr>
+</table>
+<input type="button" value="저장하기">
+<input type="button" value="닫기">
+</body></html>
+"""
 
 
 def test_map_save_count_rules():
@@ -72,6 +134,43 @@ def test_read_excel_and_lookup(tmp_path: Path):
     assert find_excel_by_demango_url(by, "https://shop.example/nope") is None
 
 
+def test_list_demango_rows_filter_input_and_url():
+    """스크린샷 구조: 필터이름(수정가능) input · URL 검색 · 수집조건수정."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_HTML)
+        rows = list_demango_rows(page)
+        browser.close()
+
+    assert len(rows) == 2
+    assert rows[0]["filterName"] == "여성헤어_헤어"
+    assert "woman-zara-hair-groom" in rows[0]["url"]
+    assert "ps_fuid=352" in (rows[0].get("editHref") or "")
+    assert rows[0]["hasEdit"] is True
+    # 사이트열(Zara.com/de)을 필터값으로 오인하지 않음
+    assert "Zara" not in rows[0]["filterName"]
+    assert rows[1]["filterName"] == "여성향수_향수"
+    assert "woman-perfumes" in rows[1]["url"]
+    assert "ps_fuid=353" in (rows[1].get("editHref") or "")
+
+
+def test_modify_popup_save_count_and_save_button():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(MODIFY_HTML)
+        assert set_save_count(page, 400)
+        val = page.locator("tr:has-text('저장상품수') input").input_value()
+        assert val == "400"
+        assert click_save_button(page)
+        browser.close()
+
+
 if __name__ == "__main__":
     import tempfile
 
@@ -80,4 +179,6 @@ if __name__ == "__main__":
     test_filters_equal()
     with tempfile.TemporaryDirectory() as d:
         test_read_excel_and_lookup(Path(d))
+    test_list_demango_rows_filter_input_and_url()
+    test_modify_popup_save_count_and_save_button()
     print("PASS P3_필터_갱신 tests")
