@@ -81,12 +81,13 @@ function New-UpdateShortcut {
     [string]$LnkPath,
     [string]$ProjectRoot
   )
-  $updateBatKo = Join-Path $ProjectRoot "버전갱신.bat"
+  # Prefer ASCII path — Korean .lnk TargetPath often breaks on some Windows locales
   $updateBatEn = Join-Path $ProjectRoot "update-version.bat"
+  $updateBatKo = Join-Path $ProjectRoot "버전갱신.bat"
   $target = $null
-  if (Test-Path -LiteralPath $updateBatKo) { $target = $updateBatKo }
-  elseif (Test-Path -LiteralPath $updateBatEn) { $target = $updateBatEn }
-  else { throw "버전갱신.bat / update-version.bat not found" }
+  if (Test-Path -LiteralPath $updateBatEn) { $target = $updateBatEn }
+  elseif (Test-Path -LiteralPath $updateBatKo) { $target = $updateBatKo }
+  else { throw "update-version.bat / 버전갱신.bat not found" }
 
   $w = New-Object -ComObject WScript.Shell
   $sc = $w.CreateShortcut($LnkPath)
