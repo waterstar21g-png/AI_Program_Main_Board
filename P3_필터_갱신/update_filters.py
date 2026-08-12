@@ -11,7 +11,7 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
   3) 스크롤 푸터까지 내리기
   4) 하단→상단 스크롤하며 상품수 카드 갯수 로그
   5) 엑셀 상품수와 비교값 출력
-  6) URL 바로 오른쪽 「수집조건수정」만 클릭 — 2초 간격 최대 5회(팝업 열릴 때까지, href 금지)
+  6) URL 우측 「전체저장」→ 한글 4글자 우측을 「수집조건수정」버튼으로 클릭 (href 금지)
   7) 팝업에서 저장상품수 수정 → 저장하기 → 확인
 
 로그:
@@ -1515,24 +1515,28 @@ def _modify_ui_opened(page) -> bool:
     return False
 
 
-# 6) 수집조건수정: 「전체저장」바로 우측에서 시작해 한글 1글자씩 우측 이동 · 최대 10회
-EDIT_CLICK_MAX_TRIES = 10
+# 6) 수집조건수정: URL 우측 「전체저장」→ 한글 4글자 우측을 버튼으로 클릭
+EDIT_CLICK_MAX_TRIES = 3  # 같은 좌표(4글자) 재시도
 EDIT_CLICK_CHAR_PAD_X = 2  # 전체저장 직후 여유(px)
+EDIT_CLICK_FIXED_CHARS = 4  # ★전체저장 우측으로 한글 4글자 = 수집조건수정 버튼
 
 
 def edit_click_char_steps(attempt: int) -> int:
-    """시도 번호(1..N) → 전체저장 오른쪽에서 이동한 글자 수(0부터)."""
-    return max(0, int(attempt) - 1)
+    """하위호환 — 항상 고정 4글자(시도 번호와 무관)."""
+    _ = attempt
+    return int(EDIT_CLICK_FIXED_CHARS)
 
 
 def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | None:
-    """행 안 '전체저장' 텍스트의 우측 끝 + 한글 1글자 폭을 구한다."""
+    """검색필터 URL 바로 우측의 '전체저장' 텍스트 + 그 옆 '수집조건수정' 위치."""
     geo = page.evaluate(
         """(args) => {
           const rowIndex = args.rowIndex;
           const urlHint = (args.urlHint || '').trim();
           const urlStem = urlHint.split('?')[0];
           const needle = '전체저장';
+          const editLabel = '수집조건수정';
+          const fixedChars = args.fixedChars || 4;
 
           const rowMatchesUrl = (tr) => {
             if (!urlHint) return false;
@@ -1544,6 +1548,87 @@ def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | 
             });
           };
 
+          const urlRightEdge = (tr) => {
+            let right = -1;
+            for (const a of tr.querySelectorAll('a[href]')) {
+              const h = a.href || a.getAttribute('href') || '';
+              if (!(h === urlHint || h.startsWith(urlStem) || (a.textContent||'').includes(urlStem))) {
+                continue;
+              }
+              const r = a.getBoundingClientRect();
+              if (r.width > 0) right = Math.max(right, r.right);
+            }
+            return right;
+          };
+
+          const packRect = (r, text, charWHint) => {
+            let charW = charWHint || Math.max(8, r.width / Math.max(1, text.length));
+            return {
+              left: r.left,
+              right: r.right,
+              top: r.top,
+              bottom: r.bottom,
+              width: r.width,
+              height: r.height,
+              charW: charW,
+              midY: r.top + r.height / 2,
+              foundText: text,
+            };
+          };
+
+          const measureAll = (root, text) => {
+            const out = [];
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode())) {
+              const t = node.textContent || '';
+              let from = 0;
+              while (true) {
+                const i = t.indexOf(text, from);
+                if (i < 0) break;
+                const range = document.createRange();
+                range.setStart(node, i);
+                range.setEnd(node, i + text.length);
+                const rects = range.getClientRects();
+                if (rects && rects.length) {
+                  const r = rects[rects.length - 1];
+                  let charW = Math.max(8, r.width / Math.max(1, text.length));
+                  try {
+                    const r2 = document.createRange();
+                    r2.setStart(node, i);
+                    r2.setEnd(node, Math.min(i + 1, t.length));
+                    const rr = r2.getClientRects();
+                    if (rr && rr.length && rr[0].width > 2) charW = rr[0].width;
+                  } catch (e) {}
+                  out.push(packRect(r, text, charW));
+                }
+                from = i + text.length;
+              }
+            }
+            // input/button value · 요소 텍스트 (수집조건수정 버튼)
+            const els = root.querySelectorAll
+              ? root.querySelectorAll('input, button, a, span, label')
+              : [];
+            for (const el of els) {
+              const val = ((el.value || '') + ' ' + (el.textContent || '')).replace(/\\s+/g, '');
+              if (val.indexOf(text) < 0) continue;
+              const r = el.getBoundingClientRect();
+              if (!r || r.width < 2 || r.height < 2) continue;
+              out.push(packRect(r, text, r.width / Math.max(1, text.length)));
+            }
+            return out;
+          };
+          const measureText = (root, text) => {
+            const all = measureAll(root, text);
+            return all.length ? all[0] : null;
+          };
+          const measureTextRightOf = (root, text, minLeft) => {
+            const all = measureAll(root, text).filter(r => r.left + 2 >= minLeft - 2);
+            if (!all.length) return null;
+            all.sort((a, b) => a.left - b.left);
+            return all[0];
+          };
+
           const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
           let candidates = urlHint ? trs.filter(rowMatchesUrl) : [];
           if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
@@ -1551,61 +1636,66 @@ def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | 
           }
           if (!candidates.length) return null;
 
-          const findNeedleRect = (root) => {
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-            let node;
-            while ((node = walker.nextNode())) {
-              const t = node.textContent || '';
-              const i = t.indexOf(needle);
-              if (i < 0) continue;
-              const range = document.createRange();
-              range.setStart(node, i);
-              range.setEnd(node, i + needle.length);
-              const rects = range.getClientRects();
-              if (!rects || !rects.length) continue;
-              const r = rects[rects.length - 1];
-              // 한글 1글자 폭: '전' 한 글자 측정, 실패 시 전체/4
-              let charW = Math.max(8, r.width / Math.max(1, needle.length));
-              try {
-                const r2 = document.createRange();
-                r2.setStart(node, i);
-                r2.setEnd(node, i + 1);
-                const rr = r2.getClientRects();
-                if (rr && rr.length && rr[0].width > 2) charW = rr[0].width;
-              } catch (e) {}
-              return {
-                left: r.left,
-                right: r.right,
-                top: r.top,
-                bottom: r.bottom,
-                width: r.width,
-                height: r.height,
-                charW: charW,
-                midY: r.top + r.height / 2,
-              };
-            }
-            return null;
-          };
-
           for (const tr of candidates) {
-            // URL 오른쪽 영역 우선: 수집개수/전체저장이 있는 셀
-            let rect = null;
+            const urlRight = urlRightEdge(tr);
+            // URL 바로 우측 셀·영역에서 전체저장 우선
+            let allsave = null;
             const cells = Array.from(tr.querySelectorAll('td, th'));
-            for (const cell of cells) {
+            const ordered = cells.slice().sort((a, b) => {
+              const ar = a.getBoundingClientRect();
+              const br = b.getBoundingClientRect();
+              // URL 오른쪽에 가까운 셀 우선
+              const ascore = (urlRight > 0 && ar.left + 2 >= urlRight - 4) ? 0 : 1;
+              const bscore = (urlRight > 0 && br.left + 2 >= urlRight - 4) ? 0 : 1;
+              if (ascore !== bscore) return ascore - bscore;
+              return ar.left - br.left;
+            });
+            for (const cell of ordered) {
               const txt = (cell.innerText || '').replace(/\\s+/g, '');
-              if (txt.includes('전체저장') || txt.includes('수집개수')) {
-                rect = findNeedleRect(cell);
-                if (rect) break;
+              if (!txt.includes(needle)) continue;
+              const rect = measureText(cell, needle);
+              if (!rect) continue;
+              // 검색필터 URL 바로 우측(같거나 오른쪽) 텍스트만
+              if (urlRight > 0 && rect.left + 8 < urlRight) continue;
+              allsave = rect;
+              break;
+            }
+            if (!allsave) {
+              const rect = measureText(tr, needle);
+              if (rect && !(urlRight > 0 && rect.left + 8 < urlRight)) {
+                allsave = rect;
               }
             }
-            if (!rect) rect = findNeedleRect(tr);
-            if (!rect) continue;
+            if (!allsave) continue;
+
+            // 전체저장 우측에서 수집조건수정 텍스트/버튼 확인 (좌측 decoy 제외)
+            let editRect = measureTextRightOf(tr, editLabel, allsave.right);
+
             try { tr.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
-            return rect;
+            return {
+              left: allsave.left,
+              right: allsave.right,
+              top: allsave.top,
+              bottom: allsave.bottom,
+              width: allsave.width,
+              height: allsave.height,
+              charW: allsave.charW,
+              midY: allsave.midY,
+              foundEditLabel: !!editRect,
+              editLeft: editRect ? editRect.left : null,
+              editMidX: editRect ? (editRect.left + editRect.right) / 2 : null,
+              editMidY: editRect ? editRect.midY : null,
+              fixedChars: fixedChars,
+              urlRight: urlRight,
+            };
           }
           return null;
         }""",
-        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
+        {
+            "rowIndex": int(row_index),
+            "urlHint": (row_url or "").strip(),
+            "fixedChars": int(EDIT_CLICK_FIXED_CHARS),
+        },
     )
     return geo if isinstance(geo, dict) else None
 
@@ -1615,10 +1705,15 @@ def _edit_click_point_from_allsave(
     row_index: int,
     row_url: str,
     *,
-    attempt: int,
+    attempt: int = 1,
 ) -> dict | None:
-    """「전체저장」바로 우측 + (attempt-1)글자만큼 오른쪽 클릭 좌표."""
-    # URL 마킹(스크롤/로그용)
+    """「전체저장」우측으로 한글 4글자 떨어진 곳을 버튼 클릭 좌표로 한다.
+
+    1) 검색필터 URL 바로 우측에서 「전체저장」텍스트 찾기
+    2) 그 우측 한글 4글자 거리에서 「수집조건수정」텍스트 확인
+    3) 그 위치를 버튼으로 가정하고 클릭 좌표 산출
+    """
+    _ = attempt
     _find_and_mark_row_url(page, row_index, row_url)
     geo = _find_allsave_anchor_geometry(page, row_index, row_url)
     if not geo:
@@ -1626,9 +1721,10 @@ def _edit_click_point_from_allsave(
     char_w = float(geo.get("charW") or 14.0)
     if char_w < 6:
         char_w = 14.0
-    steps = edit_click_char_steps(attempt)
+    steps = int(EDIT_CLICK_FIXED_CHARS)
     start_x = float(geo["right"]) + float(EDIT_CLICK_CHAR_PAD_X)
-    x = start_x + steps * char_w + char_w * 0.35  # 글자 중심 부근
+    # ★필수: 전체저장 우측으로 한글 4글자 떨어진 곳을 버튼으로 가정하고 클릭
+    x = start_x + (steps - 0.5) * char_w
     y = float(geo.get("midY") or ((float(geo["top"]) + float(geo["bottom"])) / 2.0))
     try:
         vp = page.viewport_size or {}
@@ -1645,6 +1741,7 @@ def _edit_click_point_from_allsave(
         "char_steps": steps,
         "start_x": start_x,
         "allsave_right": float(geo["right"]),
+        "found_edit_label": bool(geo.get("foundEditLabel")),
         "offset": int(round(x - start_x)),
     }
 
@@ -1663,10 +1760,11 @@ def click_edit_on_row(
     max_tries: int = EDIT_CLICK_MAX_TRIES,
     try_interval_s: float = 2.0,
 ) -> bool:
-    """6) 「전체저장」바로 우측부터 한글 1글자씩 우측 이동 클릭 — 2초×최대 10회.
+    """6) URL 우측 「전체저장」→ 한글 4글자 우측을 「수집조건수정」버튼으로 클릭.
 
-    순서: URL 우측 → 수집개수 우측 → ★전체저장 바로 우측 시작 → 글자씩 이동.
-    ★href / location 대체 절대 금지. 오로지 좌표 클릭만.
+    1) 검색필터 URL 바로 우측에서 텍스트 「전체저장」찾기
+    2) 「전체저장」우측 한글 4글자 거리에서 「수집조건수정」텍스트 확인
+    3) 그 위치를 버튼으로 가정하고 클릭 (href 대체 절대 금지)
     """
     _ = edit_href
     tries = max(1, int(max_tries))
@@ -1698,15 +1796,14 @@ def click_edit_on_row(
                 if attempt < tries:
                     time.sleep(gap)
                 continue
-            # 폴백: 버튼 왼쪽부터 글자폭(~14px)씩 이동
-            char_w = 14.0
-            steps = edit_click_char_steps(attempt)
+            # 폴백: 마킹된 수집조건수정 버튼 중심
             point = {
-                "x": float(bbox["x"]) + 4 + steps * char_w,
+                "x": float(bbox["x"]) + float(bbox["width"]) / 2.0,
                 "y": float(bbox["y"]) + float(bbox["height"]) / 2.0,
-                "char_w": char_w,
-                "char_steps": steps,
-                "offset": int(steps * char_w),
+                "char_w": 14.0,
+                "char_steps": int(EDIT_CLICK_FIXED_CHARS),
+                "found_edit_label": True,
+                "offset": 0,
             }
 
         before_pages = []
@@ -1717,13 +1814,15 @@ def click_edit_on_row(
 
         x = float(point["x"])
         y = float(point["y"])
-        steps = int(point.get("char_steps") or edit_click_char_steps(attempt))
+        steps = int(point.get("char_steps") or EDIT_CLICK_FIXED_CHARS)
         char_w = float(point.get("char_w") or 14.0)
+        found_lbl = "Y" if point.get("found_edit_label") else "N"
         _log(
             progress,
             "로직",
             f"6) 수집조건수정 클릭 시도 {attempt}/{tries} · "
-            f"전체저장우측 +{steps}글자(≈{char_w:.0f}px) → ({x:.0f},{y:.0f})",
+            f"전체저장우측 +{steps}글자(≈{char_w:.0f}px) · "
+            f"수집조건수정텍스트={found_lbl} → ({x:.0f},{y:.0f})",
         )
 
         popup = None
@@ -1752,7 +1851,6 @@ def click_edit_on_row(
                 "로직",
                 f"6) 팝업창 열림 · url={(popup.url or '')[:120]}",
             )
-            # ★P2와 동일: 팝업 창을 앞으로
             reveal_browser_page(
                 popup,
                 progress,
@@ -1783,7 +1881,8 @@ def click_edit_on_row(
                 _log(
                     progress,
                     "로직",
-                    f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{steps}글자",
+                    f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · "
+                    f"전체저장우측 +{steps}글자",
                 )
                 if shot_dir is not None and shot_count > 0:
                     screenshot_after_edit_click_series(
@@ -1805,7 +1904,8 @@ def click_edit_on_row(
             _log(
                 progress,
                 "로직",
-                f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{steps}글자",
+                f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · "
+                f"전체저장우측 +{steps}글자",
             )
             if shot_dir is not None and shot_count > 0:
                 screenshot_after_edit_click_series(
@@ -1822,13 +1922,14 @@ def click_edit_on_row(
         _log(
             progress,
             "로직",
-            f"6) 팝업 미오픈 · 다음 시도 +{edit_click_char_steps(attempt + 1)}글자 우측",
+            f"6) 팝업 미오픈 · 같은 좌표(+{EDIT_CLICK_FIXED_CHARS}글자) 재시도",
         )
 
     _log(
         progress,
         "오류",
-        f"6) 수집조건수정 클릭 {tries}회 실패 — 전체저장 우측 글자이동에도 팝업 미오픈",
+        f"6) 수집조건수정 클릭 {tries}회 실패 — "
+        f"전체저장 우측 +{EDIT_CLICK_FIXED_CHARS}글자 버튼 클릭에도 팝업 미오픈",
     )
     return False
 
@@ -3037,10 +3138,10 @@ def run_update(
                     continue
                 row_idx = int(row_idx2)
 
-                # 6) 「전체저장」바로 우측부터 한글 1글자씩 우측 · 2초×최대 10회
+                # 6) URL우측 전체저장 → 한글 4글자 우측 = 수집조건수정 버튼 클릭
                 lg.step(
                     "로직",
-                    "6) 수집조건수정 클릭 (전체저장우측 · 글자씩 · 2초×10회)",
+                    "6) 수집조건수정 클릭 (전체저장 우측 한글4글자 = 버튼)",
                     "6) 조건수정 클릭",
                 )
                 if not page_is_usable(page):
