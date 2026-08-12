@@ -29,7 +29,7 @@ exit /b %ERRORLEVEL%
 :board
 echo ========================================
 echo   AI_Program_Main_Board  (Python B)
-echo   P1 카테고리URL  /  P2 더망고수집(구P3)
+echo   P1 / P1_101상품수 / P1_ZARA_DE / P2더망고
 echo ========================================
 
 if exist "%~dp0stop-board.ps1" (
