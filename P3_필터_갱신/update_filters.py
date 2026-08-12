@@ -209,8 +209,32 @@ def excel_by_url(rows: list[ExcelRow]) -> dict[str, ExcelRow]:
     return m
 
 
-def filters_equal(a: str, b: str) -> bool:
-    return (a or "").strip() == (b or "").strip()
+def filters_equal(excel_filter: str, demango_filter: str) -> bool:
+    """검색필터 비교.
+
+    1) 그대로 비교
+    2) 불일치이고 엑셀 검색필터 값 *중간*에 공백이 있으면 공백→'_' 치환 후 재비교
+    """
+    a = (excel_filter or "").strip()
+    b = (demango_filter or "").strip()
+    if a == b:
+        return True
+    # 중간에 공백이 있는 경우만 (앞뒤 trim 이후에도 공백 존재)
+    if " " in a:
+        if a.replace(" ", "_") == b:
+            return True
+    return False
+
+
+def filter_compare_note(excel_filter: str, demango_filter: str) -> str:
+    """로그용 — 공백→_ 재비교로 맞은 경우 메모."""
+    a = (excel_filter or "").strip()
+    b = (demango_filter or "").strip()
+    if a == b:
+        return ""
+    if " " in a and a.replace(" ", "_") == b:
+        return "엑셀 중간공백→'_' 재비교 일치"
+    return ""
 
 
 def _detail(excel_row: int | None) -> bool:
@@ -510,10 +534,13 @@ def run_update(
                     result.skipped += 1
                     lg.step(
                         "로직",
-                        "1) 검색필터 불일치 — 다음 단계 생략",
+                        "1) 검색필터 불일치(공백→_ 재비교 포함) — 다음 단계 생략",
                         "1) 필터불일치 skip",
                     )
                     continue
+                note = filter_compare_note(ex.filter_name, d_filter)
+                if note:
+                    lg.step("로직", f"1) {note}", note)
 
                 # 2) 수집조건수정
                 lg.step("로직", "2) 수집조건수정 클릭", "2) 조건수정")
