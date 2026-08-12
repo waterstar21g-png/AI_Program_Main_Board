@@ -1774,6 +1774,10 @@ class BoardApp(tk.Tk):
         log_sb.pack(side="right", fill="y")
         self.p3_log.tag_configure("err", foreground="#b91c1c")
         self.p3_log.tag_configure("ok", foreground="#166534")
+        self.p3_log.tag_configure("shot", foreground="#0f766e")
+        self.p3_log.bind("<Double-Button-1>", self._on_p3_log_double_click)
+        self._p3_shot_paths: dict[str, str] = {}
+        self._p3_last_shot_dir: Path | None = None
 
         self.p3_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
         self.p3_status.pack(fill="x", pady=4)
@@ -1888,8 +1892,9 @@ class BoardApp(tk.Tk):
             return
         for item in tv.get_children():
             tv.delete(item)
+        self._p3_shot_paths = {}
 
-    def _append_p3_log(self, step: str, message: str) -> None:
+    def _append_p3_log(self, step: str, message: str, *, shot_path: str = "") -> None:
         tv = getattr(self, "p3_log", None)
         if tv is None:
             return
@@ -1899,8 +1904,44 @@ class BoardApp(tk.Tk):
             tag = ("err",)
         elif step in ("완료", "OK") or "갱신OK" in (message or ""):
             tag = ("ok",)
+        elif step == "샷" or "[샷]" in (message or "") or shot_path:
+            tag = ("shot",)
         item = tv.insert("", "end", values=(ts, step, message), tags=tag)
+        if shot_path:
+            self._p3_shot_paths[item] = shot_path
+            try:
+                self._p3_last_shot_dir = Path(shot_path).parent
+            except Exception:
+                pass
         tv.see(item)
+
+    def _on_p3_log_double_click(self, _event=None) -> None:
+        """실행 로그 샷 행 더블클릭 → PNG 열기."""
+        tv = getattr(self, "p3_log", None)
+        if tv is None:
+            return
+        sel = tv.selection()
+        if not sel:
+            return
+        item = sel[0]
+        path = self._p3_shot_paths.get(item, "")
+        if not path:
+            vals = tv.item(item, "values") or ()
+            msg = vals[2] if len(vals) >= 3 else ""
+            m = re.search(r"((?:[A-Za-z]:)?[^\s]+\.png)\s*$", str(msg))
+            if m:
+                path = m.group(1)
+        if not path or not os.path.isfile(path):
+            return
+        try:
+            if os.name == "nt":
+                os.startfile(path)  # type: ignore[attr-defined]
+            else:
+                import subprocess as _sp
+
+                _sp.Popen(["xdg-open", path])
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("열기 실패", f"{path}\n{e}")
 
     def _p3_stop_flag(self) -> Path:
         return ROOT / "P3_필터_갱신" / ".filter_stop"
@@ -2026,13 +2067,40 @@ class BoardApp(tk.Tk):
                             continue
                     if not text:
                         continue
+                    # ##P3SHOT##<path>##<label>
+                    if text.startswith("##P3SHOT##"):
+                        parts = text.split("##")
+                        # ['', 'P3SHOT', path, label...]
+                        path = parts[2].strip() if len(parts) > 2 else ""
+                        label = "##".join(parts[3:]).strip() if len(parts) > 3 else ""
+                        msg = f"[샷] {label} -> {path}" if label else f"[샷] {path}"
+                        self.after(
+                            0,
+                            lambda m=msg, p=path: self._append_p3_log(
+                                "샷", m, shot_path=p
+                            ),
+                        )
+                        continue
                     # [step] message
                     step, msg = "로그", text
                     if text.startswith("[") and "]" in text:
                         end = text.index("]")
                         step = text[1:end].strip() or "로그"
                         msg = text[end + 1 :].strip()
-                    self.after(0, lambda s=step, m=msg: self._append_p3_log(s, m))
+                    shot_path = ""
+                    if step == "샷" or "[샷]" in msg:
+                        m = re.search(
+                            r"((?:[A-Za-z]:)?[^\s]+\.png)\s*$",
+                            msg,
+                        )
+                        if m:
+                            shot_path = m.group(1)
+                    self.after(
+                        0,
+                        lambda s=step, m=msg, p=shot_path: self._append_p3_log(
+                            s, m, shot_path=p
+                        ),
+                    )
         except Exception as e:  # noqa: BLE001
             self.after(
                 0,
