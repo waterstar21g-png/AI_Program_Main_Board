@@ -15,7 +15,7 @@
 D:\My_Project\AI_Program_Main_Board
 ```
 
-## 로컬에 받기 (PowerShell)
+## 로컬에 받기 (최초 1회)
 
 ```powershell
 Set-Location D:\My_Project
@@ -27,27 +27,22 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
   git clone https://github.com/waterstar21g-png/AI_Program_Main_Board.git AI_Program_Main_Board
   Set-Location .\AI_Program_Main_Board
 }
-.\run.bat
-```
-
-## 실행
-
-- **바탕화면/작업표시줄 아이콘** → `boot-from-icon.ps1` (**수동 pull 불필요**)  
-  1) **기존 보드 종료** (`stop-board.ps1`)  
-  2) `update-if-newer.ps1` → `VERSION`이 GitHub `main`과 **다를 때만** 자동 갱신  
-     - 우선 `git pull origin main` (실패 시 `reset --hard origin/main`)  
-     - 그래도 안 되면 **ZIP 통째 덮어쓰기** 자동 폴백  
-  3) `run.bat --noupdate` → pip + **보드 재시작**  
-- `.\run.bat` / `.\start.bat` 도 동일 체인. `--noupdate`면 갱신 생략.
-- (v2.0.58부터) 파일 하나하나를 GitHub에서 개별로 다시 받는 단계는 없앴습니다.
-
-아이콘이 옛 `run.bat`만 가리키면 반영이 안 됩니다. **한 번** 아래로 갱신하세요:
-
-```powershell
-Set-Location D:\My_Project\AI_Program_Main_Board
-git pull origin main
 .\아이콘새로만들기.bat
 ```
+
+이후에는 **아이콘만 클릭** (run.bat 별도 실행 불필요).
+
+## 실행 · 머지 후 반영
+
+- **일상 실행 / 머지 후 반영:** 바탕화면·작업표시줄 **아이콘만 클릭**  
+  → `boot-from-icon.ps1`  
+  1) 기존 보드 종료 (`stop-board.ps1`)  
+  2) `update-if-newer.ps1` → `VERSION`이 GitHub `main`과 다를 때만 자동 갱신  
+  3) 보드 재시작  
+- `run.bat` / `start.bat` 은 아이콘 체인이 내부에서 호출한다. **사용자가 따로 실행할 필요 없음.**
+- (v2.0.58부터) 파일 하나하나를 GitHub에서 개별로 다시 받는 단계는 없앴습니다.
+
+아이콘이 옛 대상을 가리킬 때만(최초·아이콘 손상 시) `아이콘새로만들기.bat` 을 한 번 실행.
 
 또는 `.\make-desktop-icon.cmd` / `.\바로가기만들기.bat` (동일 — 바탕화면+작업표시줄 새 아이콘).
 
