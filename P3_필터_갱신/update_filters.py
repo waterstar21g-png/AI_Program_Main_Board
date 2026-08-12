@@ -569,6 +569,11 @@ def normalize_url(url: str) -> str:
         return s.rstrip("/").lower()
 
 
+def url_stem(url: str) -> str:
+    """쿼리(?...)를 뗀 정규화 주소 — 행 매칭 비교용 (부분일치 금지)."""
+    return normalize_url(url).split("?")[0]
+
+
 def map_save_count(collectible: int) -> int:
     """상품수집가능개수 → 더망고 저장상품수."""
     n = max(0, int(collectible))
@@ -703,7 +708,9 @@ def find_demango_rows_for_excel(
 
     done = done_keys or set()
     key = normalize_url(excel_row.url)
-    stem = (excel_row.url or "").split("?")[0]
+    # ★부분일치(substring)는 쓰지 않는다 — 짧은/잘린 엑셀 URL이 관계없는 행까지
+    #   싹 잡아 엉뚱한 행을 갱신해 버린다. 쿼리만 뗀 주소의 "완전일치"만 인정.
+    stem = url_stem(excel_row.url)
     want_filter = _compact(excel_row.filter_name)
 
     def _pool(match) -> list[dict]:
@@ -723,7 +730,7 @@ def find_demango_rows_for_excel(
 
     pool = _pool(lambda u: bool(key) and normalize_url(u) == key)
     if not pool:
-        pool = _pool(lambda u: bool(stem) and stem in u)
+        pool = _pool(lambda u: bool(stem) and url_stem(u) == stem)
     if not pool:
         return []
 
@@ -1427,12 +1434,13 @@ def resolve_demango_row_index_by_url(
         return "".join(str(r.get("filterName") or "").split()) == want_filter
 
     target = normalize_url(url)
-    stem = url.split("?")[0]
-    # 1) URL 완전일치 + 필터이름 일치 → 2) URL stem + 필터이름 → 3) URL 만
+    stem = url_stem(url)
+    # 1) URL 완전일치 + 필터이름 일치 → 2) URL stem 완전일치 + 필터이름 → 3) URL 만
     for label, match in (
         ("정확", lambda r: normalize_url((r.get("url") or "").strip()) == target
             and _same_filter(r)),
-        ("stem", lambda r: stem and stem in (r.get("url") or "") and _same_filter(r)),
+        ("stem", lambda r: stem and url_stem(r.get("url") or "") == stem
+            and _same_filter(r)),
         ("URL만", lambda r: normalize_url((r.get("url") or "").strip()) == target),
     ):
         for r in rows:
@@ -2374,13 +2382,10 @@ def set_save_count(
                 el.fill(target)
             except Exception:
                 return False
-        # 브라우저 자동완성(30/3/35) 닫기
+        # ★Escape 로 자동완성을 닫으면 방금 입력한 값까지 원복되는 경우가 있어
+        #   (갱신전=3 → 갱신후=3 사고) blur 로 확정한다.
         try:
-            el.press("Escape")
-        except Exception:
-            pass
-        try:
-            page.keyboard.press("Escape")
+            el.evaluate("(el) => { el.blur(); }")
         except Exception:
             pass
         time.sleep(0.15)
@@ -2509,6 +2514,44 @@ def set_save_count(
         )
 
     return filled
+
+
+def verify_save_count(
+    page,
+    value: int,
+    *,
+    progress: ProgressFn | None = None,
+    retry: bool = True,
+) -> str:
+    """저장 직전 「저장상품수」 칸의 실제 값을 읽어 돌려준다 (다르면 1회 재입력).
+
+    ★입력 직후 값이 원복(예: 3)된 채로 '저장하기'를 누르면 엉뚱한 수치가 저장된다.
+    그래서 저장 전에 화면 값을 확인하고, 목표값이 아니면 다시 채운 뒤 재확인한다.
+    """
+    target = str(int(value))
+
+    def _read() -> str:
+        work, _kind = resolve_modify_target(page)
+        loc = find_save_count_locator(work, prefer_value=target)
+        if loc is None:
+            return ""
+        try:
+            return (loc.input_value(timeout=800) or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    got = _read()
+    if got == target or not retry:
+        return got
+    _log(
+        progress,
+        "로직",
+        f"5) 저장상품수 확인 {got or '?'} ≠ 목표 {target} → 재입력",
+    )
+    set_save_count(page, int(value), progress=progress)
+    got = _read()
+    _log(progress, "로직", f"5) 저장상품수 재확인 화면값={got or '?'} · 목표={target}")
+    return got
 
 
 def new_shot_dir() -> Path:
@@ -3081,55 +3124,40 @@ _CONFIRM_CLICK_JS = """() => {
 }"""
 
 
-def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict | None = None) -> bool:
-    """LABEL '확인' 과 일치하는 요소를 찾으면 그대로 클릭한다.
+def click_modified_confirm(
+    page,
+    *,
+    timeout_ms: int = 8000,
+    dialog_state: dict | None = None,
+) -> bool:
+    """★요건: '저장하기' 다음에 팝업이 뜨면 조건 없이 「확인」 을 클릭한다.
 
-    - 네이티브 alert: attach_native_dialog_handler 가 이미 accept
-    - HTML: LABEL이 정확히 '확인'인 요소를 클릭 (다른 조건 없음)
-    ★'확인' 버튼이 원래 page 가 아닌 별도 팝업/프레임(다른 BrowserContext 포함)에
-    뜰 수 있으므로 열려있는 모든 page/frame 을 탐색한다.
+    다른 것은 일절 따지지 않는다(메시지 내용·질문형 여부·수정화면 상태 무시).
+    - 네이티브 alert/confirm: attach_native_dialog_handler 가 이미 수락 → 완료
+    - HTML 팝업: LABEL 이 '확인' 인 요소를 찾으면 그대로 클릭 → 완료
     """
-    end = time.time() + timeout_ms / 1000.0
 
-    def _dialog_confirms_done() -> bool:
-        """dialog_state 가 실제 완료 안내('수정되었습니다')인지 판정.
-
-        ★"저장하시겠습니까?" 류의 confirm(질문형) 프롬프트는 현재 6단계 흐름에
-        전혀 나타날 수 없다 — 완료 안내와 절대 혼동하지 않도록 "습니까"(질문형)는
-        명시적으로 제외하고, "수정"/"완료"만 완료 신호로 인정한다.
-        """
-        if not (dialog_state and dialog_state.get("accepted")):
+    def _dialog_handled() -> bool:
+        if not dialog_state:
             return False
-        msg = str(dialog_state.get("message") or "")
-        if "습니까" in msg:
-            return False
-        return (not msg) or ("수정" in msg) or ("완료" in msg)
+        return bool(dialog_state.get("accepted") or dialog_state.get("seen"))
 
-    # 1) 네이티브 다이얼로그가 이미 처리된 경우
-    if _dialog_confirms_done():
+    if _dialog_handled():
         return True
 
+    end = time.time() + timeout_ms / 1000.0
     while time.time() < end:
-        if _dialog_confirms_done():
+        if _dialog_handled():
             return True
-
-        # 2) LABEL '확인' 과 일치하는 요소를 찾으면 그대로 클릭 — 모든 page/frame 탐색
         for _kind, tgt in _all_pages_and_frames(page):
             try:
-                ok = tgt.evaluate(_CONFIRM_CLICK_JS)
-                if ok:
+                if tgt.evaluate(_CONFIRM_CLICK_JS):
                     time.sleep(0.3)
                     return True
-            except Exception:
+            except Exception:  # noqa: BLE001
                 continue
-
-        time.sleep(0.25)
-
-    # 마지막: 다이얼로그만 처리됐고 메시지가 비어있어도(일부 브라우저) 통과
-    # ★단, '저장하시겠습니까?' 같은 질문형 프롬프트는 절대 완료로 인정하지 않음
-    if _dialog_confirms_done():
-        return True
-    return False
+        time.sleep(0.2)
+    return _dialog_handled()
 
 
 def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
@@ -3562,6 +3590,38 @@ def run_update(
                             pass
                         _return_to_list(page, mango)
                         continue
+
+                    # ★저장 직전 값 검증 — 화면 값이 목표값이 아니면 저장하지 않는다
+                    #   (원복된 값 3 으로 저장돼 버리던 사고 방지)
+                    verified = verify_save_count(
+                        page, target, progress=progress, retry=True
+                    )
+                    if verified != str(target):
+                        result.failed += 1
+                        _log(
+                            progress,
+                            "오류",
+                            _red(
+                                f"엑셀{ex.excel_row}행 · 5) 저장상품수 확인 실패 — 저장하지 않음 · "
+                                f"화면값={verified or '?'} · 목표저장상품수={target} · "
+                                f"필터={d_filter} · KEY={key_short}"
+                            ),
+                        )
+                        screenshot_step(
+                            page,
+                            shot_dir,
+                            step_tag="05_save_count_mismatch",
+                            label=f"5)저장상품수 불일치 화면값={verified or '?'} 목표={target}",
+                            row_no=i,
+                            progress=progress,
+                        )
+                        try:
+                            page.keyboard.press("Escape")
+                        except Exception:
+                            pass
+                        _return_to_list(page, mango)
+                        continue
+                    count_io["after"] = verified
 
                     # 5) LABEL '저장하기' 버튼 클릭 (★'저장'이 아닌 '저장하기' 텍스트를 찾아 클릭)
                     dialog_state = attach_native_dialog_handler(page)
