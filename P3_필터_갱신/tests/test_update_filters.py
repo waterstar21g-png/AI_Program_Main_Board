@@ -402,20 +402,21 @@ def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
 
 
 def test_edit_click_fixed_4chars_from_allsave():
-    """URL 우측 전체저장 → 한글 4글자 우측을 수집조건수정 버튼 좌표로 고정."""
+    """URL 우측 전체저장 → 한글 4글자 우측 고정 클릭 (1글자씩 10회 이동 없음)."""
     from playwright.sync_api import sync_playwright
     from update_filters import (
         EDIT_CLICK_FIXED_CHARS,
         EDIT_CLICK_MAX_TRIES,
         _edit_click_point_from_allsave,
         _find_allsave_anchor_geometry,
-        edit_click_char_steps,
     )
 
     assert EDIT_CLICK_FIXED_CHARS == 4
     assert EDIT_CLICK_MAX_TRIES == 3
-    # 시도 번호와 무관하게 항상 4글자
-    assert [edit_click_char_steps(i) for i in range(1, 6)] == [4, 4, 4, 4, 4]
+    # 1글자씩 이동 API 자체가 없어야 함
+    import update_filters as uf
+
+    assert not hasattr(uf, "edit_click_char_steps")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -427,21 +428,30 @@ def test_edit_click_fixed_4chars_from_allsave():
         )
         assert geo is not None
         assert geo.get("foundEditLabel") is True
-        pts = [
-            _edit_click_point_from_allsave(
-                page, int(rows[0]["index"]), rows[0]["url"], attempt=i
-            )
-            for i in range(1, 4)
-        ]
-        assert all(pt is not None for pt in pts)
-        # 시도마다 같은 4글자 좌표
-        assert int(pts[0]["char_steps"]) == 4
-        assert abs(float(pts[0]["x"]) - float(pts[1]["x"])) < 1.0
-        assert float(pts[0]["x"]) > float(pts[0]["allsave_right"])
-        # 4글자 오프셋: start_x + 3.5*char_w 근처
-        expected = float(pts[0]["start_x"]) + 3.5 * float(pts[0]["char_w"])
-        assert abs(float(pts[0]["x"]) - expected) < 2.0
+        pt1 = _edit_click_point_from_allsave(
+            page, int(rows[0]["index"]), rows[0]["url"]
+        )
+        pt2 = _edit_click_point_from_allsave(
+            page, int(rows[0]["index"]), rows[0]["url"]
+        )
+        assert pt1 is not None and pt2 is not None
+        assert int(pt1["char_offset"]) == 4
+        # 호출마다 동일 고정 좌표 (글자 이동 없음)
+        assert abs(float(pt1["x"]) - float(pt2["x"])) < 1.0
+        assert float(pt1["x"]) > float(pt1["allsave_right"])
+        expected = float(pt1["start_x"]) + 3.5 * float(pt1["char_w"])
+        assert abs(float(pt1["x"]) - expected) < 2.0
         browser.close()
+
+
+def test_no_one_char_ten_tries_logic_in_source():
+    """한글 1글자씩 10번 시도 로직이 소스에 없어야 함."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "edit_click_char_steps" not in src
+    assert "한글 1글자씩" not in src or "삭제" in src
+    assert "최대 10회" not in src
+    assert "EDIT_CLICK_MAX_TRIES = 10" not in src
+    assert "for attempt in range(1, 11)" not in src
 
 
 def test_find_edit_marks_right_of_url():

@@ -1516,15 +1516,10 @@ def _modify_ui_opened(page) -> bool:
 
 
 # 6) 수집조건수정: URL 우측 「전체저장」→ 한글 4글자 우측을 버튼으로 클릭
-EDIT_CLICK_MAX_TRIES = 3  # 같은 좌표(4글자) 재시도
+# ※ 한글 1글자씩 이동하며 N회 시도하는 로직은 삭제됨 — 고정 4글자 1좌표만 사용
+EDIT_CLICK_MAX_TRIES = 3  # 같은 좌표 재클릭(팝업 대기)만 — 글자 이동 없음
 EDIT_CLICK_CHAR_PAD_X = 2  # 전체저장 직후 여유(px)
 EDIT_CLICK_FIXED_CHARS = 4  # ★전체저장 우측으로 한글 4글자 = 수집조건수정 버튼
-
-
-def edit_click_char_steps(attempt: int) -> int:
-    """하위호환 — 항상 고정 4글자(시도 번호와 무관)."""
-    _ = attempt
-    return int(EDIT_CLICK_FIXED_CHARS)
 
 
 def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | None:
@@ -1704,16 +1699,14 @@ def _edit_click_point_from_allsave(
     page,
     row_index: int,
     row_url: str,
-    *,
-    attempt: int = 1,
 ) -> dict | None:
     """「전체저장」우측으로 한글 4글자 떨어진 곳을 버튼 클릭 좌표로 한다.
 
     1) 검색필터 URL 바로 우측에서 「전체저장」텍스트 찾기
     2) 그 우측 한글 4글자 거리에서 「수집조건수정」텍스트 확인
-    3) 그 위치를 버튼으로 가정하고 클릭 좌표 산출
+    3) 그 위치(고정)를 버튼으로 가정하고 클릭 좌표 산출
+       — 글자씩 이동·다회차 좌표 변경 없음
     """
-    _ = attempt
     _find_and_mark_row_url(page, row_index, row_url)
     geo = _find_allsave_anchor_geometry(page, row_index, row_url)
     if not geo:
@@ -1738,7 +1731,7 @@ def _edit_click_point_from_allsave(
         "x": x,
         "y": y,
         "char_w": char_w,
-        "char_steps": steps,
+        "char_offset": steps,
         "start_x": start_x,
         "allsave_right": float(geo["right"]),
         "found_edit_label": bool(geo.get("foundEditLabel")),
@@ -1775,14 +1768,12 @@ def click_edit_on_row(
             return False
 
         info = _find_and_mark_edit_button(page, row_index, row_url)
-        point = _edit_click_point_from_allsave(
-            page, row_index, row_url, attempt=attempt
-        )
+        point = _edit_click_point_from_allsave(page, row_index, row_url)
         if point is None:
             _log(
                 progress,
                 "로직",
-                f"6) '전체저장' 좌표 미검출 · 시도 {attempt}/{tries} — 버튼 폴백",
+                f"6) '전체저장' 좌표 미검출 · 재클릭 {attempt}/{tries} — 버튼 폴백",
             )
             if not info.get("ok"):
                 if attempt < tries:
@@ -1796,12 +1787,12 @@ def click_edit_on_row(
                 if attempt < tries:
                     time.sleep(gap)
                 continue
-            # 폴백: 마킹된 수집조건수정 버튼 중심
+            # 폴백: 마킹된 수집조건수정 버튼 중심 (글자 이동 없음)
             point = {
                 "x": float(bbox["x"]) + float(bbox["width"]) / 2.0,
                 "y": float(bbox["y"]) + float(bbox["height"]) / 2.0,
                 "char_w": 14.0,
-                "char_steps": int(EDIT_CLICK_FIXED_CHARS),
+                "char_offset": int(EDIT_CLICK_FIXED_CHARS),
                 "found_edit_label": True,
                 "offset": 0,
             }
@@ -1814,15 +1805,14 @@ def click_edit_on_row(
 
         x = float(point["x"])
         y = float(point["y"])
-        steps = int(point.get("char_steps") or EDIT_CLICK_FIXED_CHARS)
+        steps = int(point.get("char_offset") or EDIT_CLICK_FIXED_CHARS)
         char_w = float(point.get("char_w") or 14.0)
         found_lbl = "Y" if point.get("found_edit_label") else "N"
         _log(
             progress,
             "로직",
-            f"6) 수집조건수정 클릭 시도 {attempt}/{tries} · "
-            f"전체저장우측 +{steps}글자(≈{char_w:.0f}px) · "
-            f"수집조건수정텍스트={found_lbl} → ({x:.0f},{y:.0f})",
+            f"6) 수집조건수정 클릭(고정 +{steps}글자) · 재클릭 {attempt}/{tries} · "
+            f"≈{char_w:.0f}px · 수집조건수정텍스트={found_lbl} → ({x:.0f},{y:.0f})",
         )
 
         popup = None
