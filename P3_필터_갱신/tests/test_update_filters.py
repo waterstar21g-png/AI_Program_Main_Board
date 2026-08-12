@@ -1114,24 +1114,25 @@ def test_confirm_click_finds_button_in_different_browser_context():
         browser.close()
 
 
-def test_confirm_prompt_message_never_treated_as_done():
-    """'저장하시겠습니까?' 류 confirm(질문형)은 현재 흐름에 나타날 수 없고,
-    '수정되었습니다' 완료 안내와 절대 혼동해서는 안 된다."""
+def test_any_dialog_after_save_counts_as_confirmed():
+    """★요건: '저장하기' 다음에 팝업이 뜨면 조건 없이 확인 처리 (메시지 안 따짐).
+
+    네이티브 다이얼로그는 핸들러가 이미 수락하므로 그것으로 완료로 본다 —
+    질문형('저장하시겠습니까?')이어도 실패로 만들지 않는다.
+    """
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
-        # 완료 안내('수정되었습니다')가 전혀 없는 화면 — 혼선 방지 검증용
         page.set_content("<html><body><div>대기중</div></body></html>")
-        # 실제로는 절대 나타나지 않지만, 방어적으로 dialog_state에 그런 메시지가
-        # 들어있다고 가정해도 '완료'로 오인해 조기 종료하면 안 된다.
-        dialog_state = {
-            "seen": True,
-            "message": "저장하시겠습니까?",
-            "accepted": True,
-        }
-        assert click_modified_confirm(page, timeout_ms=600, dialog_state=dialog_state) is False
+        for msg in ("저장하시겠습니까?", "수정되었습니다", ""):
+            state = {"seen": True, "message": msg, "accepted": True}
+            assert (
+                click_modified_confirm(page, timeout_ms=600, dialog_state=state) is True
+            ), msg
+        # 팝업도 없고 '확인' 요소도 없으면 실패
+        assert click_modified_confirm(page, timeout_ms=400) is False
         browser.close()
 
 
