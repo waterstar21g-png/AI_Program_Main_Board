@@ -537,11 +537,12 @@ def test_major_log_filter_keeps_steps_drops_noise():
 
 
 def test_store_count_call_disabled_but_function_kept():
-    """상품수 카운트 함수·로그는 유지, CALL 플래그만 False (테스트시간 절약)."""
+    """4) 상품노출수(카드수) 추출 — URL클릭→browse_store_count_cards 로 활성화됨."""
     import update_filters as uf
 
-    assert uf.ENABLE_STORE_COUNT_CALL is False
+    assert uf.ENABLE_STORE_COUNT_CALL is True
     assert callable(uf.browse_store_count_cards)
+    assert callable(uf.click_demango_row_url)
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
     assert "def browse_store_count_cards" in src
     assert "상품수 카드 갯수=" in src
@@ -787,6 +788,40 @@ def test_set_save_count_always_before_after_shots(tmp_path: Path):
         assert (shot_dir / "r010_save_count_before.png").is_file()
         assert (shot_dir / "r010_save_count_after.png").is_file()
         assert page.locator("td:has-text('검색결과 상위') input").input_value() == "63"
+        browser.close()
+
+
+def test_confirm_prompt_message_never_treated_as_done():
+    """'저장하시겠습니까?' 류 confirm(질문형)은 현재 흐름에 나타날 수 없고,
+    '수정되었습니다' 완료 안내와 절대 혼동해서는 안 된다."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        # 완료 안내('수정되었습니다')가 전혀 없는 화면 — 혼선 방지 검증용
+        page.set_content("<html><body><div>대기중</div></body></html>")
+        # 실제로는 절대 나타나지 않지만, 방어적으로 dialog_state에 그런 메시지가
+        # 들어있다고 가정해도 '완료'로 오인해 조기 종료하면 안 된다.
+        dialog_state = {
+            "seen": True,
+            "message": "저장하시겠습니까?",
+            "accepted": True,
+        }
+        assert click_modified_confirm(page, timeout_ms=600, dialog_state=dialog_state) is False
+        browser.close()
+
+
+def test_real_completion_dialog_message_still_short_circuits():
+    """실제 완료 안내('수정되었습니다')는 그대로 완료로 인정한다."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content("<html><body><div>대기중</div></body></html>")
+        dialog_state = {"seen": True, "message": "수정되었습니다", "accepted": True}
+        assert click_modified_confirm(page, timeout_ms=600, dialog_state=dialog_state) is True
         browser.close()
 
 

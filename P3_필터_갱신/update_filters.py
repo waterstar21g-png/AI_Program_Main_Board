@@ -57,8 +57,8 @@ ProgressFn = Callable[[str, str], None]
 STOP_FLAG_PATH = Path(__file__).resolve().parent / ".filter_stop"
 P3_RUN_LOG_DIR = Path(__file__).resolve().parent / "run-logs"
 P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
-# URL클릭 후 상품수 카드 집계(browse_store_count_cards) — 함수·로그는 유지, CALL만 차단(테스트 시간 절약)
-ENABLE_STORE_COUNT_CALL = False
+# 4) 망고 행 URL 클릭 → 상품노출수(카드수) 추출 (browse_store_count_cards)
+ENABLE_STORE_COUNT_CALL = True
 
 # ★요건: 보드 「더망고 URL」초기값 (검색필터·저장조건 화면)
 DEFAULT_MANGO_URL = (
@@ -2262,25 +2262,34 @@ def find_save_count_locator(page, prefer_value: str = "3"):
     return None
 
 
+def _all_pages_and_frames(page):
+    """page 의 context 안 모든 page(팝업 포함) + 그 안의 frame 을 (target, kind)로 나열.
+
+    현재 page 를 항상 먼저 반환한다.
+    """
+    ordered: list[tuple] = [("page", page)]
+    try:
+        for p in page.context.pages:
+            if p is not page:
+                ordered.append(("page", p))
+    except Exception:
+        pass
+    out: list[tuple] = list(ordered)
+    for _kind, p in ordered:
+        try:
+            for fr in p.frames:
+                out.append(("frame", fr))
+        except Exception:
+            continue
+    return out
+
+
 def resolve_modify_target(page):
     """검색필터 수정(저장상품수) 화면이 열린 page/frame 을 찾는다.
 
     팝업 창·iframe 모두 탐색. (page, kind) 반환. 없으면 (page, 'main').
     """
-    candidates = []
-    try:
-        for p in page.context.pages:
-            candidates.append(("page", p))
-    except Exception:
-        candidates.append(("page", page))
-
-    # 현재 page 를 앞에
-    ordered = [("page", page)]
-    for kind, p in candidates:
-        if p is not page:
-            ordered.append((kind, p))
-
-    for kind, p in ordered:
+    for kind, p in _all_pages_and_frames(page):
         try:
             url = p.url or ""
             if "modify_filter" in url or "admin_group_modify" in url:
@@ -2295,17 +2304,22 @@ def resolve_modify_target(page):
                 return p, kind
         except Exception:
             pass
-        # frames
+    return page, "main"
+
+
+def _find_confirm_target(page):
+    """'수정되었습니다' 메세지가 보이는 page/frame 을 찾는다.
+
+    저장하기 클릭 후 확인 팝업은 원래 목록 page 가 아닌 별도 팝업/프레임에
+    뜰 수 있으므로, 수정화면과 마찬가지로 context 전체를 탐색한다.
+    """
+    for kind, p in _all_pages_and_frames(page):
         try:
-            for fr in p.frames:
-                try:
-                    t = fr.inner_text("body", timeout=300) or ""
-                except Exception:
-                    continue
-                if "저장상품수" in t and ("검색결과" in t or "저장하기" in t):
-                    return fr, "frame"
+            body = p.locator("body").inner_text(timeout=300) or ""
+            if "수정되었습니다" in body or "수정 되었습니다" in body:
+                return p, kind
         except Exception:
-            pass
+            continue
     return page, "main"
 
 
@@ -2537,7 +2551,12 @@ def screenshot_save_count_grid(
 
 
 def click_save_button(page) -> bool:
-    """검색필터 수정 화면 하단 '저장하기' (옆에 '닫기')."""
+    """검색필터 수정 화면(팝업·프레임 포함) 하단 '저장하기' (옆에 '닫기') 클릭.
+
+    ★수정화면이 원래 page 가 아닌 별도 팝업/프레임에서 열릴 수 있으므로,
+    set_save_count 와 동일하게 resolve_modify_target 으로 실제 위치를 찾아 클릭한다.
+    """
+    work, _kind = resolve_modify_target(page)
     selectors = (
         'input[type="submit"][value="저장하기"]',
         'input[type="button"][value="저장하기"]',
@@ -2545,28 +2564,36 @@ def click_save_button(page) -> bool:
         'button:has-text("저장하기")',
         'a:has-text("저장하기")',
     )
-    for sel in selectors:
+    targets = [work]
+    for _kk, p in _all_pages_and_frames(page):
+        if p is not work:
+            targets.append(p)
+    for tgt in targets:
+        for sel in selectors:
+            try:
+                loc = tgt.locator(sel).last
+                if loc.count() > 0 and loc.is_visible(timeout=500):
+                    loc.click(timeout=3000, force=True)
+                    return True
+            except Exception:
+                continue
+    for tgt in targets:
         try:
-            loc = page.locator(sel).last
-            if loc.count() > 0 and loc.is_visible(timeout=500):
-                loc.click(timeout=3000, force=True)
+            clicked = tgt.evaluate(
+                """() => {
+                  const nodes = Array.from(document.querySelectorAll('a,button,input'));
+                  for (const el of nodes) {
+                    const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
+                    if (t === '저장하기') { el.click(); return true; }
+                  }
+                  return false;
+                }"""
+            )
+            if clicked:
                 return True
         except Exception:
             continue
-    try:
-        clicked = page.evaluate(
-            """() => {
-              const nodes = Array.from(document.querySelectorAll('a,button,input'));
-              for (const el of nodes) {
-                const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
-                if (t === '저장하기') { el.click(); return true; }
-              }
-              return false;
-            }"""
-        )
-        return bool(clicked)
-    except Exception:
-        return False
+    return False
 
 
 def attach_native_dialog_handler(page) -> dict:
@@ -2632,68 +2659,85 @@ def wait_modify_page_closed(page, *, timeout_ms: int = 20000) -> bool:
     return not is_modify_page_open(page)
 
 
+_CONFIRM_CLICK_JS = """() => {
+  const bodyText = (document.body && document.body.innerText) || '';
+  const hasMsg = /수정\\s*되었습니다|수정되었습니다/.test(bodyText);
+  const nodes = Array.from(document.querySelectorAll(
+    'button, a, input[type="button"], input[type="submit"], input[type="image"]'
+  ));
+  // 정확히 '확인' 우선
+  for (const el of nodes) {
+    const t = ((el.value || el.innerText || el.textContent || '') + '')
+      .replace(/\\s+/g, '');
+    if (t !== '확인') continue;
+    // 메시지 보이거나, alert 레이어 안이면 클릭
+    const scope = el.closest(
+      '.ui-dialog, .modal, .layer, .popup, .alert, [role="dialog"], form, body'
+    );
+    const scopeText = ((scope && scope.innerText) || bodyText);
+    if (hasMsg || /수정\\s*되었습니다|수정되었습니다/.test(scopeText)) {
+      el.click();
+      return true;
+    }
+  }
+  // 폴백: 화면에 수정되었습니다가 보이면 첫 '확인' 클릭
+  if (hasMsg) {
+    for (const el of nodes) {
+      const t = ((el.value || el.innerText || el.textContent || '') + '')
+        .replace(/\\s+/g, '');
+      if (t === '확인') { el.click(); return true; }
+    }
+  }
+  return false;
+}"""
+
+
 def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict | None = None) -> bool:
-    """'수정되었습니다' 팝업에서 '확인' 버튼을 반드시 클릭.
+    """'저장하기' 클릭 후 뜨는 '수정되었습니다' 팝업에서 '확인' 버튼을 반드시 클릭.
 
     - 네이티브 alert: attach_native_dialog_handler 가 이미 accept
     - HTML 레이어/모달: '확인' 버튼 클릭
+    ★'수정되었습니다' 팝업이 원래 page 가 아닌 별도 팝업/프레임에서 뜰 수 있으므로,
+    context 전체(page.context.pages + frames)를 탐색해서 클릭한다.
     """
     end = time.time() + timeout_ms / 1000.0
 
-    # 1) 네이티브 다이얼로그가 이미 처리된 경우
-    if dialog_state and dialog_state.get("accepted"):
+    def _dialog_confirms_done() -> bool:
+        """dialog_state 가 실제 완료 안내('수정되었습니다')인지 판정.
+
+        ★"저장하시겠습니까?" 류의 confirm(질문형) 프롬프트는 현재 6단계 흐름에
+        전혀 나타날 수 없다 — 완료 안내와 절대 혼동하지 않도록 "습니까"(질문형)는
+        명시적으로 제외하고, "수정"/"완료"만 완료 신호로 인정한다.
+        """
+        if not (dialog_state and dialog_state.get("accepted")):
+            return False
         msg = str(dialog_state.get("message") or "")
-        if (not msg) or ("수정" in msg) or ("완료" in msg) or ("저장" in msg):
-            return True
+        if "습니까" in msg:
+            return False
+        return (not msg) or ("수정" in msg) or ("완료" in msg)
+
+    # 1) 네이티브 다이얼로그가 이미 처리된 경우
+    if _dialog_confirms_done():
+        return True
 
     while time.time() < end:
-        if dialog_state and dialog_state.get("accepted"):
+        if _dialog_confirms_done():
             return True
 
-        # 2) HTML 팝업: '수정되었습니다' 근처의 '확인'
-        try:
-            ok = page.evaluate(
-                """() => {
-                  const bodyText = (document.body && document.body.innerText) || '';
-                  const hasMsg = /수정\\s*되었습니다|수정되었습니다/.test(bodyText);
-                  const nodes = Array.from(document.querySelectorAll(
-                    'button, a, input[type="button"], input[type="submit"], input[type="image"]'
-                  ));
-                  // 정확히 '확인' 우선
-                  for (const el of nodes) {
-                    const t = ((el.value || el.innerText || el.textContent || '') + '')
-                      .replace(/\\s+/g, '');
-                    if (t !== '확인') continue;
-                    // 메시지 보이거나, alert 레이어 안이면 클릭
-                    const scope = el.closest(
-                      '.ui-dialog, .modal, .layer, .popup, .alert, [role="dialog"], form, body'
-                    );
-                    const scopeText = ((scope && scope.innerText) || bodyText);
-                    if (hasMsg || /수정\\s*되었습니다|수정되었습니다/.test(scopeText)) {
-                      el.click();
-                      return true;
-                    }
-                  }
-                  // 폴백: 화면에 수정되었습니다가 보이면 첫 '확인' 클릭
-                  if (hasMsg) {
-                    for (const el of nodes) {
-                      const t = ((el.value || el.innerText || el.textContent || '') + '')
-                        .replace(/\\s+/g, '');
-                      if (t === '확인') { el.click(); return true; }
-                    }
-                  }
-                  return false;
-                }"""
-            )
-            if ok:
-                time.sleep(0.3)
-                return True
-        except Exception:
-            pass
+        # 2) HTML 팝업: '수정되었습니다' 근처의 '확인' — 모든 page/frame 탐색
+        for _kind, tgt in _all_pages_and_frames(page):
+            try:
+                ok = tgt.evaluate(_CONFIRM_CLICK_JS)
+                if ok:
+                    time.sleep(0.3)
+                    return True
+            except Exception:
+                continue
 
-        # 3) Playwright locator 폴백
+        # 3) Playwright locator 폴백 — '수정되었습니다' 가 보이는 target만
+        confirm_target, _kind = _find_confirm_target(page)
         try:
-            msg = page.locator("text=수정되었습니다").first
+            msg = confirm_target.locator("text=수정되었습니다").first
             if msg.count() > 0 and msg.is_visible(timeout=200):
                 for sel in (
                     'button:has-text("확인")',
@@ -2701,7 +2745,7 @@ def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict 
                     'input[value="확인"]',
                     'a:has-text("확인")',
                 ):
-                    loc = page.locator(sel).last
+                    loc = confirm_target.locator(sel).last
                     if loc.count() > 0 and loc.is_visible(timeout=200):
                         loc.click(timeout=2000, force=True)
                         time.sleep(0.3)
@@ -2712,7 +2756,8 @@ def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict 
         time.sleep(0.25)
 
     # 마지막: 다이얼로그만 처리됐고 메시지가 비어있어도(일부 브라우저) 통과
-    if dialog_state and dialog_state.get("accepted"):
+    # ★단, '저장하시겠습니까?' 같은 질문형 프롬프트는 절대 완료로 인정하지 않음
+    if _dialog_confirms_done():
         return True
     return False
 
@@ -2928,16 +2973,69 @@ def run_update(
                 if note:
                     _log(progress, "로직", f"2) {note} · KEY={key_short}", major=True)
 
-                # 4) 상품노출수(카드수) 추출 — ★현재는 건너뛰고 수행 (추후 완성본에서 추가)
-                # ※ 4단계는 이 페이지·함수를 그대로 재사용할 예정이라 스위치만 남겨둔다.
+                # 4) 망고 행의 URL 클릭 → 상품노출수(카드수) 추출 (TOP→DOWN→푸터→UP 카운트)
+                card_n: int | None = None
                 if ENABLE_STORE_COUNT_CALL:
-                    pass  # TODO: 완성본에서 browse_store_count_cards 등으로 카드수 추출
-                _log(
-                    progress,
-                    "로직",
-                    "4) 상품노출수(카드수) 추출 — 건너뛰고 수행 (추후 완성본에서 추가)",
-                    major=True,
-                )
+                    list_page = page
+                    store = click_demango_row_url(
+                        list_page, row_idx, d_url, progress=progress
+                    )
+                    if store is None:
+                        _log(
+                            progress,
+                            "오류",
+                            f"행{i} · 4) URL 클릭 실패 · 필터={d_filter} · KEY={key_short} · "
+                            f"엑셀행={ex.excel_row} · 사유=스토어/팝업 오픈 실패(행index={row_idx})",
+                        )
+                        _return_to_list(list_page, mango)
+                    else:
+                        try:
+                            card_n, matched = browse_store_count_cards(
+                                store,
+                                excel_count=ex.collectible,
+                                progress=progress,
+                                shot_dir=shot_dir,
+                                row_no=i,
+                            )
+                            _log(
+                                progress,
+                                "로직",
+                                f"4) 상품노출수(카드수)={card_n} · 엑셀수집가능개수={ex.collectible} · "
+                                f"일치={'Y' if matched else 'N'} · 필터={d_filter} · KEY={key_short}",
+                                major=True,
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            _log(
+                                progress,
+                                "경고",
+                                f"행{i} · 4) 카드수 추출 예외 · 필터={d_filter} · KEY={key_short} · "
+                                f"{str(e).split(chr(10))[0][:120]}",
+                            )
+                        page = close_store_return_list(
+                            list_page, store, mango, progress=progress
+                        )
+                        if page is None:
+                            result.failed += 1
+                            _log(
+                                progress,
+                                "오류",
+                                f"행{i} · 필터={d_filter} · KEY={key_short} · "
+                                "더망고 목록 탭 재연결 실패(스토어 닫기 후 핸들 유실)",
+                            )
+                            continue
+                        # URL 클릭으로 목록을 벗어났다 복귀했으므로 행 index 재확정
+                        row_idx2 = resolve_demango_row_index_by_url(
+                            page, d_url, fallback_index=row_idx, progress=progress
+                        )
+                        if row_idx2 is not None:
+                            row_idx = int(row_idx2)
+                else:
+                    _log(
+                        progress,
+                        "로직",
+                        "4) 상품노출수(카드수) 추출 — 건너뛰고 수행 (추후 완성본에서 추가)",
+                        major=True,
+                    )
 
                 # 5) LABEL '수집조건수정' 버튼 클릭 → 저장상품수 입력 → '저장하기' 클릭
                 target = map_save_count(ex.collectible)
