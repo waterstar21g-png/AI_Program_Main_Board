@@ -20,6 +20,7 @@ from extract import (  # noqa: E402
     ensure_column,
     find_header_index,
     format_final_output,
+    parse_card_image_keys_from_html,
     parse_product_count_from_html,
     read_url_jobs,
     stop_requested,
@@ -76,9 +77,27 @@ def test_parse_zara_grid_without_total_label():
 
 
 def test_scroll_stop_requires_footer_and_stability():
-    """푸터 도달·안정화 조건을 넉넉히 두어 조기 중단을 막는다."""
-    assert FOOTER_STABLE_ROUNDS >= 4
-    assert SCROLL_STABLE_ROUNDS >= 6
+    """고속 스크롤용 안정화 조건(짧게)."""
+    assert FOOTER_STABLE_ROUNDS >= 2
+    assert SCROLL_STABLE_ROUNDS >= 2
+
+
+def test_parse_card_image_keys_from_html():
+    """카드 data-productid 기준으로 갯수를 센다."""
+    html = """
+    <ul class="product-grid">
+      <li class="product-grid-product" data-productid="111">
+        <img src="https://cdn.example/a.jpg" />
+      </li>
+      <li class="product-grid-product" data-productid="222">
+        <img src="https://cdn.example/b.jpg" />
+      </li>
+      <li class="product-grid-product" data-productid="333">
+      </li>
+    </ul>
+    """
+    keys = parse_card_image_keys_from_html(html)
+    assert keys == {"pid:111", "pid:222", "pid:333"}
 
 
 def test_collect_ids_from_json_products():
@@ -140,6 +159,7 @@ if __name__ == "__main__":
     test_parse_korean_and_english_labels()
     test_parse_zara_grid_without_total_label()
     test_scroll_stop_requires_footer_and_stability()
+    test_parse_card_image_keys_from_html()
     test_collect_ids_from_json_products()
     test_format_final_output()
     with tempfile.TemporaryDirectory() as d:
