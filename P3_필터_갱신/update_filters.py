@@ -1137,6 +1137,60 @@ def _modify_ui_opened(page) -> bool:
     return False
 
 
+# 6) 수집조건수정: 시도마다 URL 오른쪽에서 더 우측으로 이동하며 클릭
+EDIT_CLICK_BASE_OFFSET_X = 28  # 1회차: URL 오른쪽 +28px
+EDIT_CLICK_STEP_X = 56  # 이후 회차마다 +56px 우측 이동
+
+
+def edit_click_offset_x(attempt: int, *, base: int = EDIT_CLICK_BASE_OFFSET_X, step: int = EDIT_CLICK_STEP_X) -> int:
+    """시도 번호(1..N) → URL 오른쪽 가로 오프셋(px)."""
+    a = max(1, int(attempt))
+    return int(base) + (a - 1) * int(step)
+
+
+def _row_url_click_point(
+    page,
+    row_index: int,
+    row_url: str,
+    *,
+    attempt: int,
+) -> dict | None:
+    """URL 앵커 기준 오른쪽(시도마다 더 우측) 클릭 좌표."""
+    info = _find_and_mark_row_url(page, row_index, row_url)
+    if not info.get("ok"):
+        return None
+    loc = page.locator('[data-p3-url-target="1"]').first
+    try:
+        loc.scroll_into_view_if_needed(timeout=2000)
+    except Exception:
+        pass
+    try:
+        box = loc.bounding_box()
+    except Exception:
+        box = None
+    if not box:
+        return None
+    offset = edit_click_offset_x(attempt)
+    x = float(box["x"]) + float(box["width"]) + float(offset)
+    y = float(box["y"]) + float(box["height"]) / 2.0
+    # 뷰포트 안으로 클램프
+    try:
+        vp = page.viewport_size or {}
+        vw = float(vp.get("width") or 1280)
+        vh = float(vp.get("height") or 800)
+        x = min(max(2.0, x), vw - 2.0)
+        y = min(max(2.0, y), vh - 2.0)
+    except Exception:
+        pass
+    return {
+        "x": x,
+        "y": y,
+        "offset": offset,
+        "url_box": box,
+        "href": info.get("href") or row_url,
+    }
+
+
 def click_edit_on_row(
     page,
     row_index: int,
@@ -1151,9 +1205,10 @@ def click_edit_on_row(
     max_tries: int = 5,
     try_interval_s: float = 2.0,
 ) -> bool:
-    """6) URL 바로 오른쪽 「수집조건수정」만 클릭 — 2초 간격 최대 5회(팝업 열릴 때까지).
+    """6) URL 오른쪽에서 오른쪽으로 위치를 옮겨가며 클릭 — 2초 간격 최대 5회.
 
-    ★href / location / window.open(url) 대체 절대 금지. 오로지 버튼 클릭만.
+    ★동일 좌표 반복 금지. 시도1=+28px, 2=+84px, 3=+140px … (URL 오른쪽 기준)
+    ★href / location 대체 절대 금지. 오로지 좌표 클릭만.
     """
     _ = edit_href
     tries = max(1, int(max_tries))
@@ -1163,25 +1218,35 @@ def click_edit_on_row(
         if stop_requested():
             return False
 
+        # 참고용으로 버튼 마킹(로그). 클릭은 좌표 이동이 본체.
         info = _find_and_mark_edit_button(page, row_index, row_url)
-        if not info.get("ok"):
+        point = _row_url_click_point(page, row_index, row_url, attempt=attempt)
+        if point is None:
             _log(
                 progress,
                 "로직",
-                f"6) 수집조건수정 미검출 · 시도 {attempt}/{tries} ({info})",
+                f"6) URL 좌표 미검출 · 시도 {attempt}/{tries} — 버튼 폴백 클릭",
             )
-            if attempt < tries:
-                time.sleep(gap)
-            continue
-
-        near = "Y" if info.get("nearCollect") else "N"
-        right = "Y" if info.get("rightOfUrl") else "N"
-        _log(
-            progress,
-            "로직",
-            f"6) 수집조건수정 클릭 시도 {attempt}/{tries} · "
-            f"URL오른쪽={right} · 수집개수옆={near} · tag={info.get('tag')}",
-        )
+            if not info.get("ok"):
+                if attempt < tries:
+                    time.sleep(gap)
+                continue
+            # 버튼 박스가 있으면 그 중심에서 시도마다 우측으로 살짝 이동
+            try:
+                bbox = page.locator('[data-p3-edit-target="1"]').first.bounding_box()
+            except Exception:
+                bbox = None
+            if not bbox:
+                if attempt < tries:
+                    time.sleep(gap)
+                continue
+            offset = edit_click_offset_x(attempt)
+            point = {
+                "x": float(bbox["x"]) + min(float(bbox["width"]) * 0.5, 20) + (attempt - 1) * 20,
+                "y": float(bbox["y"]) + float(bbox["height"]) / 2.0,
+                "offset": offset,
+                "url_box": bbox,
+            }
 
         before_pages = []
         try:
@@ -1189,21 +1254,33 @@ def click_edit_on_row(
         except Exception:
             before_pages = [page]
 
-        loc = page.locator('[data-p3-edit-target="1"]').first
+        x = float(point["x"])
+        y = float(point["y"])
+        offset = int(point.get("offset") or edit_click_offset_x(attempt))
+        near = "Y" if info.get("nearCollect") else "N"
+        right = "Y" if info.get("rightOfUrl") else "N"
+        _log(
+            progress,
+            "로직",
+            f"6) 수집조건수정 클릭 시도 {attempt}/{tries} · "
+            f"URL오른쪽 +{offset}px → ({x:.0f},{y:.0f}) · "
+            f"버튼검출={right}/{near}",
+        )
+
         popup = None
         try:
             with page.expect_popup(timeout=int(gap * 1000)) as pop_info:
-                loc.click(timeout=4_000, no_wait_after=True)
+                page.mouse.click(x, y)
             popup = pop_info.value
         except Exception:
             popup = None
             try:
-                loc.click(timeout=4_000, force=True, no_wait_after=True)
+                page.mouse.click(x, y)
             except Exception as e:
                 _log(
                     progress,
                     "로직",
-                    f"6) 클릭 예외 시도{attempt}: {str(e).split(chr(10))[0][:100]}",
+                    f"6) 좌표클릭 예외 시도{attempt}: {str(e).split(chr(10))[0][:100]}",
                 )
 
         if popup is not None:
@@ -1233,7 +1310,11 @@ def click_edit_on_row(
                 _log(progress, "오류", "6) 팝업 not found — 중단 (href 재시도 없음)")
                 return False
             if _modify_ui_opened(page):
-                _log(progress, "로직", f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries}")
+                _log(
+                    progress,
+                    "로직",
+                    f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{offset}px",
+                )
                 if shot_dir is not None and shot_count > 0:
                     screenshot_after_edit_click_series(
                         page,
@@ -1251,7 +1332,11 @@ def click_edit_on_row(
             _log(progress, "오류", "6) 팝업 not found — 중단 (href 재시도 없음)")
             return False
         if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=800):
-            _log(progress, "로직", f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries}")
+            _log(
+                progress,
+                "로직",
+                f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries} · +{offset}px",
+            )
             if shot_dir is not None and shot_count > 0:
                 screenshot_after_edit_click_series(
                     page,
@@ -1264,12 +1349,16 @@ def click_edit_on_row(
                 )
             return True
 
-        _log(progress, "로직", f"6) 팝업 미오픈 · 다음 시도 대기 ({gap:g}s)")
+        _log(
+            progress,
+            "로직",
+            f"6) 팝업 미오픈 · 다음 시도는 더 오른쪽 (+{edit_click_offset_x(attempt + 1)}px)",
+        )
 
     _log(
         progress,
         "오류",
-        f"6) 수집조건수정 클릭 {tries}회 실패 — 팝업 미오픈 (href 대체 없음)",
+        f"6) 수집조건수정 클릭 {tries}회 실패 — 우측 이동 클릭에도 팝업 미오픈 (href 대체 없음)",
     )
     return False
 
