@@ -504,13 +504,33 @@ def test_click_edit_on_row_uses_real_locator_click_not_coordinates(tmp_path: Pat
         browser.close()
 
 
+def test_run_update_uses_canonical_7step_log_messages():
+    """run_update 본문이 사용자 지정 1)~7) 단계 문구를 그대로 사용해야 함."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "1) 망고 수집 URL 링크로 진입" in src
+    assert "2) 망고 URL(KEY) 조회 → 엑셀매칭 OK" in src
+    assert "3) 엑셀 KEY 불일치 → 다음 행" in src
+    assert "3) 필터 불일치 → 다음 행" in src
+    assert "4) 상품노출수(카드수) 추출 — 건너뛰고 수행" in src
+    assert "5) LABEL '수집조건수정' 버튼 찾아 실제 클릭" in src
+    assert "5) LABEL '저장' 버튼 클릭" in src
+    assert "6) '수정되었습니다' 메세지 하단 LABEL '확인' 버튼 클릭" in src
+    assert "7) 2~6단계 반복 → 다음 행" in src
+    # 옛 Logger 세부로그 클래스는 완전히 제거됨
+    assert "class Logger" not in src
+    assert "DETAIL_EXCEL_ROWS" not in src
+
+
 def test_major_log_filter_keeps_steps_drops_noise():
+    """1)~7) 로 시작하는 단계 로그 + 오류/중단/완료/샷만 유지, 나머지는 억제."""
     from update_filters import _is_major_log
 
-    assert _is_major_log("로직", "6) 수집조건수정 클릭")
+    assert _is_major_log("로직", "5) LABEL '수집조건수정' 버튼 찾아 실제 클릭")
     assert _is_major_log("오류", "행1 실패")
-    assert not _is_major_log("화면", "6) 목록 복귀 · url=...")
     assert not _is_major_log("준비", "스크린샷 폴더: /tmp/x")
+    assert not _is_major_log("화면", "필터일치 목록행 표시 · filter=x")
+    # reveal_browser_page 등은 major=False 로 명시 호출되어 _is_major_log 판단 자체를 건너뜀
+    # (여기서는 순수 함수 동작만 검증: 숫자로 시작하지 않으면 항상 억제됨)
 
 
 def test_store_count_call_disabled_but_function_kept():
