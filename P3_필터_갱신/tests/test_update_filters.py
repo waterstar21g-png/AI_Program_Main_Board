@@ -65,6 +65,11 @@ def test_read_excel_and_lookup(tmp_path: Path):
     assert r.filter_name == "MEN B"
     assert map_save_count(r.collectible) == 300
     assert map_save_count(by[normalize_url("https://shop.example/c")].collectible) == 400
+    # 더망고 URL 기준으로 엑셀 검색
+    found = find_excel_by_demango_url(by, "https://shop.example/a/")
+    assert found is not None
+    assert found.filter_name == "MEN A"
+    assert find_excel_by_demango_url(by, "https://shop.example/nope") is None
 
 
 if __name__ == "__main__":
