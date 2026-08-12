@@ -531,28 +531,35 @@ def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
 
 
 def set_save_count(page, value: int) -> bool:
-    """팝업 '검색필터 수정'의 저장상품수 입력.
+    """팝업 '검색필터 수정'의 저장상품수 입력필드에 상품개수 입력.
 
-    스크린샷: 저장상품수 | 검색결과 상위 [ N ] 개 상품만 저장
+    스크린샷 기준 입력필드:
+      저장상품수 | 검색결과 상위 [ 3 ] 개 상품만 저장
+    → '검색결과 상위' 와 '개' 사이에 있는 숫자 input (현재값 예: 3)
     """
+    target = str(int(value))
+
+    # 1) 가장 정확한 XPath: 상위 … input … 개
     loc = None
     try:
         loc = page.locator(
             "xpath=//tr[.//th[contains(normalize-space(.),'저장상품수')] or "
             ".//td[normalize-space()='저장상품수'] or "
             ".//td[starts-with(normalize-space(.),'저장상품수')]]"
-            "//input[@type='text' or @type='number' or not(@type)]"
+            "//input[(@type='text' or @type='number' or not(@type)) and "
+            "(preceding-sibling::text()[contains(.,'상위')] or "
+            "preceding::text()[contains(.,'상위')][1])]"
         ).first
-        if loc.count() == 0 or not loc.is_visible(timeout=800):
+        if loc.count() == 0 or not loc.is_visible(timeout=600):
             loc = None
     except Exception:
         loc = None
 
     if loc is None:
         try:
+            # '검색결과 상위' 문구가 있는 셀 안의 숫자성 input
             loc = page.locator(
-                "xpath=//*[contains(normalize-space(.),'검색결과 상위') or "
-                "contains(normalize-space(.),'검색결과상위')]"
+                "xpath=//td[contains(.,'검색결과') and contains(.,'상위') and contains(.,'개')]"
                 "//input[@type='text' or @type='number' or not(@type)]"
             ).first
             if loc.count() == 0 or not loc.is_visible(timeout=500):
@@ -560,38 +567,109 @@ def set_save_count(page, value: int) -> bool:
         except Exception:
             loc = None
 
-    if loc is not None:
+    if loc is None:
         try:
-            loc.click(timeout=1500)
-            loc.fill("")
-            loc.type(str(int(value)), delay=20)
-            return True
+            loc = page.locator(
+                "xpath=//tr[.//*[contains(normalize-space(.),'저장상품수')]]"
+                "//input[@type='text' or @type='number' or not(@type)]"
+            ).first
+            if loc.count() == 0 or not loc.is_visible(timeout=500):
+                loc = None
         except Exception:
+            loc = None
+
+    def _fill_loc(el) -> bool:
+        try:
+            el.click(timeout=1500)
+            el.press("Control+a")
+            el.fill("")
+            el.type(target, delay=25)
+            # 값 검증
             try:
-                loc.fill(str(int(value)))
-                return True
+                got = (el.input_value(timeout=800) or "").strip()
+                if got == target:
+                    return True
             except Exception:
                 pass
+            el.fill(target)
+            got2 = (el.input_value(timeout=800) or "").strip()
+            return got2 == target
+        except Exception:
+            try:
+                el.fill(target)
+                return True
+            except Exception:
+                return False
 
+    if loc is not None and _fill_loc(loc):
+        return True
+
+    # 2) JS: '검색결과 상위' … input … '개' 패턴의 숫자 입력칸만 갱신
     try:
         ok = page.evaluate(
             """(n) => {
-              const trs = Array.from(document.querySelectorAll('tr'));
-              for (const tr of trs) {
-                const t = (tr.innerText || '').replace(/\\s+/g, '');
-                if (!(t.includes('저장상품수') ||
-                      (t.includes('검색결과') && t.includes('상위')))) {
-                  continue;
-                }
-                const inp = tr.querySelector(
-                  'input[type="text"], input[type="number"], input:not([type])'
-                );
-                if (!inp) continue;
+              const want = String(n);
+              const isNumInput = (inp) => {
+                if (!inp) return false;
+                const ty = (inp.getAttribute('type') || 'text').toLowerCase();
+                if (!(ty === 'text' || ty === 'number' || ty === '')) return false;
+                if (inp.disabled || inp.readOnly) return false;
+                return true;
+              };
+              const setVal = (inp) => {
                 inp.focus();
-                inp.value = String(n);
+                inp.select && inp.select();
+                inp.value = want;
                 inp.dispatchEvent(new Event('input', { bubbles: true }));
                 inp.dispatchEvent(new Event('change', { bubbles: true }));
-                return true;
+                inp.blur && inp.blur();
+                return (inp.value || '').trim() === want;
+              };
+
+              // A) 저장상품수 행 — '상위'~'개' 사이 숫자 input
+              const trs = Array.from(document.querySelectorAll('tr'));
+              for (const tr of trs) {
+                const labelCell = Array.from(tr.querySelectorAll('th, td')).find(c => {
+                  const t = (c.innerText || '').replace(/\\s+/g, '');
+                  return t === '저장상품수' || t.startsWith('저장상품수');
+                });
+                if (!labelCell) continue;
+                const valueCell = labelCell.nextElementSibling ||
+                  Array.from(tr.querySelectorAll('td')).find(td =>
+                    /검색결과/.test(td.innerText || '') && /상위/.test(td.innerText || '')
+                  );
+                const scope = valueCell || tr;
+                const scopeText = (scope.innerText || '').replace(/\\s+/g, ' ');
+                if (!/검색결과\\s*상위/.test(scopeText) && !/상위/.test(scopeText)) {
+                  // 그래도 행에 input 하나면 사용
+                }
+                const inputs = Array.from(scope.querySelectorAll(
+                  'input[type="text"], input[type="number"], input:not([type])'
+                )).filter(isNumInput);
+                // 현재값이 숫자(예: 3)인 input 우선
+                let pick = inputs.find(i => /^\\d+$/.test((i.value || '').trim()))
+                  || inputs[0];
+                if (pick && setVal(pick)) return true;
+              }
+
+              // B) 문서 전체: '검색결과 상위' 텍스트 노드 다음 input
+              const walk = document.createTreeWalker(
+                document.body, NodeFilter.SHOW_TEXT, null
+              );
+              let node;
+              while ((node = walk.nextNode())) {
+                const t = (node.nodeValue || '').replace(/\\s+/g, '');
+                if (!t.includes('상위') && !t.includes('검색결과상위')) continue;
+                // 같은 부모 아래 input
+                let p = node.parentElement;
+                for (let depth = 0; p && depth < 5; depth++, p = p.parentElement) {
+                  const inputs = Array.from(p.querySelectorAll(
+                    'input[type="text"], input[type="number"], input:not([type])'
+                  )).filter(isNumInput);
+                  const pick = inputs.find(i => /^\\d*$/.test((i.value || '').trim()))
+                    || inputs[0];
+                  if (pick && /개/.test(p.innerText || '') && setVal(pick)) return true;
+                }
               }
               return false;
             }""",
