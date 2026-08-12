@@ -1624,8 +1624,12 @@ class BoardApp(tk.Tk):
             value=(default_roots() or [str(Path.home())])[0]
         )
         self.var_p3_q = tk.StringVar(value="카테고리URL")
-        # ★요건: 더망고 URL 입력창에 망고 url 기본 세팅 + 변경 가능
-        self.var_p3_mango_url = tk.StringVar(value=p3_update.load_mango_url_default())
+        # ★요건: 더망고 URL = 검색필터 getGoodsCategory.php 고정 초기값
+        self.var_p3_mango_url = tk.StringVar(value=p3_update.DEFAULT_MANGO_URL)
+        try:
+            p3_update.save_mango_url(p3_update.DEFAULT_MANGO_URL)
+        except Exception:
+            pass
 
         r1 = tk.Frame(search, bg="#ffffff")
         r1.pack(fill="x", pady=2)
@@ -1660,8 +1664,8 @@ class BoardApp(tk.Tk):
         tk.Label(
             search,
             text=(
-                "망고 URL 초기값=검색필터(저장조건) 화면. "
-                "작업은 현재 열린 망고 화면에서 진행(로그인·진입 없음)"
+                "더망고 URL 고정초기값=getGoodsCategory.php(filter_delete·zara_de). "
+                "로그인 없이 이 URL로 이동합니다."
             ),
             bg="#ffffff",
             fg="#64748b",
@@ -1991,8 +1995,8 @@ class BoardApp(tk.Tk):
         if not path or not os.path.isfile(path):
             messagebox.showinfo("안내", "엑셀 파일을 선택하세요.")
             return
-        mango = self.var_p3_mango_url.get().strip()
-        if mango and not mango.lower().startswith("http"):
+        mango = self.var_p3_mango_url.get().strip() or p3_update.DEFAULT_MANGO_URL
+        if not mango.lower().startswith("http"):
             messagebox.showerror("오류", "더망고 URL은 http(s)로 시작해야 합니다.")
             return
         if self._p3_proc and self._p3_proc.poll() is None:
@@ -2007,12 +2011,10 @@ class BoardApp(tk.Tk):
             messagebox.showerror("오류", f"실행 파일 없음:\n{update_py}")
             return
 
-        # 망고 URL 초기값/변경값 기억 (화면 이동에는 쓰지 않음)
-        if mango:
-            try:
-                p3_update.save_mango_url(mango)
-            except Exception:
-                pass
+        try:
+            p3_update.save_mango_url(mango)
+        except Exception:
+            pass
 
         try:
             self._p3_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
@@ -2023,9 +2025,9 @@ class BoardApp(tk.Tk):
             sys.executable,
             str(update_py),
             path,
+            "--mango-url",
+            mango,
         ]
-        if mango:
-            args.extend(["--mango-url", mango])
         try:
             add_paths([path])
             set_selected(path)
@@ -2036,18 +2038,15 @@ class BoardApp(tk.Tk):
         self.p3_status.configure(
             text=(
                 f"작업시작: {Path(path).name} / 총 {len(self._p3_excel_rows)}행 — "
-                "현재 열린 망고 화면에서 진행 (로그인·진입 없음)"
+                "검색필터 URL로 이동 (로그인 없음)"
             ),
             fg="#15803d",
         )
         self._append_p3_log("실행", f"엑셀={path}")
+        self._append_p3_log("실행", f"더망고URL={mango}")
         self._append_p3_log(
             "실행",
-            f"더망고URL={mango or '(현재 화면)'}",
-        )
-        self._append_p3_log(
-            "실행",
-            "현재 망고 화면만 사용 — 로그인·URL 진입 없음",
+            "지정 검색필터 URL로 이동 — 로그인 절차 없음",
         )
 
         try:

@@ -165,22 +165,26 @@ def test_filters_equal():
 
 
 def test_mango_url_default_and_save(tmp_path: Path, monkeypatch):
-    """망고 URL 초기값(검색필터 화면) + 변경값 저장/복원."""
+    """망고 URL 고정 초기값 = getGoodsCategory.php(filter_delete·zara_de)."""
     import update_filters as uf
 
     path = tmp_path / ".last_mango_url"
     monkeypatch.setattr(uf, "LAST_MANGO_URL_PATH", path)
-    assert load_mango_url_default() == DEFAULT_MANGO_URL
-    assert "getGoodsCategory.php" in DEFAULT_MANGO_URL
-    assert "pmode=filter_delete" in DEFAULT_MANGO_URL
-    assert "site_id=zara_de" in DEFAULT_MANGO_URL
-    # 예전 admin.php 초기값이 저장돼 있어도 새 초기값 사용
-    path.write_text(
-        "https://tmg1898.cafe24.com/mall/admin/admin.php\n", encoding="utf-8"
+    want = (
+        "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsCategory.php"
+        "?pmode=filter_delete&uids=&pg=1&date_type=modify"
+        "&start_yy=2026&start_mm=8&start_dd=12"
+        "&end_yy=2026&end_mm=8&end_dd=12"
+        "&site_id=zara_de&sales_yn=&sch_keyword="
+        "&ft_num=all&ft_show=&ft_sort=modify_asc"
     )
-    assert load_mango_url_default() == DEFAULT_MANGO_URL
-    save_mango_url("https://tmg1898.cafe24.com/mall/admin/shop/custom.php")
-    assert load_mango_url_default().endswith("custom.php")
+    assert DEFAULT_MANGO_URL == want
+    assert load_mango_url_default() == want
+    # .last 에 다른 값이 있어도 초기값은 고정
+    path.write_text("https://abcmart.a-rt.com/?track=W0009\n", encoding="utf-8")
+    assert load_mango_url_default() == want
+    save_mango_url(want)
+    assert path.read_text(encoding="utf-8").strip() == want
 
 
 def test_reveal_browser_page_brings_front():
@@ -212,9 +216,20 @@ def test_reveal_browser_page_brings_front():
     assert "팝업테스트" in state or "url=" in state
 
 
-def test_attach_current_mango_requires_open_cdp():
-    """CDP Chrome이 없으면 로그인/진입 없이 오류로 안내한다."""
+def test_attach_current_mango_falls_back_to_connect_browser():
+    """CDP 없으면 P2 connect_browser 로 연결한다 (로그인대기 없음)."""
     from update_filters import attach_current_mango_page
+
+    calls: list[str] = []
+
+    class FakePage:
+        url = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+
+        def set_default_timeout(self, *_a, **_k):
+            return None
+
+        def bring_to_front(self):
+            return None
 
     class FakeP2:
         CDP_URL = "http://127.0.0.1:9222"
@@ -223,19 +238,21 @@ def test_attach_current_mango_requires_open_cdp():
         def cdp_port_open():
             return False
 
-    class FakePw:
-        class chromium:
-            @staticmethod
-            def connect_over_cdp(_url):
-                raise AssertionError("CDP 없을 때 connect 하면 안 됨")
+        @staticmethod
+        def connect_browser(_pw):
+            calls.append("connect")
+            return object(), FakePage()
 
-    try:
-        attach_current_mango_page(FakeP2(), FakePw(), progress=None)
-        assert False, "RuntimeError 가 나야 함"
-    except RuntimeError as e:
-        msg = str(e)
-        assert "열려 있는 더망고 Chrome" in msg
-        assert "로그인" in msg
+        @staticmethod
+        def refresh_if_closed(page):
+            return page
+
+    class FakePw:
+        pass
+
+    _browser, page = attach_current_mango_page(FakeP2(), FakePw(), progress=None)
+    assert "connect" in calls
+    assert isinstance(page, FakePage)
 
 
 def test_read_excel_and_lookup(tmp_path: Path):
