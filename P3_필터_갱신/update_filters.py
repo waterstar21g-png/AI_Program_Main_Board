@@ -539,30 +539,16 @@ def list_demango_rows(page) -> list[dict]:
     return list(data or [])
 
 
-def click_edit_on_row(
-    page,
-    row_index: int,
-    edit_href: str = "",
-    *,
-    row_url: str = "",
-    progress: ProgressFn | None = None,
-) -> bool:
-    """「수집개수: N개 | 전체저장」바로 옆의 「수집조건수정」버튼을 정확히 클릭.
-
-    ★우선순위: DOM 버튼 클릭 (팝업/onclick 경로) → 실패 시에만 editHref 이동.
-    location.href 강제 이동은 엉뚱한 not found 화면을 열 수 있어 후순위로 둔다.
-    """
-    before_pages = []
-    try:
-        before_pages = list(page.context.pages)
-    except Exception:
-        before_pages = [page]
-
-    click_info = page.evaluate(
+def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
+    """수집개수|전체저장 옆 「수집조건수정」버튼을 찾아 data-p3-edit-target 마킹 (클릭은 안 함)."""
+    info = page.evaluate(
         """(args) => {
           const rowIndex = args.rowIndex;
           const urlHint = (args.urlHint || '').trim();
           const urlStem = urlHint.split('?')[0];
+          document.querySelectorAll('[data-p3-edit-target]').forEach(el => {
+            el.removeAttribute('data-p3-edit-target');
+          });
 
           const isEditControl = (el) => {
             if (!el) return false;
@@ -630,9 +616,7 @@ def click_edit_on_row(
 
           const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
           let candidates = [];
-          if (urlHint) {
-            candidates = trs.filter(rowMatchesUrl);
-          }
+          if (urlHint) candidates = trs.filter(rowMatchesUrl);
           if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
             candidates = [trs[rowIndex]];
           }
@@ -642,75 +626,278 @@ def click_edit_on_row(
             const edits = Array.from(tr.querySelectorAll('a, button, input')).filter(isEditControl);
             if (!edits.length) continue;
             edits.sort((a, b) => score(b) - score(a));
-            // ★요건: 수집개수/전체저장 옆 버튼이 있으면 그것만 사용
             const near = edits.filter(nearCollectCount);
             const pick = (near.length ? near : edits)[0];
             try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
-            const meta = {
+            pick.setAttribute('data-p3-edit-target', '1');
+            const oc = pick.getAttribute('onclick') || '';
+            let href = pick.getAttribute('href') || pick.href || '';
+            const mOpen = oc.match(/window\\.open\\s*\\(\\s*['"]([^'"]+)['"]/i);
+            const mLoc = oc.match(/location\\.href\\s*=\\s*['"]([^'"]+)['"]/i);
+            const mPhp = oc.match(/['"]([^'"]*admin_group_modify\\.php[^'"]*)['"]/i);
+            const mGo = oc.match(/(?:go|open|modify|edit)\\s*\\(\\s*(\\d+)\\s*\\)/i);
+            if (!href && mOpen) href = mOpen[1];
+            if (!href && mLoc) href = mLoc[1];
+            if (!href && mPhp) href = mPhp[1];
+            if (!href && mGo) {
+              href = 'admin_group_modify.php?ps_mode=modify_filter&ps_fuid=' + mGo[1];
+            }
+            return {
               ok: true,
               tag: pick.tagName,
               text: ((pick.value || pick.textContent || '') + '').replace(/\\s+/g, ' ').trim().slice(0, 40),
               nearCollect: nearCollectCount(pick),
               score: score(pick),
-              onclick: (pick.getAttribute('onclick') || '').slice(0, 120),
-              href: (pick.getAttribute('href') || pick.href || '').slice(0, 160),
+              onclick: oc.slice(0, 160),
+              href: (href || '').slice(0, 200),
+              opensPopup: /window\\.open/i.test(oc) || (pick.tagName === 'A' && pick.target === '_blank'),
             };
-            pick.click();
-            return meta;
           }
           return { ok: false, reason: 'button-not-found' };
         }""",
         {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
     )
+    return info if isinstance(info, dict) else {"ok": False, "reason": "evaluate-failed"}
 
-    if isinstance(click_info, dict) and click_info.get("ok"):
-        near = "Y" if click_info.get("nearCollect") else "N"
+
+def _modify_ui_opened(page) -> bool:
+    """수집조건수정 후 수정 팝업/페이지/iframe 이 실제로 열렸는지."""
+    if page_shows_not_found(page):
+        return False
+    try:
+        if wait_for_save_count_ready(page, timeout_ms=400):
+            return True
+    except Exception:
+        pass
+    try:
+        target, kind = resolve_modify_target(page)
+        if kind in ("page", "frame") and kind != "main":
+            if wait_for_save_count_ready(target, timeout_ms=400):
+                return True
+        body = ""
+        try:
+            body = target.locator("body").inner_text(timeout=300) or ""
+        except Exception:
+            body = ""
+        if "저장상품수" in body and (
+            "검색필터 수정" in body or "검색결과" in body or "저장하기" in body
+        ):
+            return True
+    except Exception:
+        pass
+    try:
+        for p in page.context.pages:
+            if page_shows_not_found(p):
+                continue
+            bu = p.url or ""
+            if "modify_filter" in bu or "admin_group_modify" in bu:
+                bt = ""
+                try:
+                    bt = p.locator("body").inner_text(timeout=300) or ""
+                except Exception:
+                    pass
+                if "저장상품수" in bt or "검색필터 수정" in bt or (
+                    "검색결과" in bt and "저장하기" in bt
+                ):
+                    return True
+                # URL 은 맞는데 본문 로딩 중이면 잠깐 더
+                try:
+                    p.wait_for_load_state("domcontentloaded", timeout=2000)
+                except Exception:
+                    pass
+                try:
+                    bt = p.locator("body").inner_text(timeout=400) or ""
+                except Exception:
+                    bt = ""
+                if page_shows_not_found(p):
+                    continue
+                if "저장상품수" in bt or "검색필터 수정" in bt:
+                    return True
+            else:
+                try:
+                    bt = p.locator("body").inner_text(timeout=250) or ""
+                except Exception:
+                    bt = ""
+                if "저장상품수" in bt and ("검색결과" in bt or "저장하기" in bt):
+                    return True
+    except Exception:
+        pass
+    return False
+
+
+def click_edit_on_row(
+    page,
+    row_index: int,
+    edit_href: str = "",
+    *,
+    row_url: str = "",
+    progress: ProgressFn | None = None,
+) -> bool:
+    """「수집개수|전체저장」옆 「수집조건수정」을 Playwright 실클릭 → 팝업/수정화면 오픈 확인.
+
+    ★JS el.click() 만으로는 window.open 팝업이 안 뜨는 경우가 많음.
+    ★클릭 성공만으로 True 반환하지 않고, 수정 팝업/화면이 실제로 열린 뒤에만 True.
+    """
+    before_pages = []
+    try:
+        before_pages = list(page.context.pages)
+    except Exception:
+        before_pages = [page]
+
+    info = _find_and_mark_edit_button(page, row_index, row_url)
+    if not info.get("ok"):
         _log(
             progress,
-            "로직",
-            f"2) 수집조건수정 클릭 확인 · 인접(수집개수/전체저장)={near} · "
-            f"tag={click_info.get('tag')} · text={click_info.get('text')!r}",
+            "오류",
+            f"2) 수집조건수정 버튼 미검출 (info={info})",
         )
-        time.sleep(0.7)
-        try:
-            for p in page.context.pages:
-                if p not in before_pages:
-                    try:
-                        p.wait_for_load_state("domcontentloaded", timeout=15_000)
-                    except Exception:
-                        pass
-                    time.sleep(0.3)
-                    return True
-        except Exception:
-            pass
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=15_000)
-        except Exception:
-            pass
-        return True
+        # 최후: editHref 로 팝업 시도
+        href = (edit_href or "").strip()
+        if href:
+            return _open_modify_via_href(page, href, progress=progress)
+        return False
 
-    # 폴백: editHref 직접 이동 (클릭 실패 시에만)
-    href = (edit_href or "").strip()
-    if href:
-        _log(progress, "로직", f"2) 수집조건수정 DOM클릭 실패 → href 폴백: {href[:120]}")
-        try:
-            if href.startswith("http"):
-                page.goto(href, wait_until="domcontentloaded", timeout=60_000)
-            else:
-                page.evaluate("""(h) => { location.href = h; }""", href)
-                page.wait_for_load_state("domcontentloaded", timeout=60_000)
-            time.sleep(0.6)
-            return True
-        except Exception:
-            pass
-
+    near = "Y" if info.get("nearCollect") else "N"
     _log(
         progress,
-        "오류",
-        f"2) 수집조건수정 버튼 미검출 "
-        f"(info={click_info if isinstance(click_info, dict) else {}})",
+        "로직",
+        f"2) 수집조건수정 버튼 찾음 · 인접(수집개수/전체저장)={near} · "
+        f"tag={info.get('tag')} · text={info.get('text')!r} · "
+        f"popup예상={'Y' if info.get('opensPopup') else '?'}",
     )
+
+    loc = page.locator('[data-p3-edit-target="1"]').first
+    clicked = False
+    popup = None
+
+    # 1) Playwright 실클릭 + 새 창(팝업) 대기
+    try:
+        with page.expect_popup(timeout=6_000) as pop_info:
+            loc.click(timeout=4_000, no_wait_after=True)
+            clicked = True
+        popup = pop_info.value
+    except Exception:
+        popup = None
+
+    if not clicked:
+        try:
+            loc.click(timeout=4_000, force=True, no_wait_after=True)
+            clicked = True
+        except Exception as e:
+            _log(progress, "샷", f"2) Playwright 클릭 실패: {str(e).split(chr(10))[0][:120]}")
+
+    if popup is not None:
+        try:
+            popup.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
+        _log(progress, "로직", f"2) 수집조건수정 팝업창 열림 · url={(popup.url or '')[:120]}")
+        time.sleep(0.35)
+        if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=8_000):
+            return True
+
+    # 2) 같은 탭 이동/레이어 모달
+    time.sleep(0.5)
+    try:
+        for p in page.context.pages:
+            if p not in before_pages:
+                try:
+                    p.wait_for_load_state("domcontentloaded", timeout=10_000)
+                except Exception:
+                    pass
+                _log(progress, "로직", f"2) 새 창 감지 · url={(p.url or '')[:120]}")
+    except Exception:
+        pass
+
+    if wait_modify_page(page, timeout_ms=6_000) or _modify_ui_opened(page):
+        _log(progress, "로직", "2) 수집조건수정 후 수정화면 확인(팝업/동일탭/iframe)")
+        return True
+
+    # 3) href / onclick URL 로 window.open 폴백 (팝업 차단 환경 대비)
+    href = (info.get("href") or edit_href or "").strip()
+    if href:
+        _log(progress, "로직", f"2) 팝업 미오픈 → href로 재시도: {href[:120]}")
+        if _open_modify_via_href(page, href, progress=progress):
+            return True
+
+    _log(progress, "오류", "2) 수집조건수정 클릭 후에도 수정 팝업/화면이 열리지 않음")
     return False
+
+
+def _open_modify_via_href(
+    page,
+    href: str,
+    *,
+    progress: ProgressFn | None = None,
+) -> bool:
+    """수정 URL을 window.open 우선으로 연다 (location.href 는 not found 위험)."""
+    h = (href or "").strip()
+    if not h:
+        return False
+    before = []
+    try:
+        before = list(page.context.pages)
+    except Exception:
+        before = [page]
+
+    opened = None
+    try:
+        with page.expect_popup(timeout=5_000) as pop_info:
+            page.evaluate(
+                """(url) => {
+                  const w = window.open(url, '_blank');
+                  if (!w) {
+                    // 팝업 차단 시 같은 탭 이동은 최후
+                    location.href = url;
+                  }
+                }""",
+                h,
+            )
+        opened = pop_info.value
+    except Exception:
+        try:
+            page.evaluate(
+                """(url) => {
+                  const w = window.open(url, '_blank');
+                  if (!w) location.href = url;
+                }""",
+                h,
+            )
+        except Exception:
+            try:
+                if h.startswith("http"):
+                    page.goto(h, wait_until="domcontentloaded", timeout=60_000)
+                else:
+                    page.evaluate("(u) => { location.href = u; }", h)
+                    page.wait_for_load_state("domcontentloaded", timeout=60_000)
+            except Exception:
+                return False
+
+    if opened is not None:
+        try:
+            opened.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
+        _log(progress, "로직", f"2) href 팝업 오픈 · url={(opened.url or '')[:120]}")
+
+    time.sleep(0.5)
+    try:
+        for p in page.context.pages:
+            if p not in before:
+                try:
+                    p.wait_for_load_state("domcontentloaded", timeout=10_000)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    if page_shows_not_found(page):
+        _log(progress, "오류", "2) href 오픈 결과 not found")
+        return False
+    ok = wait_modify_page(page, timeout_ms=8_000) or _modify_ui_opened(page)
+    if ok:
+        _log(progress, "로직", "2) href 경로로 수정화면 확인")
+    return bool(ok)
 
 
 def page_shows_not_found(page) -> bool:
