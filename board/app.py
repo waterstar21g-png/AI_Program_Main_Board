@@ -1695,7 +1695,7 @@ class BoardApp(tk.Tk):
         left_btns.pack(side="left", fill="x", expand=True)
         self.btn_p3_run = tk.Button(
             left_btns,
-            text="갱신 시작",
+            text="작업시작",
             command=self._run_p3,
             bg="#2563eb",
             fg="white",
@@ -1706,7 +1706,7 @@ class BoardApp(tk.Tk):
         self.btn_p3_run.pack(side="left")
         self.btn_p3_stop = tk.Button(
             left_btns,
-            text="갱신 종료",
+            text="작업중단",
             command=self._stop_p3,
             bg="#b91c1c",
             fg="white",
@@ -1926,7 +1926,7 @@ class BoardApp(tk.Tk):
             messagebox.showerror("오류", "더망고 URL은 http(s)로 시작해야 합니다.")
             return
         if self._p3_proc and self._p3_proc.poll() is None:
-            messagebox.showwarning("실행 중", "이미 갱신이 진행 중입니다.")
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
             return
         if not self._p3_excel_rows:
             messagebox.showerror("오류", "엑셀에 처리할 URL 행이 없습니다.")
@@ -1958,7 +1958,7 @@ class BoardApp(tk.Tk):
         self._clear_p3_log()
         self.p3_status.configure(
             text=(
-                f"갱신 시작: {Path(path).name} / 총 {len(self._p3_excel_rows)}행 — "
+                f"작업시작: {Path(path).name} / 총 {len(self._p3_excel_rows)}행 — "
                 "브라우저에서 더망고 로그인 상태를 확인하세요"
             ),
             fg="#15803d",
@@ -1997,14 +1997,14 @@ class BoardApp(tk.Tk):
     def _stop_p3(self) -> None:
         proc = self._p3_proc
         if proc is None or proc.poll() is not None:
-            messagebox.showinfo("안내", "실행 중인 갱신이 없습니다.")
+            messagebox.showinfo("안내", "실행 중인 작업이 없습니다.")
             return
         try:
             self._p3_stop_flag().write_text("stop\n", encoding="utf-8")
         except OSError as e:
             self.p3_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
             return
-        self.p3_status.configure(text="갱신 종료 요청 중…", fg="#b45309")
+        self.p3_status.configure(text="작업중단 요청 중…", fg="#b45309")
 
     def _watch_p3_proc(self, proc: subprocess.Popen, path: str) -> None:
         assert proc.stdout is not None
