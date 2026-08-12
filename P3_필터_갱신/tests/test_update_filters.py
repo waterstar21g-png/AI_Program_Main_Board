@@ -12,6 +12,7 @@ import openpyxl  # noqa: E402
 from update_filters import (  # noqa: E402
     excel_by_url,
     filter_compare_note,
+    find_excel_by_demango_url,
     filters_equal,
     map_save_count,
     normalize_url,

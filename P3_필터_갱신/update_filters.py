@@ -2,7 +2,8 @@
 P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품수 갱신.
 
 0) 보드에 입력한 더망고 URL(검색필터 저장조건 화면)로 이동
-1) 화면의 "검색필터 URL"을 KEY로 엑셀 URL과 매칭 → 검색필터 동일 시 진행
+1) ★더망고 행의 URL을 기준값으로 엑셀에서 동일 URL을 찾음
+   → 검색필터 동일 시 진행 (엑셀 중간공백→'_' 재비교 포함)
 2) "수집조건수정" 클릭
 3) 팝업에서 저장상품수 갱신
    - 상품수집가능개수 ≤ 200 → 그대로
@@ -11,7 +12,10 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
 4) 팝업 하단 "저장하기" → 다음 행
 5) 더망고 화면 전 행 반복
 
-로그: 엑셀 처음 5행 매칭분 = 단계별 세부 / 그 외 = 핵심만
+로그:
+- 더망고 처음 10건: 더망고/엑셀 각각 1줄(검색필터·URL)
+- 엑셀 처음 5행 매칭분 = 단계별 세부 / 그 외 = 핵심만
+- 불일치 행: 검색필터·URL만
 
 사용법:
   python update_filters.py 엑셀.xlsx --mango-url "https://..."
@@ -46,6 +50,7 @@ ProgressFn = Callable[[str, str], None]
 
 STOP_FLAG_PATH = Path(__file__).resolve().parent / ".filter_stop"
 DETAIL_EXCEL_ROWS = 5  # 엑셀 1~5행 매칭 시 세부 로그
+FIRST_COMPARE_LOG_N = 10  # 더망고 처음 10건: 더망고/엑셀 비교 2줄 로그
 
 URL_HEADERS = (
     "검색필터 URL",
@@ -201,12 +206,53 @@ def read_excel_rows(path: Path) -> list[ExcelRow]:
 
 
 def excel_by_url(rows: list[ExcelRow]) -> dict[str, ExcelRow]:
+    """엑셀 URL → 행. 조회 KEY는 더망고 URL(정규화) 기준."""
     m: dict[str, ExcelRow] = {}
     for r in rows:
         key = normalize_url(r.url)
         if key and key not in m:
             m[key] = r
     return m
+
+
+def find_excel_by_demango_url(
+    by_url: dict[str, ExcelRow], demango_url: str
+) -> ExcelRow | None:
+    """★요건: 더망고 URL을 기준값으로 엑셀에서 동일 URL 행을 찾는다."""
+    key = normalize_url(demango_url)
+    if not key:
+        return None
+    return by_url.get(key)
+
+
+def log_first10_compare(
+    progress: ProgressFn | None,
+    *,
+    ordinal: int,
+    d_filter: str,
+    d_url: str,
+    ex: ExcelRow | None,
+) -> None:
+    """더망고 처음 10건 — 더망고/엑셀 검색필터·URL을 두 줄로 표시."""
+    if ordinal > FIRST_COMPARE_LOG_N:
+        return
+    _log(
+        progress,
+        "비교",
+        f"더망고 · 검색필터={d_filter} · URL={d_url}",
+    )
+    if ex is not None:
+        _log(
+            progress,
+            "비교",
+            f"엑셀 · 검색필터={ex.filter_name} · URL={ex.url}",
+        )
+    else:
+        _log(
+            progress,
+            "비교",
+            "엑셀 · 검색필터=- · URL=-",
+        )
 
 
 def filters_equal(excel_filter: str, demango_filter: str) -> bool:
@@ -502,18 +548,27 @@ def run_update(
                 d_url = (drow.get("url") or "").strip()
                 d_filter = (drow.get("filterName") or "").strip()
                 row_idx = int(drow.get("index") or 0)
-                key = normalize_url(d_url)
-                ex = by_url.get(key) if key else None
+                # ★요건1: 더망고 URL을 기준값으로 엑셀에서 동일 URL 검색
+                ex = find_excel_by_demango_url(by_url, d_url)
 
-                # 1) KEY 매칭
+                # ★요건2: 더망고 처음 10건 — 더망고/엑셀 검색필터·URL 두 줄
+                log_first10_compare(
+                    progress,
+                    ordinal=i,
+                    d_filter=d_filter,
+                    d_url=d_url,
+                    ex=ex,
+                )
+
+                # 1) KEY 매칭 (기준=더망고 URL)
                 if not ex:
                     result.skipped += 1
-                    # URL 미매칭도 핵심만
-                    _log(
-                        progress,
-                        "불일치",
-                        f"검색필터={d_filter} · URL={d_url}",
-                    )
+                    if i > FIRST_COMPARE_LOG_N:
+                        _log(
+                            progress,
+                            "불일치",
+                            f"검색필터={d_filter} · URL={d_url}",
+                        )
                     continue
 
                 # 검색필터 비교 (공백→_ 재비교 포함)
@@ -521,26 +576,27 @@ def run_update(
                     ex.filter_name, d_filter
                 ):
                     result.skipped += 1
-                    # ★요건: 불일치 행은 검색필터·URL만 표시
-                    _log(
-                        progress,
-                        "불일치",
-                        f"검색필터={ex.filter_name} · URL={ex.url}",
-                    )
+                    # ★요건: 불일치 행은 검색필터·URL만 (첫 10건은 비교 2줄로 이미 표시)
+                    if i > FIRST_COMPARE_LOG_N:
+                        _log(
+                            progress,
+                            "불일치",
+                            f"검색필터={ex.filter_name} · URL={ex.url}",
+                        )
                     continue
 
                 lg = Logger(progress, ex.excel_row)
                 lg.step(
                     "행",
-                    f"{i}/{result.total_demango} 더망고URL={d_url} · 필터={d_filter!r} · "
-                    f"엑셀행={ex.excel_row}",
+                    f"{i}/{result.total_demango} 더망고URL기준 매칭 · 엑셀행={ex.excel_row}",
                     f"{i}/{result.total_demango} URL매칭=Y",
                 )
                 lg.step(
                     "로직",
-                    f"1) KEY·필터 일치 — 엑셀필터={ex.filter_name!r} · "
-                    f"더망고필터={d_filter!r} · 상품수집가능개수={ex.collectible}",
-                    f"1) KEY일치 · 수집가능={ex.collectible}",
+                    f"1) 더망고URL→엑셀 일치 · 필터일치 — "
+                    f"엑셀필터={ex.filter_name!r} · 더망고필터={d_filter!r} · "
+                    f"상품수집가능개수={ex.collectible}",
+                    f"1) URL·필터일치 · 수집가능={ex.collectible}",
                 )
                 note = filter_compare_note(ex.filter_name, d_filter)
                 if note:
