@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable
 from urllib.parse import urlparse
 
@@ -54,6 +54,11 @@ URL_HEADER_CANDIDATES = (
 )
 COUNT_HEADER = "총상품수"
 COLLECTIBLE_HEADER = "상품수집가능개수"
+
+# ★요건: 출력 엑셀은 입력과 별도 — 지정 폴더에 파일명+버전으로 생성
+OUTPUT_DIR = Path(r"D:\My_Project\AI_Program_Main_Board\P2_INPUT_건수집계")
+ROOT_DIR = Path(__file__).resolve().parent.parent
+VERSION_FILE = ROOT_DIR / "VERSION.txt"
 
 # 팝업/레이어 닫기 버튼 후보 (순서대로 시도)
 POPUP_CLOSE_SELECTORS = (
@@ -104,13 +109,53 @@ class RowResult:
 @dataclass
 class ExtractResult:
     ok: bool
-    excel_path: str
+    excel_path: str  # 출력(저장) 엑셀 경로
     total: int = 0
     updated: int = 0
     failed: int = 0
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     rows: list[RowResult] = field(default_factory=list)
+    input_excel_path: str = ""
+
+
+def read_app_version() -> str:
+    """프로젝트 VERSION.txt 버전 숫자 (예: 2.0.95)."""
+    try:
+        text = VERSION_FILE.read_text(encoding="utf-8")
+    except OSError:
+        return "0.0.0"
+    m = re.search(r"(?:버전|version)\s*([0-9]+(?:\.[0-9]+)+)", text, re.I)
+    if m:
+        return m.group(1)
+    m = re.search(r"([0-9]+\.[0-9]+\.[0-9]+)", text)
+    return m.group(1) if m else "0.0.0"
+
+
+def build_output_excel_path(
+    input_path: Path,
+    *,
+    version: str | None = None,
+    when: time.struct_time | None = None,
+    out_dir: Path | None = None,
+) -> Path:
+    """입력 파일명 + 버전으로 출력 경로 생성.
+
+    예: sample.xlsx → sample_상품수_v2.0.95_20260812_151543.xlsx
+    """
+    ver = (version or read_app_version()).strip() or "0.0.0"
+    stamp = time.strftime("%Y%m%d_%H%M%S", when or time.localtime())
+    raw = str(input_path)
+    # Windows 경로(D:\...) 가 Linux 테스트에서도 stem 만 쓰이도록
+    if "\\" in raw or (len(raw) >= 2 and raw[1] == ":"):
+        win = PureWindowsPath(raw)
+        stem = win.stem
+        suffix = win.suffix.lower() or ".xlsx"
+    else:
+        stem = Path(raw).stem
+        suffix = Path(raw).suffix.lower() or ".xlsx"
+    name = f"{stem}_상품수_v{ver}_{stamp}{suffix}"
+    return (out_dir or OUTPUT_DIR) / name
 
 
 def _log(progress: ProgressFn | None, step: str, message: str) -> None:
@@ -853,9 +898,14 @@ def run_extract(
     headless: bool | None = None,
     post_popup_wait_sec: float = POST_POPUP_WAIT_SEC,
 ) -> ExtractResult:
-    """엑셀 URL별 상품수 수집 후 동일 파일 UPDATE."""
+    """엑셀 URL별 상품수 수집 후 지정 폴더에 별도 파일(파일명+버전)로 저장."""
     path = Path(excel_path).expanduser().resolve()
-    result = ExtractResult(ok=False, excel_path=str(path))
+    out_path = build_output_excel_path(path)
+    result = ExtractResult(
+        ok=False,
+        excel_path=str(out_path),
+        input_excel_path=str(path),
+    )
     if not path.is_file():
         result.errors.append(f"파일 없음: {path}")
         return result
@@ -895,7 +945,11 @@ def run_extract(
     # 상품수집가능개수 열이 있으면 함께 갱신, 없으면 추가하지 않음(기존 엑셀 보존)
 
     result.total = len(jobs)
-    _log(progress, "준비", f"엑셀: {path.name} · URL {result.total}건")
+    _log(
+        progress,
+        "준비",
+        f"입력: {path.name} · URL {result.total}건 · 출력폴더: {OUTPUT_DIR}",
+    )
     if result.total == 0:
         result.errors.append("처리할 URL 행이 없습니다.")
         try:
@@ -1010,11 +1064,18 @@ def run_extract(
         clear_stop_flag()
         return result
 
+    # ★요건: 입력 파일은 유지, 출력은 P2_INPUT_건수집계 에 파일명+버전으로 별도 생성
     try:
-        wb.save(str(path))
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        wb.save(str(out_path))
         wb.close()
+        result.excel_path = str(out_path)
     except Exception as e:  # noqa: BLE001
-        result.errors.append(f"엑셀 저장 실패: {e}")
+        result.errors.append(f"엑셀 저장 실패: {e} → {out_path}")
+        try:
+            wb.close()
+        except Exception:
+            pass
         clear_stop_flag()
         return result
 
@@ -1024,11 +1085,11 @@ def run_extract(
 
     if stopped:
         result.ok = result.updated > 0
-        result.warnings.append("사용자 중단으로 일부만 UPDATE")
+        result.warnings.append("사용자 중단으로 일부만 저장")
         _log(
             progress,
             "중단",
-            f"부분 UPDATE {result.updated}/{result.total} · 파일: {path}",
+            f"부분 저장 {result.updated}/{result.total} · 출력: {out_path}",
         )
         return result
 
@@ -1039,7 +1100,7 @@ def run_extract(
     _log(
         progress,
         "완료",
-        f"UPDATE {result.updated}/{result.total} · 실패 {result.failed} · 파일: {path}",
+        f"저장 {result.updated}/{result.total} · 실패 {result.failed} · 출력: {out_path}",
     )
     return result
 

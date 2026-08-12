@@ -12,10 +12,12 @@ import openpyxl  # noqa: E402
 from extract import (  # noqa: E402
     COUNT_HEADER,
     FOOTER_STABLE_ROUNDS,
+    OUTPUT_DIR,
     POST_POPUP_WAIT_SEC,
     SCROLL_STABLE_ROUNDS,
     STOP_FLAG_PATH,
     _collect_ids_from_json,
+    build_output_excel_path,
     clear_stop_flag,
     ensure_column,
     find_header_index,
@@ -117,6 +119,18 @@ def test_collect_ids_from_json_products():
     assert out == {"11", "22", "33"}
 
 
+def test_build_output_excel_path_includes_version():
+    """출력은 P2_INPUT_건수집계 에 입력파일명+버전으로 별도 생성."""
+    import time
+    from pathlib import Path
+
+    inp = Path(r"D:\data\category.xlsx")
+    when = time.strptime("2026-08-12 15:15:43", "%Y-%m-%d %H:%M:%S")
+    out = build_output_excel_path(inp, version="2.0.96", when=when)
+    assert out.parent == OUTPUT_DIR
+    assert out.name == "category_상품수_v2.0.96_20260812_151543.xlsx"
+
+
 def test_format_final_output():
     line = format_final_output("MEN 스니커즈", 77, "https://example.com/a")
     assert "상위 최종 카테고리명=MEN 스니커즈" in line
@@ -161,6 +175,7 @@ if __name__ == "__main__":
     test_scroll_stop_requires_footer_and_stability()
     test_parse_card_image_keys_from_html()
     test_collect_ids_from_json_products()
+    test_build_output_excel_path_includes_version()
     test_format_final_output()
     with tempfile.TemporaryDirectory() as d:
         test_find_url_and_ensure_count_column(Path(d))

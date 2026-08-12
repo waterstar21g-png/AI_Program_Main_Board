@@ -560,7 +560,7 @@ class BoardApp(tk.Tk):
     def _build_p1_101(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="P1_101 — 엑셀 URL → 팝업닫기 → 3초대기 → 상품수 UPDATE",
+            text="P1_101 — 엑셀 URL → 팝업닫기 → 카드갯수 → 출력폴더 저장",
             bg="#f1f5f9",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",
@@ -599,7 +599,7 @@ class BoardApp(tk.Tk):
             text=(
                 "메인보드 직접실행 · URL 열기 → 팝업 닫기 → "
                 f"{p1_101_extract.POST_POPUP_WAIT_SEC:g}초 대기 → 상품수 수집 → "
-                "동일 엑셀 '총상품수' UPDATE"
+                r"출력: P2_INPUT_건수집계 (파일명_상품수_v버전_시각.xlsx)"
             ),
             bg="#ffffff",
             fg="#64748b",
@@ -899,13 +899,16 @@ class BoardApp(tk.Tk):
             pass
         if code == 0:
             self.p1_101_status.configure(
-                text=f"완료 · 엑셀 UPDATE: {path}",
+                text="완료 · 출력: P2_INPUT_건수집계 (파일명_상품수_v버전)",
                 fg="#15803d",
             )
-            self._append_p1_101_log("완료", f"보드 직접실행 종료 · {path}")
+            self._append_p1_101_log(
+                "완료",
+                f"보드 직접실행 종료 · 입력 {Path(path).name} · 출력폴더 P2_INPUT_건수집계",
+            )
         else:
             self.p1_101_status.configure(
-                text=f"실패 (exit={code}) · {path}",
+                text=f"실패 (exit={code}) · {Path(path).name}",
                 fg="#b91c1c",
             )
             self._append_p1_101_log("오류", f"종료 코드 {code}")
