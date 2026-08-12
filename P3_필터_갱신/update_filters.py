@@ -505,39 +505,43 @@ def run_update(
                 key = normalize_url(d_url)
                 ex = by_url.get(key) if key else None
 
-                lg = Logger(progress, ex.excel_row if ex else None)
-                lg.step(
-                    "행",
-                    f"{i}/{result.total_demango} 더망고URL={d_url} · 필터={d_filter!r} · "
-                    f"엑셀행={ex.excel_row if ex else '-'}",
-                    f"{i}/{result.total_demango} URL매칭={'Y' if ex else 'N'}",
-                )
-
                 # 1) KEY 매칭
                 if not ex:
                     result.skipped += 1
-                    lg.step(
-                        "로직",
-                        "1) 엑셀 URL 미매칭 — 건너뜀",
-                        "1) 미매칭 skip",
+                    # URL 미매칭도 핵심만
+                    _log(
+                        progress,
+                        "불일치",
+                        f"검색필터={d_filter} · URL={d_url}",
                     )
                     continue
 
+                # 검색필터 비교 (공백→_ 재비교 포함)
+                if ex.filter_name and d_filter and not filters_equal(
+                    ex.filter_name, d_filter
+                ):
+                    result.skipped += 1
+                    # ★요건: 불일치 행은 검색필터·URL만 표시
+                    _log(
+                        progress,
+                        "불일치",
+                        f"검색필터={ex.filter_name} · URL={ex.url}",
+                    )
+                    continue
+
+                lg = Logger(progress, ex.excel_row)
+                lg.step(
+                    "행",
+                    f"{i}/{result.total_demango} 더망고URL={d_url} · 필터={d_filter!r} · "
+                    f"엑셀행={ex.excel_row}",
+                    f"{i}/{result.total_demango} URL매칭=Y",
+                )
                 lg.step(
                     "로직",
-                    f"1) KEY 일치 — 엑셀필터={ex.filter_name!r} · 더망고필터={d_filter!r} · "
-                    f"상품수집가능개수={ex.collectible}",
+                    f"1) KEY·필터 일치 — 엑셀필터={ex.filter_name!r} · "
+                    f"더망고필터={d_filter!r} · 상품수집가능개수={ex.collectible}",
                     f"1) KEY일치 · 수집가능={ex.collectible}",
                 )
-
-                if ex.filter_name and d_filter and not filters_equal(ex.filter_name, d_filter):
-                    result.skipped += 1
-                    lg.step(
-                        "로직",
-                        "1) 검색필터 불일치(공백→_ 재비교 포함) — 다음 단계 생략",
-                        "1) 필터불일치 skip",
-                    )
-                    continue
                 note = filter_compare_note(ex.filter_name, d_filter)
                 if note:
                     lg.step("로직", f"1) {note}", note)
