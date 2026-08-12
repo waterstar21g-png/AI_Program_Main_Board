@@ -24,6 +24,7 @@ from update_filters import (  # noqa: E402
     page_shows_not_found,
     read_excel_rows,
     set_save_count,
+    screenshot_after_edit_click_series,
     wait_modify_page_closed,
 )
 
@@ -209,8 +210,8 @@ def test_list_demango_rows_filter_input_and_url():
     assert "ps_fuid=353" in (rows[1].get("editHref") or "")
 
 
-def test_click_edit_prefers_button_beside_collect_count():
-    """수집개수|전체저장 옆 버튼 클릭 → 수정 팝업이 실제로 열린다."""
+def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
+    """수집개수|전체저장 옆 버튼 클릭 → 수정 팝업 + 클릭후 샷 3장."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -222,17 +223,47 @@ def test_click_edit_prefers_button_beside_collect_count():
         assert len(rows) == 1
         href = rows[0].get("editHref") or ""
         assert "999" not in href
+        shot_dir = tmp_path / "shots"
         ok = click_edit_on_row(
             page,
             int(rows[0]["index"]),
             href,
             row_url=rows[0]["url"],
             progress=None,
+            shot_dir=shot_dir,
+            row_no=7,
+            shot_count=3,
+            shot_interval_s=0,
         )
         assert ok is True
         assert page.locator("body").get_attribute("data-clicked") == "real-777"
-        # 팝업(새 페이지)에 저장상품수 수정화면이 떠야 함
         assert len(context.pages) >= 2
+        assert (shot_dir / "r007_02_after_edit_1of3.png").is_file()
+        assert (shot_dir / "r007_02_after_edit_2of3.png").is_file()
+        assert (shot_dir / "r007_02_after_edit_3of3.png").is_file()
+        browser.close()
+
+
+def test_screenshot_after_edit_click_series(tmp_path: Path):
+    """클릭 후 샷 시리즈가 로그용 PNG 3장을 만든다."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content("<html><body><h1>검색필터 수정</h1><div>저장상품수</div></body></html>")
+        shot_dir = tmp_path / "s"
+        paths = screenshot_after_edit_click_series(
+            page,
+            shot_dir,
+            row_no=1,
+            progress=None,
+            count=3,
+            interval_s=0,
+        )
+        assert len(paths) == 3
+        for pth in paths:
+            assert pth.is_file() and pth.stat().st_size > 0
         browser.close()
 
 

@@ -732,11 +732,16 @@ def click_edit_on_row(
     *,
     row_url: str = "",
     progress: ProgressFn | None = None,
+    shot_dir: Path | None = None,
+    row_no: int = 0,
+    shot_count: int = 3,
+    shot_interval_s: float = 3.0,
 ) -> bool:
     """「수집개수|전체저장」옆 「수집조건수정」버튼만 클릭 → 팝업이 열리면 성공.
 
     ★대체 방법 없음: href / location.href / window.open(url) 재시도 절대 금지.
     ★오직 버튼 실클릭 후 팝업(또는 클릭으로 열린 수정화면)이 확인될 때만 True.
+    ★클릭 직후 3초 간격 스크린샷 3장 (로그/뷰어에 출력).
     """
     _ = edit_href  # 명시적 무시 (href 경로 사용 금지)
 
@@ -788,9 +793,10 @@ def click_edit_on_row(
             )
             return False
 
+    # ★요건: 클릭 직후 → 3초 간격 스크린샷 3장
     if popup is not None:
         try:
-            popup.wait_for_load_state("domcontentloaded", timeout=15_000)
+            popup.wait_for_load_state("domcontentloaded", timeout=5_000)
         except Exception:
             pass
         _log(
@@ -798,15 +804,24 @@ def click_edit_on_row(
             "로직",
             f"2) 수집조건수정 팝업창 열림 · url={(popup.url or '')[:120]}",
         )
-        time.sleep(0.35)
+    screenshot_after_edit_click_series(
+        page,
+        shot_dir,
+        row_no=row_no,
+        progress=progress,
+        prefer_page=popup,
+        count=shot_count,
+        interval_s=shot_interval_s,
+    )
+
+    if popup is not None:
         if page_shows_not_found(page):
             _log(progress, "오류", "2) 팝업이 not found — 중단 (href 재시도 없음)")
             return False
-        if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=8_000):
+        if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=5_000):
             return True
 
     # 클릭으로 이미 새 창이 열렸을 수 있음 (expect_popup 타이밍 이탈)
-    time.sleep(0.45)
     try:
         for p in page.context.pages:
             if p not in before_pages:
@@ -822,7 +837,7 @@ def click_edit_on_row(
         _log(progress, "오류", "2) 클릭 후 not found — 중단 (href 재시도 없음)")
         return False
 
-    if wait_modify_page(page, timeout_ms=6_000) or _modify_ui_opened(page):
+    if wait_modify_page(page, timeout_ms=5_000) or _modify_ui_opened(page):
         _log(progress, "로직", "2) 버튼클릭 후 수정 팝업/화면 확인")
         return True
 
@@ -1379,6 +1394,74 @@ def screenshot_step(
     return path
 
 
+def _page_for_edit_shot(page, prefer_page=None):
+    """수집조건수정 클릭 후 샷 대상 — 팝업/수정화면 우선."""
+    if prefer_page is not None:
+        try:
+            if not prefer_page.is_closed():
+                return prefer_page
+        except Exception:
+            pass
+    try:
+        target, kind = resolve_modify_target(page)
+        if kind in ("page", "frame") and target is not None:
+            return target if kind == "page" else page
+    except Exception:
+        pass
+    try:
+        pages = list(page.context.pages)
+        for p in reversed(pages):
+            if p is page:
+                continue
+            try:
+                if not p.is_closed():
+                    return p
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return page
+
+
+def screenshot_after_edit_click_series(
+    page,
+    shot_dir: Path | None,
+    *,
+    row_no: int = 0,
+    progress: ProgressFn | None = None,
+    count: int = 3,
+    interval_s: float = 3.0,
+    prefer_page=None,
+) -> list[Path]:
+    """수집조건수정 클릭 직후 — 3초 간격 스크린샷 3장 (실행로그·뷰어 출력)."""
+    out: list[Path] = []
+    if shot_dir is None:
+        return out
+    n = max(1, int(count))
+    gap = max(0.0, float(interval_s))
+    _log(
+        progress,
+        "로직",
+        f"2) 수집조건수정 클릭 직후 스크린샷 {n}장 ({gap:g}초 간격)",
+    )
+    for i in range(1, n + 1):
+        elapsed = int(round((i - 1) * gap))
+        target = _page_for_edit_shot(page, prefer_page=prefer_page)
+        path = screenshot_step(
+            target,
+            shot_dir,
+            step_tag=f"02_after_edit_{i}of{n}",
+            label=f"2)수집조건수정 클릭후 샷 {i}/{n} (+{elapsed}s)",
+            row_no=row_no,
+            progress=progress,
+        )
+        if path is not None:
+            out.append(path)
+        if i < n and gap > 0:
+            time.sleep(gap)
+    return out
+
+
 def screenshot_save_count_grid(
     page,
     loc,
@@ -1865,6 +1948,8 @@ def run_update(
                     edit_href,
                     row_url=d_url,
                     progress=progress,
+                    shot_dir=shot_dir,
+                    row_no=i,
                 ):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 수집조건수정 클릭 실패")
