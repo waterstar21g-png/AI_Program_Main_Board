@@ -9,8 +9,10 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
    - 상품수집가능개수 ≤ 200 → 그대로
    - 200 < n ≤ 500 → 300
    - n > 500 → 400
-4) 팝업 하단 "저장하기" → 다음 행
-5) 더망고 화면 전 행 반복
+4) 팝업 하단 "저장하기"
+5) 팝업(검색필터 수정) 닫힘 확인
+6) "수정되었습니다" 팝업에서 "확인" 반드시 클릭 → 다음 행
+7) 더망고 화면 전 행 반복
 
 로그:
 - 더망고 처음 10건: 더망고/엑셀 각각 1줄(검색필터·URL)
@@ -633,6 +635,154 @@ def click_save_button(page) -> bool:
         return False
 
 
+def attach_native_dialog_handler(page) -> dict:
+    """브라우저 alert/confirm 대비 — '수정되었습니다' 등 네이티브 다이얼로그 accept.
+
+    저장하기 클릭 *전에* 등록해야 한다.
+    """
+    state: dict = {"seen": False, "message": "", "accepted": False}
+
+    def _on_dialog(dialog) -> None:  # noqa: ANN001
+        try:
+            state["seen"] = True
+            state["message"] = dialog.message or ""
+            dialog.accept()
+            state["accepted"] = True
+        except Exception:
+            try:
+                dialog.dismiss()
+            except Exception:
+                pass
+
+    try:
+        page.on("dialog", _on_dialog)
+    except Exception:
+        pass
+    return state
+
+
+def is_modify_page_open(page) -> bool:
+    """검색필터 수정 팝업/페이지가 열려 있는지."""
+    try:
+        url = page.url or ""
+        if "modify_filter" in url or "admin_group_modify" in url:
+            return True
+    except Exception:
+        pass
+    try:
+        body = page.locator("body").inner_text(timeout=400) or ""
+        if "검색필터 수정" in body and "저장상품수" in body:
+            return True
+        if "저장상품수" in body and "검색결과" in body and "저장하기" in body:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def wait_modify_page_closed(page, *, timeout_ms: int = 20000) -> bool:
+    """저장하기 후 '검색필터 수정' 팝업/페이지 닫힘 확인."""
+    end = time.time() + timeout_ms / 1000.0
+    # 잠깐은 열려 있을 수 있음 — 닫힐 때까지 대기
+    while time.time() < end:
+        if not is_modify_page_open(page):
+            return True
+        # 수정되었습니다 팝업이 뜨면 수정화면은 사실상 닫힌 것으로 본다
+        try:
+            body = page.locator("body").inner_text(timeout=300) or ""
+            if "수정되었습니다" in body or "수정 되었습니다" in body:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.2)
+    return not is_modify_page_open(page)
+
+
+def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict | None = None) -> bool:
+    """'수정되었습니다' 팝업에서 '확인' 버튼을 반드시 클릭.
+
+    - 네이티브 alert: attach_native_dialog_handler 가 이미 accept
+    - HTML 레이어/모달: '확인' 버튼 클릭
+    """
+    end = time.time() + timeout_ms / 1000.0
+
+    # 1) 네이티브 다이얼로그가 이미 처리된 경우
+    if dialog_state and dialog_state.get("accepted"):
+        msg = str(dialog_state.get("message") or "")
+        if (not msg) or ("수정" in msg) or ("완료" in msg) or ("저장" in msg):
+            return True
+
+    while time.time() < end:
+        if dialog_state and dialog_state.get("accepted"):
+            return True
+
+        # 2) HTML 팝업: '수정되었습니다' 근처의 '확인'
+        try:
+            ok = page.evaluate(
+                """() => {
+                  const bodyText = (document.body && document.body.innerText) || '';
+                  const hasMsg = /수정\\s*되었습니다|수정되었습니다/.test(bodyText);
+                  const nodes = Array.from(document.querySelectorAll(
+                    'button, a, input[type="button"], input[type="submit"], input[type="image"]'
+                  ));
+                  // 정확히 '확인' 우선
+                  for (const el of nodes) {
+                    const t = ((el.value || el.innerText || el.textContent || '') + '')
+                      .replace(/\\s+/g, '');
+                    if (t !== '확인') continue;
+                    // 메시지 보이거나, alert 레이어 안이면 클릭
+                    const scope = el.closest(
+                      '.ui-dialog, .modal, .layer, .popup, .alert, [role="dialog"], form, body'
+                    );
+                    const scopeText = ((scope && scope.innerText) || bodyText);
+                    if (hasMsg || /수정\\s*되었습니다|수정되었습니다/.test(scopeText)) {
+                      el.click();
+                      return true;
+                    }
+                  }
+                  // 폴백: 화면에 수정되었습니다가 보이면 첫 '확인' 클릭
+                  if (hasMsg) {
+                    for (const el of nodes) {
+                      const t = ((el.value || el.innerText || el.textContent || '') + '')
+                        .replace(/\\s+/g, '');
+                      if (t === '확인') { el.click(); return true; }
+                    }
+                  }
+                  return false;
+                }"""
+            )
+            if ok:
+                time.sleep(0.3)
+                return True
+        except Exception:
+            pass
+
+        # 3) Playwright locator 폴백
+        try:
+            msg = page.locator("text=수정되었습니다").first
+            if msg.count() > 0 and msg.is_visible(timeout=200):
+                for sel in (
+                    'button:has-text("확인")',
+                    'input[type="button"][value="확인"]',
+                    'input[value="확인"]',
+                    'a:has-text("확인")',
+                ):
+                    loc = page.locator(sel).last
+                    if loc.count() > 0 and loc.is_visible(timeout=200):
+                        loc.click(timeout=2000, force=True)
+                        time.sleep(0.3)
+                        return True
+        except Exception:
+            pass
+
+        time.sleep(0.25)
+
+    # 마지막: 다이얼로그만 처리됐고 메시지가 비어있어도(일부 브라우저) 통과
+    if dialog_state and dialog_state.get("accepted"):
+        return True
+    return False
+
+
 def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
     """수집조건수정 후 '검색필터 수정' / 저장상품수 화면 대기."""
     end = time.time() + timeout_ms / 1000.0
@@ -825,22 +975,41 @@ def run_update(
                     _return_to_list(page, mango)
                     continue
 
-                # 4) 저장하기
+                # 4) 저장하기 → 팝업 닫힘 → "수정되었습니다" 확인 클릭
+                dialog_state = attach_native_dialog_handler(page)
                 lg.step("로직", "4) 팝업 하단 저장하기 클릭", "4) 저장하기")
                 if not click_save_button(page):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 저장하기 클릭 실패")
                     _return_to_list(page, mango)
                     continue
-                time.sleep(0.9)
-                try:
-                    page.keyboard.press("Escape")
-                except Exception:
-                    pass
-                try:
-                    page.on("dialog", lambda d: d.accept())
-                except Exception:
-                    pass
+
+                lg.step(
+                    "로직",
+                    "5) 검색필터 수정 팝업 닫힘 확인",
+                    "5) 수정팝업 닫힘",
+                )
+                if not wait_modify_page_closed(page, timeout_ms=20_000):
+                    # 닫힘이 느려도 확인 팝업이 있으면 진행
+                    _log(progress, "경고", f"행{i} 수정팝업 닫힘 대기 시간초과 — 확인 팝업 계속 시도")
+
+                lg.step(
+                    "로직",
+                    "6) '수정되었습니다' 팝업에서 확인 클릭",
+                    "6) 수정완료 확인",
+                )
+                if not click_modified_confirm(
+                    page, timeout_ms=20_000, dialog_state=dialog_state
+                ):
+                    result.failed += 1
+                    _log(
+                        progress,
+                        "오류",
+                        f"행{i} '수정되었습니다' 확인 버튼 클릭 실패",
+                    )
+                    _return_to_list(page, mango)
+                    continue
+
                 result.updated += 1
                 lg.step(
                     "완료",
