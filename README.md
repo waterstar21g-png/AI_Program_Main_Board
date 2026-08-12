@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.0.86** (Python B안)
+# AI_Program_Main_Board **v2.0.87** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
@@ -34,12 +34,11 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
 
 ## 실행 · 머지 후 반영
 
-- **일상 실행 / 머지 후 반영:** 바탕화면·작업표시줄 **아이콘만 클릭**  
-  → `boot-from-icon.ps1`  
-  1) 기존 보드 종료 (`stop-board.ps1`)  
-  2) `update-if-newer.ps1` → `VERSION`이 GitHub `main`과 다를 때만 자동 갱신  
-  3) 보드 재시작  
-- `run.bat` / `start.bat` 은 아이콘 체인이 내부에서 호출한다. **사용자가 따로 실행할 필요 없음.**
+- **보드가 이미 열려 있을 때(권장):** 좌측 하단 **「머지반영 업데이트」** 버튼 한 번  
+  → 머지 URL 열기(필요 시) → GitHub `main` 반영 → 보드 자동 재시작  
+  (`run.bat` / 바탕화면 아이콘 **별도 실행 불필요**)
+- **보드가 꺼져 있을 때:** 바탕화면·작업표시줄 아이콘 클릭  
+  → `boot-from-icon.ps1` (종료 → VERSION 비교 갱신 → 재시작)
 - (v2.0.58부터) 파일 하나하나를 GitHub에서 개별로 다시 받는 단계는 없앴습니다.
 
 아이콘이 옛 대상을 가리킬 때만(최초·아이콘 손상 시) `아이콘새로만들기.bat` 을 한 번 실행.
