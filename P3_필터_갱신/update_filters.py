@@ -212,10 +212,15 @@ def _step_no_in(message: str) -> int:
     return n if 1 <= n <= 7 else 0
 
 
+def _strip_step_no(message: str) -> str:
+    """SUB 출력용 — 앞머리 "N) " 를 뗀다 (단계번호는 MAIN 에만)."""
+    return re.sub(r"^\d+\)\s*", "", message or "")
+
+
 def _flush_pending_sub(seq: int) -> None:
     while _PENDING_SUB:
         ts, msg = _PENDING_SUB.pop(0)
-        print(f"[{ts}] ##SUB##{seq}##{msg}", flush=True)
+        print(f"[{ts}] ##SUB##{seq}##{_strip_step_no(msg)}", flush=True)
 
 
 def _log(
@@ -265,7 +270,9 @@ def _log(
         if not cur_seq or (step_no and step_no != int(_SEQ_STATE["cur_n"] or 0)):
             _PENDING_SUB.append((ts, m))
         else:
-            print(f"[{ts}] ##SUB##{cur_seq}##{m}", flush=True)
+            # ★MAIN 과 섞여 보이지 않게 SUB 는 단계번호 접두어를 떼고 출력한다
+            #   (그룹 판정에만 쓰고 화면에는 세부내용만 보인다)
+            print(f"[{ts}] ##SUB##{cur_seq}##{_strip_step_no(m)}", flush=True)
     if progress:
         progress(s, m)
 
@@ -783,7 +790,8 @@ def navigate_mango_url(
     ★1) 망고 수집 URL 링크로 진입한다 (입력 항목 정보로 제공).
     """
     url = (mango_url or "").strip() or DEFAULT_MANGO_URL
-    _log(progress, "로직", f"1) 망고 수집 URL 링크로 진입: {url}", major=True)
+    _log(progress, "로직", "1) 망고 접속", major=True)
+    _log(progress, "준비", f"접속 URL={url[:160]}")
     for attempt in range(1, 3):
         try:
             if p2 is not None and hasattr(p2, "safe_goto"):
@@ -1519,7 +1527,7 @@ def click_demango_row_url(
     """1) 필터일치 행의 URL 클릭 → 스토어 페이지(팝업/새탭) 반환."""
     info = _find_and_mark_row_url(page, row_index, row_url)
     if not info.get("ok"):
-        _log(progress, "오류", f"2) URL 링크 미검출 · KEY={row_url[:100]} · info={info}")
+        _log(progress, "오류", f"2) URL 링크 미검출 · info={info}")
         return None
     before = []
     try:
@@ -1539,7 +1547,7 @@ def click_demango_row_url(
             _log(
                 progress,
                 "오류",
-                f"2) URL 클릭 실패 · KEY={row_url[:100]} · "
+                f"2) URL 클릭 실패 · "
                 f"{str(e).split(chr(10))[0][:120]}",
             )
             return None
@@ -2073,7 +2081,7 @@ def click_edit_on_row(
             _log(
                 progress,
                 "오류",
-                f"5) '수집조건수정' 버튼 미검출 · KEY={row_url[:100]} · "
+                f"5) '수집조건수정' 버튼 미검출 · "
                 f"재시도 {attempt}/{tries} · 사유={info.get('reason', '')}",
             )
             if attempt < tries:
@@ -2101,8 +2109,7 @@ def click_edit_on_row(
                 f"5) 다른 행을 잡았습니다 — 클릭하지 않고 중단 · 요청필터={filter_hint} · "
                 f"요청행id={want_fuid or '-'} · 잡은행id={got_fuid or '-'} · "
                 f"잡은행필터={info.get('rowFilterNames')} · 요청행index={row_index} · "
-                f"잡은행index={info.get('rowIndexUsed')}({info.get('rowPickedBy')}) · "
-                f"KEY={row_url[:100]}",
+                f"잡은행index={info.get('rowIndexUsed')}({info.get('rowPickedBy')})",
             )
             return False
 
@@ -2133,7 +2140,7 @@ def click_edit_on_row(
                 _log(
                     progress,
                     "오류",
-                    f"5) '{btn_label}' 버튼 클릭 예외 · KEY={row_url[:100]} · "
+                    f"5) '{btn_label}' 버튼 클릭 예외 · "
                     f"시도{attempt}/{tries}: {str(e).split(chr(10))[0][:120]}",
                 )
 
@@ -2169,14 +2176,14 @@ def click_edit_on_row(
                 _log(
                     progress,
                     "오류",
-                    f"5) '{btn_label}' 클릭 후 not found · KEY={row_url[:100]} · 중단",
+                    f"5) '{btn_label}' 클릭 후 not found · 중단",
                 )
                 return False
             if _modify_ui_opened(page):
                 _log(
                     progress,
                     "로직",
-                    f"5) '{btn_label}' 클릭 → 팝업 확인 OK · KEY={row_url[:100]}",
+                    f"5) '{btn_label}' 클릭 → 팝업 확인 OK",
                     major=True,
                 )
                 if shot_dir is not None and shot_count > 0:
@@ -2196,14 +2203,14 @@ def click_edit_on_row(
             _log(
                 progress,
                 "오류",
-                f"5) '{btn_label}' 클릭 후 not found · KEY={row_url[:100]} · 중단",
+                f"5) '{btn_label}' 클릭 후 not found · 중단",
             )
             return False
         if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=800):
             _log(
                 progress,
                 "로직",
-                f"5) '{btn_label}' 클릭 → 팝업 확인 OK · KEY={row_url[:100]}",
+                f"5) '{btn_label}' 클릭 → 팝업 확인 OK",
                 major=True,
             )
             if shot_dir is not None and shot_count > 0:
@@ -2224,7 +2231,7 @@ def click_edit_on_row(
     _log(
         progress,
         "오류",
-        f"5) '수집조건수정' 버튼 클릭 실패 · KEY={row_url[:100]} · "
+        f"5) '수집조건수정' 버튼 클릭 실패 · "
         "버튼은 찾았으나 팝업 미오픈 (href 재시도 없음)",
     )
     return False
@@ -3210,7 +3217,6 @@ def run_update(
                     edit_href = (drow.get("editHref") or "").strip()
                     # 망고 행에 보이는 정보 원문(필터명·URL 검색·수집계수·전체저장 …)
                     d_row_text = " ".join((drow.get("text") or "").split())
-                    key_short = d_url[:100] if d_url else "(URL없음)"
 
                     d_fuid = str(drow.get("fuid") or "").strip()
                     same_filter = filters_equal(ex.filter_name, d_filter)
@@ -3228,23 +3234,23 @@ def run_update(
 
                     # 처음 5개 처리행만 동작마다 3초 대기 (요건) — 건너뛴 행은 세지 않는다
                     processed_no += 1
-                    # ★요건: 2단계는 망고 행의 정보를 그대로 표출한다
+                    # ★요건: URL 은 2단계에서 한 번만 · 나머지 단계는 URL 없이 간단히
                     _log(
                         progress,
                         "로직",
-                        f"2) 망고행: {d_row_text or '(행 텍스트 없음)'}",
+                        f"2) 망고행 · 필터={d_filter or '?'} · 상품수={ex.collectible} · "
+                        f"URL={d_url}",
                         major=True,
                     )
+                    _log(progress, "로직", f"2) 망고행 원문: {d_row_text or '(없음)'}")
                     _log(
                         progress,
                         "로직",
-                        f"2) 엑셀 {ex.excel_row}행 URL KEY → 망고행 찾음 · 필터={d_filter} · "
-                        f"KEY={key_short} · 수집가능개수={ex.collectible} · "
-                        f"망고행index={row_idx}",
+                        f"2) 엑셀 {ex.excel_row}행 매칭 · 망고행index={row_idx}",
                     )
                     note = filter_compare_note(ex.filter_name, d_filter)
                     if note:
-                        _log(progress, "로직", f"2) {note} · KEY={key_short}")
+                        _log(progress, "로직", f"2) {note}")
                     if not same_filter and ex.filter_name and d_filter:
                         _log(
                             progress,
@@ -3283,8 +3289,7 @@ def run_update(
                     _log(
                         progress,
                         "로직",
-                        "4) 상품노출수(카드수) 추출 — 주석처리(URL 화면 열지 않음) · "
-                        f"엑셀 수집가능개수={ex.collectible} 만 사용",
+                        f"4) 상품수 {ex.collectible} (엑셀값 사용 · URL 화면 안 열음)",
                         major=True,
                     )
 
@@ -3295,7 +3300,7 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 필터={d_filter} · KEY={key_short} · "
+                            f"엑셀{ex.excel_row}행 · 필터={d_filter} · "
                             "더망고 페이지 핸들 사용불가(닫힘/크래시)",
                         )
                         continue
@@ -3328,8 +3333,7 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) '수집조건수정' 버튼 클릭 실패 · 필터={d_filter} · "
-                            f"KEY={key_short} · 목표저장상품수={target} · "
+                            f"엑셀{ex.excel_row}행 · 5) '수집조건수정' 버튼 클릭 실패 · 필터={d_filter} · " f"목표저장상품수={target} · "
                             "사유=버튼 미검출 또는 클릭 후 팝업 미오픈(상세는 위 재시도 로그 참조)",
                         )
                         screenshot_step(
@@ -3352,8 +3356,7 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) 수집조건수정 클릭 후 화면 확인 실패 · 필터={d_filter} · "
-                            f"KEY={key_short} · 사유={reason}",
+                            f"엑셀{ex.excel_row}행 · 5) 수집조건수정 클릭 후 화면 확인 실패 · 필터={d_filter} · " f"사유={reason}",
                         )
                         screenshot_step(
                             page,
@@ -3399,8 +3402,7 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) 저장상품수 입력칸 실패 · 필터={d_filter} · "
-                            f"KEY={key_short} · 목표저장상품수={target}",
+                            f"엑셀{ex.excel_row}행 · 5) 저장상품수 입력칸 실패 · 필터={d_filter} · " f"목표저장상품수={target}",
                         )
                         try:
                             page.keyboard.press("Escape")
@@ -3416,8 +3418,7 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) '저장하기' 버튼 클릭 실패 · 필터={d_filter} · "
-                            f"KEY={key_short} · 목표저장상품수={target}",
+                            f"엑셀{ex.excel_row}행 · 5) '저장하기' 버튼 클릭 실패 · 필터={d_filter} · " f"목표저장상품수={target}",
                         )
                         screenshot_step(
                             page,
@@ -3443,9 +3444,7 @@ def run_update(
                     _log(
                         progress,
                         "로직",
-                        f"5) '저장하기' 클릭 완료 · 상품수 갱신전={before_cnt} → "
-                        f"갱신후={after_cnt} · 엑셀 수집가능개수={ex.collectible} · "
-                        f"필터={d_filter} · KEY={key_short}",
+                        f"5) 저장하기 완료 · 상품수 {before_cnt} → {after_cnt}",
                         major=True,
                     )
 
@@ -3453,8 +3452,7 @@ def run_update(
                         _log(
                             progress,
                             "경고",
-                            f"엑셀{ex.excel_row}행 수정팝업 닫힘 대기 시간초과 · KEY={key_short} — "
-                            "확인 팝업 계속 시도",
+                            f"엑셀{ex.excel_row}행 수정팝업 닫힘 대기 시간초과 — 확인 계속 시도",
                         )
                     screenshot_step(
                         page,
@@ -3473,8 +3471,7 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 6) '확인' 버튼 클릭 실패 · 필터={d_filter} · "
-                            f"KEY={key_short} · 목표저장상품수={target} · "
+                            f"엑셀{ex.excel_row}행 · 6) '확인' 버튼 클릭 실패 · 필터={d_filter} · " f"목표저장상품수={target} · "
                             f"네이티브다이얼로그감지={dialog_state.get('seen')} · "
                             f"수정화면여전히열림={is_modify_page_open(page)}",
                         )
@@ -3499,7 +3496,7 @@ def run_update(
                     _log(
                         progress,
                         "로직",
-                        f"6) '수정되었습니다' 확인 클릭 완료 · 필터={d_filter} · KEY={key_short}",
+                        "6) 확인 완료",
                         major=True,
                     )
 
@@ -3507,8 +3504,7 @@ def run_update(
                     _log(
                         progress,
                         "완료",
-                        f"엑셀{ex.excel_row}행 갱신성공 · 필터={d_filter} · KEY={key_short} · "
-                        f"저장상품수={target}",
+                        f"엑셀{ex.excel_row}행 갱신성공 · 저장상품수={target}",
                     )
                     _return_to_list(page, mango)
                     screenshot_step(
@@ -3522,8 +3518,7 @@ def run_update(
                     _log(
                         progress,
                         "로직",
-                        f"7) 갱신성공 → 다음 행 반복 · 필터={d_filter} · KEY={key_short} · "
-                        f"저장상품수={target}",
+                        f"7) 갱신 완료 (저장상품수 {target}) → 다음 행",
                         major=True,
                     )
 
