@@ -493,7 +493,10 @@ def list_demango_rows(page) -> list[dict]:
 
 
 def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
-    """수집조건수정 — 가능하면 수정 페이지로 직접 이동, 아니면 행 버튼 클릭."""
+    """수집조건수정 — 가능하면 수정 페이지로 직접 이동, 아니면 행 버튼 클릭.
+
+    새 팝업/탭이 열리면 context 에 남기고, 이후 resolve_modify_target 이 잡는다.
+    """
     href = (edit_href or "").strip()
     if href:
         try:
@@ -506,6 +509,12 @@ def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
             return True
         except Exception:
             pass
+
+    before_pages = []
+    try:
+        before_pages = list(page.context.pages)
+    except Exception:
+        before_pages = [page]
 
     ok = bool(
         page.evaluate(
@@ -526,13 +535,28 @@ def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
             row_index,
         )
     )
-    if ok:
-        time.sleep(0.8)
-        try:
-            page.wait_for_load_state("domcontentloaded", timeout=15_000)
-        except Exception:
-            pass
-    return ok
+    if not ok:
+        return False
+
+    time.sleep(0.7)
+    # 새 팝업/탭?
+    try:
+        for p in page.context.pages:
+            if p not in before_pages:
+                try:
+                    p.wait_for_load_state("domcontentloaded", timeout=15_000)
+                except Exception:
+                    pass
+                time.sleep(0.3)
+                return True
+    except Exception:
+        pass
+
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15_000)
+    except Exception:
+        pass
+    return True
 
 
 def set_save_count(
@@ -552,7 +576,14 @@ def set_save_count(
     판단한 입력그리드(행) 근접 스크린샷을 로그에 출력한다.
     """
     target = str(int(value))
-    loc = find_save_count_locator(page)
+
+    # 팝업/iframe 포함 수정 화면 찾기
+    work, kind = resolve_modify_target(page)
+    if kind == "frame" or (kind == "page" and work is not page):
+        _log(progress, "확인", f"저장상품수 대상={kind}")
+    wait_for_save_count_ready(work, timeout_ms=8_000)
+
+    loc = find_save_count_locator(work)
 
     before_val = ""
     if loc is not None:
@@ -560,10 +591,9 @@ def set_save_count(
             before_val = (loc.input_value(timeout=500) or "").strip()
         except Exception:
             before_val = ""
-        # 입력 전: 판단 필드 근접 그리드 샷
         if shot_dir is not None:
             screenshot_save_count_grid(
-                page,
+                work if kind != "frame" else page,
                 loc,
                 shot_dir,
                 tag="before",
@@ -575,9 +605,12 @@ def set_save_count(
     def _fill_loc(el) -> bool:
         try:
             el.click(timeout=1500)
-            el.press("Control+a")
+            try:
+                el.press("Control+a")
+            except Exception:
+                pass
             el.fill("")
-            el.type(target, delay=25)
+            el.type(target, delay=20)
             try:
                 got = (el.input_value(timeout=800) or "").strip()
                 if got == target:
@@ -590,7 +623,8 @@ def set_save_count(
         except Exception:
             try:
                 el.fill(target)
-                return True
+                got3 = (el.input_value(timeout=500) or "").strip()
+                return got3 == target or True
             except Exception:
                 return False
 
@@ -598,10 +632,10 @@ def set_save_count(
     if loc is not None and _fill_loc(loc):
         filled = True
     else:
-        # JS 폴백: '검색결과 상위' … input … '개' 패턴
+        # JS 폴백 (page 또는 frame evaluate)
         try:
             filled = bool(
-                page.evaluate(
+                work.evaluate(
                     """(n) => {
                       const want = String(n);
                       const isNumInput = (inp) => {
@@ -613,31 +647,39 @@ def set_save_count(
                       };
                       const setVal = (inp) => {
                         inp.focus();
-                        inp.select && inp.select();
+                        try { inp.select(); } catch (e) {}
                         inp.value = want;
                         inp.dispatchEvent(new Event('input', { bubbles: true }));
                         inp.dispatchEvent(new Event('change', { bubbles: true }));
-                        inp.blur && inp.blur();
+                        try { inp.blur(); } catch (e) {}
                         return (inp.value || '').trim() === want;
                       };
                       const trs = Array.from(document.querySelectorAll('tr'));
                       for (const tr of trs) {
-                        const labelCell = Array.from(tr.querySelectorAll('th, td')).find(c => {
-                          const t = (c.innerText || '').replace(/\\s+/g, '');
-                          return t === '저장상품수' || t.startsWith('저장상품수');
-                        });
-                        if (!labelCell) continue;
-                        const valueCell = labelCell.nextElementSibling ||
-                          Array.from(tr.querySelectorAll('td')).find(td =>
-                            /검색결과/.test(td.innerText || '') && /상위/.test(td.innerText || '')
-                          );
-                        const scope = valueCell || tr;
-                        const inputs = Array.from(scope.querySelectorAll(
+                        const tAll = (tr.innerText || '').replace(/\\s+/g, '');
+                        if (!(tAll.includes('저장상품수') ||
+                              (tAll.includes('검색결과') && tAll.includes('상위')))) {
+                          continue;
+                        }
+                        const inputs = Array.from(tr.querySelectorAll(
                           'input[type="text"], input[type="number"], input:not([type])'
                         )).filter(isNumInput);
                         let pick = inputs.find(i => /^\\d+$/.test((i.value || '').trim()))
+                          || inputs.find(i => {
+                            const n = ((i.name || '') + (i.id || '')).toLowerCase();
+                            return /limit|count|save|goods|num|qty/.test(n);
+                          })
                           || inputs[0];
                         if (pick && setVal(pick)) return true;
+                      }
+                      // 문구 '개 상품만 저장' 근처
+                      const allInp = Array.from(document.querySelectorAll(
+                        'input[type="text"], input[type="number"], input:not([type])'
+                      )).filter(isNumInput);
+                      for (const inp of allInp) {
+                        const parent = inp.closest('td,tr,div,li') || inp.parentElement;
+                        const pt = ((parent && parent.innerText) || '');
+                        if (/상위/.test(pt) && /개/.test(pt) && setVal(inp)) return true;
                       }
                       return false;
                     }""",
@@ -646,9 +688,8 @@ def set_save_count(
             )
         except Exception:
             filled = False
-        # JS 후 locator 재탐색
         if filled:
-            loc = find_save_count_locator(page)
+            loc = find_save_count_locator(work)
 
     if filled and loc is not None and shot_dir is not None:
         after_val = target
@@ -657,12 +698,23 @@ def set_save_count(
         except Exception:
             pass
         screenshot_save_count_grid(
-            page,
+            work if kind != "frame" else page,
             loc,
             shot_dir,
             tag="after",
             row_no=row_no,
             note=f"{before_val or '?'}→{after_val}",
+            progress=progress,
+        )
+
+    if not filled:
+        # 실패 시에도 화면 샷을 남겨 원인 파악
+        screenshot_step(
+            page,
+            shot_dir,
+            step_tag="03_save_count_not_found",
+            label="3)저장상품수 입력칸 미검출 화면",
+            row_no=row_no,
             progress=progress,
         )
 
@@ -679,43 +731,117 @@ def new_shot_dir() -> Path:
 
 def find_save_count_locator(page):
     """저장상품수 숫자 입력칸 locator (검색결과 상위 [N] 개)."""
-    loc = None
+    selectors = (
+        # 가장 구체적: 상위 … input … 개
+        "xpath=//td[contains(.,'검색결과') and contains(.,'상위') and contains(.,'개')]"
+        "//input[@type='text' or @type='number' or not(@type)]",
+        "xpath=//tr[.//th[contains(normalize-space(.),'저장상품수')] or "
+        ".//td[normalize-space()='저장상품수'] or "
+        ".//td[starts-with(normalize-space(.),'저장상품수')] or "
+        ".//*[contains(normalize-space(.),'저장상품수')]]"
+        "//input[@type='text' or @type='number' or not(@type)]",
+        "xpath=//*[contains(normalize-space(.),'개 상품만 저장')]"
+        "/preceding::input[@type='text' or @type='number' or not(@type)][1]",
+        'input[name*="limit"]',
+        'input[name*="count"]',
+        'input[name*="save"]',
+        'input[name*="goods"]',
+        'input[name*="num"]',
+        'input[name*="Limit"]',
+        'input[name*="Count"]',
+    )
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() == 0:
+                continue
+            if not loc.is_visible(timeout=400):
+                continue
+            # 숫자성 value 이거나 비어 있으면 OK
+            try:
+                v = (loc.input_value(timeout=300) or "").strip()
+                if v and not re.fullmatch(r"\d+", v):
+                    # URL 같은 긴 텍스트면 스킵
+                    if len(v) > 8 or "http" in v.lower():
+                        continue
+            except Exception:
+                pass
+            return loc
+        except Exception:
+            continue
+    return None
+
+
+def resolve_modify_target(page):
+    """검색필터 수정(저장상품수) 화면이 열린 page/frame 을 찾는다.
+
+    팝업 창·iframe 모두 탐색. (page, kind) 반환. 없으면 (page, 'main').
+    """
+    candidates = []
     try:
-        loc = page.locator(
-            "xpath=//tr[.//th[contains(normalize-space(.),'저장상품수')] or "
-            ".//td[normalize-space()='저장상품수'] or "
-            ".//td[starts-with(normalize-space(.),'저장상품수')]]"
-            "//input[(@type='text' or @type='number' or not(@type)) and "
-            "(preceding-sibling::text()[contains(.,'상위')] or "
-            "preceding::text()[contains(.,'상위')][1])]"
-        ).first
-        if loc.count() == 0 or not loc.is_visible(timeout=600):
-            loc = None
+        for p in page.context.pages:
+            candidates.append(("page", p))
     except Exception:
-        loc = None
+        candidates.append(("page", page))
 
-    if loc is None:
-        try:
-            loc = page.locator(
-                "xpath=//td[contains(.,'검색결과') and contains(.,'상위') and contains(.,'개')]"
-                "//input[@type='text' or @type='number' or not(@type)]"
-            ).first
-            if loc.count() == 0 or not loc.is_visible(timeout=500):
-                loc = None
-        except Exception:
-            loc = None
+    # 현재 page 를 앞에
+    ordered = [("page", page)]
+    for kind, p in candidates:
+        if p is not page:
+            ordered.append((kind, p))
 
-    if loc is None:
+    for kind, p in ordered:
         try:
-            loc = page.locator(
-                "xpath=//tr[.//*[contains(normalize-space(.),'저장상품수')]]"
-                "//input[@type='text' or @type='number' or not(@type)]"
-            ).first
-            if loc.count() == 0 or not loc.is_visible(timeout=500):
-                loc = None
+            url = p.url or ""
+            if "modify_filter" in url or "admin_group_modify" in url:
+                return p, kind
         except Exception:
-            loc = None
-    return loc
+            pass
+        try:
+            body = p.locator("body").inner_text(timeout=400) or ""
+            if "저장상품수" in body and (
+                "검색필터 수정" in body or "검색결과" in body or "저장하기" in body
+            ):
+                return p, kind
+        except Exception:
+            pass
+        # frames
+        try:
+            for fr in p.frames:
+                try:
+                    t = fr.inner_text("body", timeout=300) or ""
+                except Exception:
+                    continue
+                if "저장상품수" in t and ("검색결과" in t or "저장하기" in t):
+                    return fr, "frame"
+        except Exception:
+            pass
+    return page, "main"
+
+
+def wait_for_save_count_ready(target, *, timeout_ms: int = 8000) -> bool:
+    """저장상품수 입력칸이 보일 때까지 대기."""
+    end = time.time() + timeout_ms / 1000.0
+    while time.time() < end:
+        try:
+            # Page or Frame both have locator
+            if find_save_count_locator(target) is not None:
+                return True
+        except Exception:
+            pass
+        try:
+            body = ""
+            if hasattr(target, "locator"):
+                body = target.locator("body").inner_text(timeout=300) or ""
+            if "저장상품수" in body or "개 상품만 저장" in body:
+                # 문구는 있는데 locator 실패 — 한 번 더 여유
+                time.sleep(0.3)
+                if find_save_count_locator(target) is not None:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.25)
+    return find_save_count_locator(target) is not None
 
 
 def screenshot_step(
@@ -728,7 +854,11 @@ def screenshot_step(
     progress: ProgressFn | None = None,
     full_page: bool = False,
 ) -> Path | None:
-    """필터 일치 행의 단계 스크린샷 → 실행 로그에 출력."""
+    """필터 일치 행의 단계 스크린샷 → 실행 로그에 출력.
+
+    ★타임아웃을 짧게(5초) 잡아 샷 실패가 본 작업(저장상품수 입력)을
+    30초씩 막지 않도록 한다.
+    """
     if shot_dir is None:
         return None
     shot_dir.mkdir(parents=True, exist_ok=True)
@@ -736,12 +866,18 @@ def screenshot_step(
     name = f"r{row_no:03d}_{safe}.png"
     path = shot_dir / name
     try:
-        time.sleep(0.12)
-        page.screenshot(path=str(path), full_page=bool(full_page))
+        time.sleep(0.08)
+        page.screenshot(
+            path=str(path),
+            full_page=bool(full_page),
+            timeout=5_000,
+            animations="disabled",
+        )
         if not (path.is_file() and path.stat().st_size > 0):
             return None
     except Exception as e:  # noqa: BLE001
-        _log(progress, "샷", f"[샷 실패] {label}: {e}")
+        short = str(e).split("\n")[0][:140]
+        _log(progress, "샷", f"[샷 실패] {label}: {short}")
         return None
 
     _log(progress, "샷", f"{label} -> {path}")
@@ -772,16 +908,16 @@ def screenshot_save_count_grid(
     try:
         row = loc.locator("xpath=ancestor::tr[1]")
         if row.count() > 0:
-            row.first.scroll_into_view_if_needed(timeout=2000)
-            time.sleep(0.15)
-            row.first.screenshot(path=str(path))
+            row.first.scroll_into_view_if_needed(timeout=1500)
+            time.sleep(0.1)
+            row.first.screenshot(path=str(path), timeout=5_000, animations="disabled")
             ok = path.is_file() and path.stat().st_size > 0
     except Exception:
         ok = False
 
     if not ok:
         try:
-            loc.scroll_into_view_if_needed(timeout=2000)
+            loc.scroll_into_view_if_needed(timeout=1500)
             box = loc.bounding_box()
             if box:
                 pad_l, pad_r, pad_y = 160, 220, 28
@@ -791,23 +927,32 @@ def screenshot_save_count_grid(
                     "width": max(80, box["width"] + pad_l + pad_r),
                     "height": max(40, box["height"] + pad_y * 2),
                 }
-                page.screenshot(path=str(path), clip=clip)
+                page.screenshot(
+                    path=str(path),
+                    clip=clip,
+                    timeout=5_000,
+                    animations="disabled",
+                )
                 ok = path.is_file() and path.stat().st_size > 0
         except Exception:
             ok = False
 
     if not ok:
         try:
-            # 최후: 뷰포트 샷
-            page.screenshot(path=str(path))
+            page.screenshot(
+                path=str(path),
+                timeout=5_000,
+                animations="disabled",
+            )
             ok = path.is_file()
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            short = str(e).split("\n")[0][:140]
+            _log(progress, "샷", f"[샷 실패] {label}: {short}")
             return None
 
     if not ok:
         return None
 
-    # 보드/콘솔 로그 — 사람이 읽는 줄 + 보드용 마커
     _log(progress, "샷", f"{label} -> {path}")
     print(f"{P3_SHOT_MARK}{path}##{label}", flush=True)
     return path
@@ -995,22 +1140,52 @@ def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict 
 
 
 def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
-    """수집조건수정 후 '검색필터 수정' / 저장상품수 화면 대기."""
+    """수집조건수정 후 '검색필터 수정' / 저장상품수 화면 대기.
+
+    팝업 창·iframe 포함.
+    """
     end = time.time() + timeout_ms / 1000.0
     while time.time() < end:
         try:
-            url = page.url or ""
+            target, kind = resolve_modify_target(page)
+            url = ""
+            try:
+                url = getattr(target, "url", None) or page.url or ""
+            except Exception:
+                url = page.url or ""
             if "modify_filter" in url or "admin_group_modify" in url:
                 return True
-            body = page.locator("body").inner_text(timeout=500) or ""
+            if kind in ("page", "frame") and kind != "main":
+                # resolve 가 저장상품수 화면을 찾음
+                if wait_for_save_count_ready(target, timeout_ms=500):
+                    return True
+            body = ""
+            try:
+                body = page.locator("body").inner_text(timeout=400) or ""
+            except Exception:
+                pass
             if "저장상품수" in body and (
                 "검색필터 수정" in body or "검색결과" in body
             ):
                 return True
+            # 다른 탭/팝업
+            try:
+                for p in page.context.pages:
+                    if p is page:
+                        continue
+                    bu = p.url or ""
+                    if "modify_filter" in bu or "admin_group_modify" in bu:
+                        return True
+                    bt = p.locator("body").inner_text(timeout=300) or ""
+                    if "저장상품수" in bt:
+                        return True
+            except Exception:
+                pass
         except Exception:
             pass
         time.sleep(0.25)
-    return False
+    target, _kind = resolve_modify_target(page)
+    return wait_for_save_count_ready(target, timeout_ms=800)
 
 
 def _return_to_list(page, list_url: str) -> None:
