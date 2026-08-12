@@ -130,8 +130,8 @@ def _log(progress: ProgressFn | None, step: str, message: str) -> None:
         progress(step, message)
 
 
-# ★P2 망고 연동과 동일: 실제 Chrome(CDP) 창·팝업을 앞으로 가져와 표시
-STEP_VIEW_DWELL_SEC = 0.8
+# ★P2와 동일: 실제 Chrome(CDP) 창을 OS 앞으로 가져와 동작을 보여 줌
+STEP_VIEW_DWELL_SEC = 1.2
 
 
 def describe_page_state(page) -> str:
@@ -159,6 +159,65 @@ def describe_page_state(page) -> str:
     return " · ".join(parts)
 
 
+def _activate_chrome_window(page) -> None:
+    """최소화/뒤로 간 Chrome 창을 복원·앞으로 (CDP Browser.setWindowBounds)."""
+    if page is None:
+        return
+    try:
+        session = page.context.new_cdp_session(page)
+    except Exception:
+        return
+    try:
+        # targetId 없이 현재 페이지 기준 windowId 조회
+        info = session.send("Browser.getWindowForTarget")
+        wid = info.get("windowId") if isinstance(info, dict) else None
+        if wid is None:
+            return
+        session.send(
+            "Browser.setWindowBounds",
+            {"windowId": wid, "bounds": {"windowState": "normal"}},
+        )
+    except Exception:
+        pass
+    finally:
+        try:
+            session.detach()
+        except Exception:
+            pass
+    # Windows: 작업표시줄에 숨은 Chrome을 강제 앞으로
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+            SW_RESTORE = 9
+            hwnd = user32.GetForegroundWindow()
+            # Chrome 창 찾기 (클래스 Chrome_WidgetWin_1)
+            found = ctypes.c_void_p(0)
+
+            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+            def _enum(h, _l):  # noqa: ANN001
+                length = user32.GetWindowTextLengthW(h)
+                if length <= 0:
+                    return True
+                buf = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(h, buf, length + 1)
+                title = buf.value or ""
+                if "Chrome" in title or "더망고" in title or "cafe24" in title.lower():
+                    found.value = h
+                    return False
+                return True
+
+            user32.EnumWindows(_enum, 0)
+            if found.value:
+                user32.ShowWindow(found.value, SW_RESTORE)
+                user32.SetForegroundWindow(found.value)
+            elif hwnd:
+                user32.ShowWindow(hwnd, SW_RESTORE)
+        except Exception:
+            pass
+
+
 def reveal_browser_page(
     page,
     progress: ProgressFn | None,
@@ -167,7 +226,7 @@ def reveal_browser_page(
     action: str,
     dwell_s: float | None = None,
 ) -> None:
-    """P2와 동일 — 실제 Chrome 탭/팝업을 bring_to_front 로 보여 준다."""
+    """P2와 동일 — 망고 Chrome 창·팝업을 화면에 보이게 한다."""
     if page is None:
         return
     dwell = STEP_VIEW_DWELL_SEC if dwell_s is None else max(0.0, float(dwell_s))
@@ -177,8 +236,13 @@ def reveal_browser_page(
             return
     except Exception:
         pass
+    _activate_chrome_window(page)
     try:
         page.bring_to_front()
+    except Exception:
+        pass
+    try:
+        page.evaluate("() => { try { window.focus(); } catch (e) {} }")
     except Exception:
         pass
     state = ""
@@ -189,46 +253,45 @@ def reveal_browser_page(
     msg = f"{step_no}) {action}"
     if state:
         msg += f" · {state}"
-    _log(progress, "화면", msg)
+    _log(progress, "화면", msg + " ← 망고 Chrome 창 표시")
     if dwell > 0:
         time.sleep(dwell)
 
 
-def attach_current_mango_page(p2, playwright, *, progress: ProgressFn | None = None):
-    """열린 망고 Chrome(CDP)에 연결만 한다. (로그인 대기 없음)
+def attach_mango_browser_like_p2(p2, playwright, *, progress: ProgressFn | None = None):
+    """★P2와 동일: connect_browser 로 실제 Chrome을 띄우거나 연결한 뒤 창을 앞으로.
 
-    이후 호출측에서 DEFAULT_MANGO_URL(검색필터 화면)로 이동한다.
-    CDP가 없으면 P2 connect_browser 로 Chrome을 띄운 뒤 연결한다.
+    로그인 대기는 하지 않는다. 이후 검색필터 URL로 이동한다.
     """
-    cdp_open = getattr(p2, "cdp_port_open", None)
-    browser = None
-    page = None
-    if callable(cdp_open) and cdp_open():
-        cdp_url = getattr(p2, "CDP_URL", "http://127.0.0.1:9222")
-        _log(progress, "준비", "열린 망고 Chrome(CDP)에 연결")
-        browser = playwright.chromium.connect_over_cdp(cdp_url)
-        context = browser.contexts[0] if browser.contexts else browser.new_context()
-        if hasattr(p2, "pick_working_page"):
-            page = p2.pick_working_page(context)
-        else:
-            open_pages = [pg for pg in context.pages if not pg.is_closed()]
-            page = open_pages[0] if open_pages else context.new_page()
-    else:
-        _log(progress, "준비", "CDP 없음 — P2방식 Chrome 실행 후 연결 (로그인대기 없음)")
-        browser, page = p2.connect_browser(playwright)
-
+    _log(
+        progress,
+        "준비",
+        "P2와 동일 — 망고 Chrome(CDP) 연결/실행 · 화면에 창 표시",
+    )
+    browser, page = p2.connect_browser(playwright)
     if hasattr(p2, "refresh_if_closed"):
         page = p2.refresh_if_closed(page)
     try:
         page.set_default_timeout(120_000)
     except Exception:
         pass
+    reveal_browser_page(
+        page,
+        progress,
+        step_no="0",
+        action="망고 Chrome 연동 창 표시",
+        dwell_s=1.5,
+    )
     try:
         cur = (page.url or "").strip()
     except Exception:
         cur = ""
-    _log(progress, "준비", f"연결 직후 URL={cur[:160] or '(없음)'} → 곧 검색필터 URL로 이동")
+    _log(progress, "준비", f"연결 직후 URL={cur[:160] or '(없음)'} → 검색필터 URL로 이동")
     return browser, page
+
+
+# 하위호환 별칭
+attach_current_mango_page = attach_mango_browser_like_p2
 
 
 def clear_stop_flag() -> None:
@@ -2691,7 +2754,7 @@ def run_update(
     _log(
         progress,
         "준비",
-        "로그인 없음 — 열린 Chrome에 연결 후 검색필터 URL로 이동",
+        "P2와 동일 — 망고 Chrome 창을 화면에 띄운 뒤 검색필터 URL로 이동 (로그인대기 없음)",
     )
 
     try:
@@ -2708,13 +2771,20 @@ def run_update(
 
     try:
         with sync_playwright() as p:
-            # ★로그인 없이 CDP 연결 → 반드시 검색필터 URL(getGoodsCategory)로 이동
+            # ★P2 connect_browser → 창 앞으로 → 검색필터 URL 이동
             try:
-                browser, page = attach_current_mango_page(p2, p, progress=progress)
+                browser, page = attach_mango_browser_like_p2(p2, p, progress=progress)
             except Exception as e:  # noqa: BLE001
                 result.errors.append(str(e))
                 return result
             page = navigate_mango_url(page, mango, progress=progress, p2=p2) or page
+            reveal_browser_page(
+                page,
+                progress,
+                step_no="0",
+                action="검색필터 목록 화면 (연동 동작 시작)",
+                dwell_s=1.5,
+            )
             shot_dir = new_shot_dir()
             _log(progress, "준비", f"스크린샷 폴더: {shot_dir}")
             try:

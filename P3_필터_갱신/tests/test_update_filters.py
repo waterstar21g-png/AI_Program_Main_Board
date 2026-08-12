@@ -213,31 +213,49 @@ def test_reveal_browser_page_brings_front():
 
     assert any(s == "화면" for s, _ in logs)
     assert "스토어 팝업 표시" in logs[-1][1]
+    assert "망고 Chrome 창 표시" in logs[-1][1]
     assert "팝업테스트" in state or "url=" in state
 
 
-def test_attach_current_mango_falls_back_to_connect_browser():
-    """CDP 없으면 P2 connect_browser 로 연결한다 (로그인대기 없음)."""
-    from update_filters import attach_current_mango_page
+def test_attach_mango_browser_uses_p2_connect_browser():
+    """P3는 P2 connect_browser 로 망고 Chrome을 연결·표시한다."""
+    from update_filters import attach_mango_browser_like_p2
 
     calls: list[str] = []
 
     class FakePage:
         url = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+        context = None
+
+        def __init__(self):
+            self.context = self
+
+        def new_cdp_session(self, _page):
+            class S:
+                def send(self, *_a, **_k):
+                    return {"windowId": 1}
+
+                def detach(self):
+                    return None
+
+            return S()
 
         def set_default_timeout(self, *_a, **_k):
             return None
 
         def bring_to_front(self):
+            calls.append("front")
+
+        def evaluate(self, *_a, **_k):
             return None
 
-    class FakeP2:
-        CDP_URL = "http://127.0.0.1:9222"
-
-        @staticmethod
-        def cdp_port_open():
+        def is_closed(self):
             return False
 
+        def title(self):
+            return "mango"
+
+    class FakeP2:
         @staticmethod
         def connect_browser(_pw):
             calls.append("connect")
@@ -247,11 +265,9 @@ def test_attach_current_mango_falls_back_to_connect_browser():
         def refresh_if_closed(page):
             return page
 
-    class FakePw:
-        pass
-
-    _browser, page = attach_current_mango_page(FakeP2(), FakePw(), progress=None)
+    _browser, page = attach_mango_browser_like_p2(FakeP2(), object(), progress=None)
     assert "connect" in calls
+    assert "front" in calls
     assert isinstance(page, FakePage)
 
 
