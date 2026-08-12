@@ -11,7 +11,7 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
   3) 스크롤 푸터까지 내리기
   4) 하단→상단 스크롤하며 상품수 카드 갯수 로그
   5) 엑셀 상품수와 비교값 출력
-  6) URL 우측 「전체저장」→ 한글 4글자 우측을 「수집조건수정」버튼으로 클릭 (href 금지)
+  6) 「전체저장」확인 후 LABEL 「수집조건수정」/「수집조건저장」의 실제 버튼요소를 직접 클릭 (href 금지)
   7) 팝업에서 저장상품수 수정 → 저장하기 → 확인
 
 로그:
@@ -1564,11 +1564,10 @@ def _modify_ui_opened(page) -> bool:
     return False
 
 
-# 6) 수집조건수정: URL 우측 「전체저장」→ 한글 4글자 우측을 버튼으로 클릭
-# ※ 한글 1글자씩 이동하며 N회 시도하는 로직은 삭제됨 — 고정 4글자 1좌표만 사용
-EDIT_CLICK_MAX_TRIES = 3  # 같은 좌표 재클릭(팝업 대기)만 — 글자 이동 없음
-EDIT_CLICK_CHAR_PAD_X = 2  # 전체저장 직후 여유(px)
-EDIT_CLICK_FIXED_CHARS = 4  # ★전체저장 우측으로 한글 4글자 = 수집조건수정 버튼
+# 6) 수집조건수정: 「전체저장」텍스트 확인 → 「수집조건수정/저장」LABEL의 실제 버튼요소를
+#    찾아 그 요소를 직접 클릭한다.
+# ※ '전체저장 우측으로 N글자 이동한 좌표를 클릭'하는 방식은 완전히 삭제됨 — 좌표계산 없음.
+EDIT_CLICK_MAX_TRIES = 3  # 같은(실제) 버튼 재클릭 시도 횟수
 
 
 def _log_text_find_phase(
@@ -1608,19 +1607,17 @@ def _log_text_find_phase(
     )
 
 
-def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | None:
-    """검색필터 URL 바로 우측의 '전체저장' 텍스트 + 그 옆 버튼명(수집조건수정/저장) 위치.
+def _check_allsave_text_present(page, row_index: int, row_url: str) -> dict:
+    """검색필터 URL 바로 우측에 '전체저장' 텍스트가 있는지만 확인 (검증·로그용).
 
-    ★실제 화면 버튼명이 '수집조건수정' 또는 '수집조건저장'으로 다를 수 있어 둘 다 인식한다.
+    ★클릭 좌표 계산에는 사용하지 않는다 — 버튼 클릭은 항상 실제 버튼요소를 찾아 수행.
     """
-    geo = page.evaluate(
+    result = page.evaluate(
         """(args) => {
           const rowIndex = args.rowIndex;
           const urlHint = (args.urlHint || '').trim();
           const urlStem = urlHint.split('?')[0];
           const needle = '전체저장';
-          const editLabels = ['수집조건수정', '수집조건저장'];
-          const fixedChars = args.fixedChars || 4;
 
           const rowMatchesUrl = (tr) => {
             if (!urlHint) return false;
@@ -1632,165 +1629,40 @@ def _find_allsave_anchor_geometry(page, row_index: int, row_url: str) -> dict | 
             });
           };
 
-          const urlRightEdge = (tr) => {
-            let right = -1;
-            for (const a of tr.querySelectorAll('a[href]')) {
-              const h = a.href || a.getAttribute('href') || '';
-              if (!(h === urlHint || h.startsWith(urlStem) || (a.textContent||'').includes(urlStem))) {
-                continue;
-              }
-              const r = a.getBoundingClientRect();
-              if (r.width > 0) right = Math.max(right, r.right);
-            }
-            return right;
-          };
-
-          const packRect = (r, text, charWHint) => {
-            let charW = charWHint || Math.max(8, r.width / Math.max(1, text.length));
-            return {
-              left: r.left,
-              right: r.right,
-              top: r.top,
-              bottom: r.bottom,
-              width: r.width,
-              height: r.height,
-              charW: charW,
-              midY: r.top + r.height / 2,
-              foundText: text,
-            };
-          };
-
-          const measureAll = (root, text) => {
-            const out = [];
-            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-            let node;
-            while ((node = walker.nextNode())) {
-              const t = node.textContent || '';
-              let from = 0;
-              while (true) {
-                const i = t.indexOf(text, from);
-                if (i < 0) break;
-                const range = document.createRange();
-                range.setStart(node, i);
-                range.setEnd(node, i + text.length);
-                const rects = range.getClientRects();
-                if (rects && rects.length) {
-                  const r = rects[rects.length - 1];
-                  let charW = Math.max(8, r.width / Math.max(1, text.length));
-                  try {
-                    const r2 = document.createRange();
-                    r2.setStart(node, i);
-                    r2.setEnd(node, Math.min(i + 1, t.length));
-                    const rr = r2.getClientRects();
-                    if (rr && rr.length && rr[0].width > 2) charW = rr[0].width;
-                  } catch (e) {}
-                  out.push(packRect(r, text, charW));
-                }
-                from = i + text.length;
-              }
-            }
-            // input/button value · 요소 텍스트 (수집조건수정 버튼)
-            const els = root.querySelectorAll
-              ? root.querySelectorAll('input, button, a, span, label')
-              : [];
-            for (const el of els) {
-              const val = ((el.value || '') + ' ' + (el.textContent || '')).replace(/\\s+/g, '');
-              if (val.indexOf(text) < 0) continue;
-              const r = el.getBoundingClientRect();
-              if (!r || r.width < 2 || r.height < 2) continue;
-              out.push(packRect(r, text, r.width / Math.max(1, text.length)));
-            }
-            return out;
-          };
-          const measureText = (root, text) => {
-            const all = measureAll(root, text);
-            return all.length ? all[0] : null;
-          };
-          const measureTextRightOf = (root, text, minLeft) => {
-            const all = measureAll(root, text).filter(r => r.left + 2 >= minLeft - 2);
-            if (!all.length) return null;
-            all.sort((a, b) => a.left - b.left);
-            return all[0];
-          };
-
           const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
           let candidates = urlHint ? trs.filter(rowMatchesUrl) : [];
           if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
             candidates = [trs[rowIndex]];
           }
-          if (!candidates.length) return null;
 
           for (const tr of candidates) {
-            const urlRight = urlRightEdge(tr);
-            // URL 바로 우측 셀·영역에서 전체저장 우선
-            let allsave = null;
-            const cells = Array.from(tr.querySelectorAll('td, th'));
-            const ordered = cells.slice().sort((a, b) => {
-              const ar = a.getBoundingClientRect();
-              const br = b.getBoundingClientRect();
-              // URL 오른쪽에 가까운 셀 우선
-              const ascore = (urlRight > 0 && ar.left + 2 >= urlRight - 4) ? 0 : 1;
-              const bscore = (urlRight > 0 && br.left + 2 >= urlRight - 4) ? 0 : 1;
-              if (ascore !== bscore) return ascore - bscore;
-              return ar.left - br.left;
-            });
-            for (const cell of ordered) {
-              const txt = (cell.innerText || '').replace(/\\s+/g, '');
-              if (!txt.includes(needle)) continue;
-              const rect = measureText(cell, needle);
-              if (!rect) continue;
-              // 검색필터 URL 바로 우측(같거나 오른쪽) 텍스트만
-              if (urlRight > 0 && rect.left + 8 < urlRight) continue;
-              allsave = rect;
-              break;
-            }
-            if (!allsave) {
-              const rect = measureText(tr, needle);
-              if (rect && !(urlRight > 0 && rect.left + 8 < urlRight)) {
-                allsave = rect;
+            const txt = (tr.innerText || '').replace(/\\s+/g, '');
+            if (!txt.includes(needle)) continue;
+            const walker = document.createTreeWalker(tr, NodeFilter.SHOW_TEXT);
+            let node;
+            while ((node = walker.nextNode())) {
+              const t = node.textContent || '';
+              const i = t.indexOf(needle);
+              if (i < 0) continue;
+              const range = document.createRange();
+              range.setStart(node, i);
+              range.setEnd(node, i + needle.length);
+              const rects = range.getClientRects();
+              if (rects && rects.length) {
+                const r = rects[rects.length - 1];
+                return { found: true, left: r.left, right: r.right, top: r.top, bottom: r.bottom };
               }
             }
-            if (!allsave) continue;
-
-            // 전체저장 우측에서 수집조건수정/수집조건저장 텍스트·버튼 확인 (좌측 decoy 제외)
-            let editRect = null;
-            let editLabelFound = '';
-            for (const lbl of editLabels) {
-              const r = measureTextRightOf(tr, lbl, allsave.right);
-              if (r) { editRect = r; editLabelFound = lbl; break; }
-            }
-
-            try { tr.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
-            return {
-              left: allsave.left,
-              right: allsave.right,
-              top: allsave.top,
-              bottom: allsave.bottom,
-              width: allsave.width,
-              height: allsave.height,
-              charW: allsave.charW,
-              midY: allsave.midY,
-              foundEditLabel: !!editRect,
-              editLabelFound: editLabelFound,
-              editLeft: editRect ? editRect.left : null,
-              editMidX: editRect ? (editRect.left + editRect.right) / 2 : null,
-              editMidY: editRect ? editRect.midY : null,
-              fixedChars: fixedChars,
-              urlRight: urlRight,
-            };
+            return { found: true };
           }
-          return null;
+          return { found: false };
         }""",
-        {
-            "rowIndex": int(row_index),
-            "urlHint": (row_url or "").strip(),
-            "fixedChars": int(EDIT_CLICK_FIXED_CHARS),
-        },
+        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
     )
-    return geo if isinstance(geo, dict) else None
+    return result if isinstance(result, dict) else {"found": False}
 
 
-def _edit_click_point_from_allsave(
+def _find_edit_button_with_log(
     page,
     row_index: int,
     row_url: str,
@@ -1799,13 +1671,13 @@ def _edit_click_point_from_allsave(
     shot_dir: Path | None = None,
     row_no: int = 0,
     log_find: bool = True,
-) -> dict | None:
-    """「전체저장」우측으로 한글 4글자 떨어진 곳을 버튼 클릭 좌표로 한다.
+) -> dict:
+    """「전체저장」텍스트 확인 → LABEL 「수집조건수정」/「수집조건저장」의 실제 버튼요소를 찾는다.
 
-    1) 검색필터 URL 바로 우측에서 「전체저장」텍스트 찾기 (전/후 로그·샷)
-    2) 「전체저장」옆 버튼명 「수집조건수정」/「수집조건저장」찾기 (전/후 로그·샷)
-       ★실제 화면 버튼명이 둘 중 무엇이든 인식한다.
-    3) 전체저장 우측 한글 4글자 위치를 버튼으로 가정하고 클릭 좌표 산출
+    1) 검색필터 URL 바로 우측에서 「전체저장」텍스트 존재 확인 (전/후 로그·샷)
+    2) 「전체저장」옆 실제 버튼요소(a/button/input, LABEL=수집조건수정 또는 수집조건저장)를
+       DOM에서 찾아 data-p3-edit-target 로 마킹 (전/후 로그·샷)
+       ★좌표 계산 없음 — 찾은 요소를 그대로 클릭 대상으로 사용한다.
     """
     _find_and_mark_row_url(page, row_index, row_url)
 
@@ -1820,35 +1692,24 @@ def _edit_click_point_from_allsave(
             label="전체저장",
         )
 
-    geo = _find_allsave_anchor_geometry(page, row_index, row_url)
+    allsave = _check_allsave_text_present(page, row_index, row_url)
+    allsave_found = bool(allsave.get("found"))
 
     if log_find:
-        if geo:
-            detail = (
-                f"x={float(geo.get('left', 0)):.0f}~{float(geo.get('right', 0)):.0f}"
-            )
-            _log_text_find_phase(
-                page,
-                progress,
-                shot_dir,
-                row_no=row_no,
-                phase="후",
-                kind="텍스트",
-                label="전체저장",
-                found=True,
-                detail=detail,
-            )
-        else:
-            _log_text_find_phase(
-                page,
-                progress,
-                shot_dir,
-                row_no=row_no,
-                phase="후",
-                kind="텍스트",
-                label="전체저장",
-                found=False,
-            )
+        detail = ""
+        if allsave_found and "left" in allsave:
+            detail = f"x={float(allsave.get('left', 0)):.0f}~{float(allsave.get('right', 0)):.0f}"
+        _log_text_find_phase(
+            page,
+            progress,
+            shot_dir,
+            row_no=row_no,
+            phase="후",
+            kind="텍스트",
+            label="전체저장",
+            found=allsave_found,
+            detail=detail,
+        )
 
     if log_find:
         _log_text_find_phase(
@@ -1861,15 +1722,16 @@ def _edit_click_point_from_allsave(
             label="수집조건수정/수집조건저장",
         )
 
-    found_edit = bool(geo and geo.get("foundEditLabel"))
-    matched_label = (geo or {}).get("editLabelFound") or ""
+    info = _find_and_mark_edit_button(page, row_index, row_url)
+    btn_found = bool(info.get("ok"))
+    matched_label = str(info.get("text") or "") if btn_found else ""
+
     if log_find:
-        detail = ""
-        if found_edit and geo is not None and geo.get("editMidX") is not None:
-            detail = (
-                f"매칭={matched_label} · "
-                f"mid=({float(geo['editMidX']):.0f},{float(geo.get('editMidY') or 0):.0f})"
-            )
+        detail = (
+            f"매칭={matched_label} · tag={info.get('tag', '')}"
+            if btn_found
+            else str(info.get("reason") or "")
+        )
         _log_text_find_phase(
             page,
             progress,
@@ -1878,39 +1740,13 @@ def _edit_click_point_from_allsave(
             phase="후",
             kind="버튼명",
             label="수집조건수정/수집조건저장",
-            found=found_edit,
+            found=btn_found,
             detail=detail,
         )
 
-    if not geo:
-        return None
-    char_w = float(geo.get("charW") or 14.0)
-    if char_w < 6:
-        char_w = 14.0
-    steps = int(EDIT_CLICK_FIXED_CHARS)
-    start_x = float(geo["right"]) + float(EDIT_CLICK_CHAR_PAD_X)
-    # ★필수: 전체저장 우측으로 한글 4글자 떨어진 곳을 버튼으로 가정하고 클릭
-    x = start_x + (steps - 0.5) * char_w
-    y = float(geo.get("midY") or ((float(geo["top"]) + float(geo["bottom"])) / 2.0))
-    try:
-        vp = page.viewport_size or {}
-        vw = float(vp.get("width") or 1280)
-        vh = float(vp.get("height") or 800)
-        x = min(max(2.0, x), vw - 2.0)
-        y = min(max(2.0, y), vh - 2.0)
-    except Exception:
-        pass
-    return {
-        "x": x,
-        "y": y,
-        "char_w": char_w,
-        "char_offset": steps,
-        "start_x": start_x,
-        "allsave_right": float(geo["right"]),
-        "found_edit_label": found_edit,
-        "matched_label": matched_label or "",
-        "offset": int(round(x - start_x)),
-    }
+    info["allsave_found"] = allsave_found
+    info["matched_label"] = matched_label
+    return info
 
 
 def click_edit_on_row(
@@ -1927,12 +1763,12 @@ def click_edit_on_row(
     max_tries: int = EDIT_CLICK_MAX_TRIES,
     try_interval_s: float = 2.0,
 ) -> bool:
-    """6) URL 우측 「전체저장」→ 한글 4글자 우측을 버튼으로 클릭.
+    """6) LABEL 「수집조건수정」/「수집조건저장」의 실제 버튼요소를 찾아 직접 클릭한다.
 
-    1) 검색필터 URL 바로 우측에서 텍스트 「전체저장」찾기
-    2) 「전체저장」옆 버튼명 「수집조건수정」또는 「수집조건저장」찾기
-       ★실제 화면 버튼명이 둘 중 무엇이든 인식 (버튼명 하나만 찾아서 실패하지 않도록)
-    3) 전체저장 우측 한글 4글자 위치를 버튼으로 가정하고 클릭 (href 금지)
+    1) 검색필터 URL 바로 우측에서 텍스트 「전체저장」존재 확인
+    2) 「전체저장」옆 실제 버튼요소(a/button/input, LABEL=수집조건수정 또는 수집조건저장)를
+       DOM에서 찾아 마킹
+    3) 마킹된 요소를 Playwright locator로 직접 클릭 (좌표 계산·글자이동 없음, href 재시도 금지)
     """
     _ = edit_href
     tries = max(1, int(max_tries))
@@ -1943,8 +1779,7 @@ def click_edit_on_row(
         if stop_requested():
             return False
 
-        info = _find_and_mark_edit_button(page, row_index, row_url)
-        point = _edit_click_point_from_allsave(
+        info = _find_edit_button_with_log(
             page,
             row_index,
             row_url,
@@ -1954,27 +1789,32 @@ def click_edit_on_row(
             log_find=not logged_find,
         )
         logged_find = True
-        if point is None:
-            if not info.get("ok"):
-                if attempt < tries:
-                    time.sleep(gap)
-                continue
-            try:
-                bbox = page.locator('[data-p3-edit-target="1"]').first.bounding_box()
-            except Exception:
-                bbox = None
-            if not bbox:
-                if attempt < tries:
-                    time.sleep(gap)
-                continue
-            point = {
-                "x": float(bbox["x"]) + float(bbox["width"]) / 2.0,
-                "y": float(bbox["y"]) + float(bbox["height"]) / 2.0,
-                "char_w": 14.0,
-                "char_offset": int(EDIT_CLICK_FIXED_CHARS),
-                "found_edit_label": True,
-                "offset": 0,
-            }
+
+        if not info.get("ok"):
+            _log(
+                progress,
+                "오류",
+                f"6) '수집조건수정' 버튼 미검출 · 재시도 {attempt}/{tries} — "
+                f"{info.get('reason', '')}",
+            )
+            if attempt < tries:
+                time.sleep(gap)
+            continue
+
+        locator = page.locator('[data-p3-edit-target="1"]').first
+        try:
+            locator.scroll_into_view_if_needed(timeout=2_000)
+        except Exception:
+            pass
+
+        btn_label = str(info.get("matched_label") or "수집조건수정")
+        if attempt == 1:
+            _log(
+                progress,
+                "로직",
+                f"6) '{btn_label}' 버튼 실제 클릭 (좌표계산 없음 · href 재시도 금지)",
+                major=True,
+            )
 
         before_pages = []
         try:
@@ -1982,41 +1822,34 @@ def click_edit_on_row(
         except Exception:
             before_pages = [page]
 
-        x = float(point["x"])
-        y = float(point["y"])
-        steps = int(point.get("char_offset") or EDIT_CLICK_FIXED_CHARS)
-        if attempt == 1:
-            lbl_hint = str(point.get("matched_label") or "수집조건수정/저장")
-            _log(
-                progress,
-                "로직",
-                f"6) {lbl_hint} 클릭 · 전체저장우측 +{steps}글자 → ({x:.0f},{y:.0f})",
-                major=True,
-            )
-
         popup = None
         try:
             with page.expect_popup(timeout=int(gap * 1000)) as pop_info:
-                page.mouse.click(x, y)
+                locator.click(timeout=int(gap * 1000))
             popup = pop_info.value
         except Exception:
             popup = None
             try:
-                page.mouse.click(x, y)
-            except Exception:
-                pass
+                locator.click(timeout=int(gap * 1000))
+            except Exception as e:
+                _log(
+                    progress,
+                    "오류",
+                    f"6) '{btn_label}' 버튼 클릭 예외 시도{attempt}: "
+                    f"{str(e).split(chr(10))[0][:120]}",
+                )
 
         if popup is not None:
             try:
                 popup.wait_for_load_state("domcontentloaded", timeout=12_000)
             except Exception:
                 pass
-            _log(progress, "로직", "6) 수집조건수정 팝업 열림", major=True)
+            _log(progress, "로직", f"6) '{btn_label}' 팝업 열림", major=True)
             reveal_browser_page(
                 popup,
                 progress,
                 step_no="6",
-                action="수집조건수정 팝업 표시",
+                action=f"{btn_label} 팝업 표시",
                 dwell_s=STEP_VIEW_DWELL_SEC,
             )
 
@@ -2039,7 +1872,7 @@ def click_edit_on_row(
                 _log(progress, "오류", "6) 팝업 not found — 중단")
                 return False
             if _modify_ui_opened(page):
-                _log(progress, "로직", "6) 수집조건수정 팝업 확인 OK", major=True)
+                _log(progress, "로직", f"6) '{btn_label}' 팝업 확인 OK", major=True)
                 if shot_dir is not None and shot_count > 0:
                     screenshot_after_edit_click_series(
                         page,
@@ -2057,7 +1890,7 @@ def click_edit_on_row(
             _log(progress, "오류", "6) 팝업 not found — 중단")
             return False
         if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=800):
-            _log(progress, "로직", "6) 수집조건수정 팝업 확인 OK", major=True)
+            _log(progress, "로직", f"6) '{btn_label}' 팝업 확인 OK", major=True)
             if shot_dir is not None and shot_count > 0:
                 screenshot_after_edit_click_series(
                     page,
@@ -2070,10 +1903,13 @@ def click_edit_on_row(
                 )
             return True
 
+        if attempt < tries:
+            time.sleep(gap * 0.2)
+
     _log(
         progress,
         "오류",
-        f"6) 수집조건수정 클릭 실패 — 전체저장 우측 +{EDIT_CLICK_FIXED_CHARS}글자",
+        "6) '수집조건수정' 버튼 클릭 실패 — 버튼은 찾았으나 팝업 미오픈 (href 재시도 없음)",
     )
     return False
 
@@ -3293,10 +3129,10 @@ def run_update(
                     continue
                 row_idx = int(row_idx2)
 
-                # 6) URL우측 전체저장 → 한글 4글자 우측 = 수집조건수정 버튼 클릭
+                # 6) 전체저장 확인 후 LABEL '수집조건수정/저장'의 실제 버튼요소를 찾아 클릭
                 lg.step(
                     "로직",
-                    "6) 수집조건수정 클릭 (전체저장 우측 한글4글자 = 버튼)",
+                    "6) '수집조건수정' 버튼 LABEL 찾아 실제 클릭 (좌표계산 없음)",
                     "6) 조건수정 클릭",
                 )
                 if not page_is_usable(page):

@@ -405,75 +405,44 @@ def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
         browser.close()
 
 
-def test_edit_click_fixed_4chars_from_allsave():
-    """URL 우측 전체저장 → 한글 4글자 우측 고정 클릭 (1글자씩 이동 없음)."""
-    from playwright.sync_api import sync_playwright
-    from update_filters import (
-        EDIT_CLICK_FIXED_CHARS,
-        EDIT_CLICK_MAX_TRIES,
-        _edit_click_point_from_allsave,
-        _find_allsave_anchor_geometry,
-    )
-    import update_filters as uf
+def test_no_coordinate_click_logic_in_source():
+    """'전체저장 우측 N글자 이동 클릭' 좌표계산 로직은 완전히 삭제되어야 함."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "EDIT_CLICK_FIXED_CHARS" not in src
+    assert "EDIT_CLICK_CHAR_PAD_X" not in src
+    assert "_edit_click_point_from_allsave" not in src
+    assert "_find_allsave_anchor_geometry" not in src
+    assert "page.mouse.click(x, y)" not in src
 
-    assert EDIT_CLICK_FIXED_CHARS == 4
-    assert EDIT_CLICK_MAX_TRIES == 3
-    assert not hasattr(uf, "edit_click_char_steps")
+
+def test_find_edit_button_with_log_marks_real_element():
+    """LABEL '수집조건수정'의 실제 버튼요소를 찾아 마킹 — 좌표 없이 요소 자체를 반환."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import _find_edit_button_with_log
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
         rows = list_demango_rows(page)
-        geo = _find_allsave_anchor_geometry(
-            page, int(rows[0]["index"]), rows[0]["url"]
+        info = _find_edit_button_with_log(
+            page,
+            int(rows[0]["index"]),
+            rows[0]["url"],
+            log_find=False,
         )
-        assert geo is not None
-        assert geo.get("foundEditLabel") is True
-        pt1 = _edit_click_point_from_allsave(
-            page, int(rows[0]["index"]), rows[0]["url"], log_find=False
-        )
-        pt2 = _edit_click_point_from_allsave(
-            page, int(rows[0]["index"]), rows[0]["url"], log_find=False
-        )
-        assert pt1 is not None and pt2 is not None
-        assert int(pt1["char_offset"]) == 4
-        assert abs(float(pt1["x"]) - float(pt2["x"])) < 1.0
-        assert float(pt1["x"]) > float(pt1["allsave_right"])
-        expected = float(pt1["start_x"]) + 3.5 * float(pt1["char_w"])
-        assert abs(float(pt1["x"]) - expected) < 2.0
+        assert info.get("ok") is True
+        assert info.get("allsave_found") is True
+        assert info.get("matched_label") == "수집조건수정"
+        # 실제 DOM 요소가 마킹되어 locator로 곧바로 클릭 가능해야 함
+        assert page.locator('[data-p3-edit-target="1"]').count() == 1
         browser.close()
 
 
-def test_matches_actual_onscreen_label_su_jip_jo_gun_su_jeong():
-    """실제 화면 버튼명은 '수집조건수정' — 정상 매칭되고 matched_label로 노출."""
-    from playwright.sync_api import sync_playwright
-    from update_filters import _edit_click_point_from_allsave, _find_allsave_anchor_geometry
-
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
-        rows = list_demango_rows(page)
-        geo = _find_allsave_anchor_geometry(
-            page, int(rows[0]["index"]), rows[0]["url"]
-        )
-        assert geo is not None
-        assert geo.get("foundEditLabel") is True
-        assert geo.get("editLabelFound") == "수집조건수정"
-
-        pt = _edit_click_point_from_allsave(
-            page, int(rows[0]["index"]), rows[0]["url"], log_find=False
-        )
-        assert pt is not None
-        assert pt.get("matched_label") == "수집조건수정"
-        browser.close()
-
-
-def test_allsave_edit_find_logs_text_and_screenshots(tmp_path: Path):
+def test_find_edit_button_with_log_logs_text_and_screenshots(tmp_path: Path):
     """전체저장/수집조건수정 찾기 전·후 — 텍스트·버튼명 + 스크린샷 로그."""
     from playwright.sync_api import sync_playwright
-    from update_filters import _edit_click_point_from_allsave, _is_major_log
+    from update_filters import _find_edit_button_with_log, _is_major_log
 
     logs: list[tuple[str, str]] = []
 
@@ -486,7 +455,7 @@ def test_allsave_edit_find_logs_text_and_screenshots(tmp_path: Path):
         page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
         rows = list_demango_rows(page)
         shot_dir = tmp_path / "shots"
-        pt = _edit_click_point_from_allsave(
+        info = _find_edit_button_with_log(
             page,
             int(rows[0]["index"]),
             rows[0]["url"],
@@ -495,7 +464,7 @@ def test_allsave_edit_find_logs_text_and_screenshots(tmp_path: Path):
             row_no=1,
             log_find=True,
         )
-        assert pt is not None
+        assert info.get("ok") is True
         browser.close()
 
     texts = [m for s, m in logs]
@@ -507,6 +476,32 @@ def test_allsave_edit_find_logs_text_and_screenshots(tmp_path: Path):
     assert len(shots) >= 4
     assert _is_major_log("주요", "6) 텍스트 찾기 전 · 텍스트=전체저장")
     assert not _is_major_log("화면", "망고 Chrome 창 표시")
+
+
+def test_click_edit_on_row_uses_real_locator_click_not_coordinates(tmp_path: Path):
+    """click_edit_on_row 는 마킹된 실제 버튼 요소를 locator.click() 으로 클릭한다."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        page = context.new_page()
+        page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
+        rows = list_demango_rows(page)
+        ok = click_edit_on_row(
+            page,
+            int(rows[0]["index"]),
+            row_url=rows[0]["url"],
+            progress=None,
+            shot_dir=tmp_path / "shots",
+            row_no=1,
+            max_tries=2,
+            try_interval_s=0.2,
+        )
+        assert ok is True
+        # onclick 핸들러가 실행되어 실제 클릭이 일어났음을 증명
+        assert page.locator("body").get_attribute("data-clicked") == "real-777"
+        browser.close()
 
 
 def test_major_log_filter_keeps_steps_drops_noise():
