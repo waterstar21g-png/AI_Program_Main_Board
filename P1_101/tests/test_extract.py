@@ -53,6 +53,25 @@ def test_parse_korean_and_english_labels():
     assert parse_product_count_from_html("Showing 15 products") == 15
 
 
+def test_parse_zara_grid_without_total_label():
+    """Zara처럼 'N products' 문구 없이 그리드만 있어도 상품수를 센다."""
+    html = """
+    <ul class="product-grid">
+      <li class="product-grid-product" data-productid="111">
+        <a class="product-link" href="https://www.zara.com/de/en/slim-fit-p111.html">A</a>
+      </li>
+      <li class="product-grid-product" data-productid="222">
+        <a class="product-link" href="https://www.zara.com/de/en/slim-fit-p222.html">B</a>
+      </li>
+      <li class="product-grid-product" data-productid="333">
+        <a class="product-link" href="https://www.zara.com/de/en/capri-p333.html">C</a>
+      </li>
+    </ul>
+    """
+    assert parse_product_count_from_html(html) == 3
+    assert parse_product_count_from_html('{"numberOfItems": 48}') == 48
+
+
 def test_format_final_output():
     line = format_final_output("MEN 스니커즈", 77, "https://example.com/a")
     assert "상위 최종 카테고리명=MEN 스니커즈" in line
@@ -93,6 +112,7 @@ if __name__ == "__main__":
     test_stop_flag_helpers()
     test_parse_art_total_count()
     test_parse_korean_and_english_labels()
+    test_parse_zara_grid_without_total_label()
     test_format_final_output()
     with tempfile.TemporaryDirectory() as d:
         test_find_url_and_ensure_count_column(Path(d))
