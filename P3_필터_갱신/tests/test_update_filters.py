@@ -564,8 +564,7 @@ def test_run_update_uses_canonical_7step_log_messages():
     assert "2) 망고행 · 필터=" in src  # 2단계 = 망고행 요약(URL 1회)
     assert "2) 망고행 원문: " in src  # 원문은 SUB
     assert "4) 상품수 {ex.collectible} (엑셀값 사용 · URL 화면 안 열음)" in src
-    assert "5) 저장하기 완료 · 상품수 " in src
-    assert '"6) 확인 완료"' in src
+    assert "5) 수집조건수정 → 저장하기 → 확인 OK · 상품수 " in src
     assert "7) 갱신 완료 (저장상품수 " in src
     # 매칭되지 않는 행 정보는 로그에 남기지 않음 (KEY/필터 불일치 시 조용히 skip)
     assert "매칭되지 않는 정보는 로그에 남기지 않는다" in src
@@ -1083,7 +1082,20 @@ def test_step2_shows_url_once_and_row_text_in_sub():
 def test_step5_shows_save_count_before_after():
     """★요건: 상품수 갱신전·갱신후는 5단계 '저장하기' 로그에 표출."""
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
-    assert "5) 저장하기 완료 · 상품수 {before_cnt} → {after_cnt}" in src
+    assert "5) 수집조건수정 → 저장하기 → 확인 OK · 상품수 {before_cnt} → " in src
+
+
+def test_step5_one_line_summary_marks_failing_part():
+    """★요건: 5단계는 한 줄 요약 — 실패 시 그 부분에 '오류' 표시."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "5) 수집조건수정 → 저장하기 → 확인 OK · 상품수 " in src
+    assert "5) 수집조건수정 오류 · " in src
+    assert "5) 수집조건수정 OK → 상품수입력 오류 · " in src
+    assert "5) 수집조건수정 OK → 저장하기 오류 · " in src
+    assert "5) 수집조건수정 OK → 저장하기 OK → 확인 오류 · " in src
+    # 개별 완료 줄은 MAIN 에 남기지 않는다
+    assert '"6) 확인 완료"' not in src
+    assert "5) 저장하기 완료 · 상품수" not in src
 
 
 def test_sub_lines_have_no_step_number_prefix():

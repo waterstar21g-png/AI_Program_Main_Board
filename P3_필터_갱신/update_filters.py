@@ -2184,7 +2184,7 @@ def click_edit_on_row(
                     progress,
                     "로직",
                     f"5) '{btn_label}' 클릭 → 팝업 확인 OK",
-                    major=True,
+                    major=False,
                 )
                 if shot_dir is not None and shot_count > 0:
                     screenshot_after_edit_click_series(
@@ -2211,7 +2211,7 @@ def click_edit_on_row(
                 progress,
                 "로직",
                 f"5) '{btn_label}' 클릭 → 팝업 확인 OK",
-                major=True,
+                major=False,
             )
             if shot_dir is not None and shot_count > 0:
                 screenshot_after_edit_click_series(
@@ -3333,8 +3333,8 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) '수집조건수정' 버튼 클릭 실패 · 필터={d_filter} · " f"목표저장상품수={target} · "
-                            "사유=버튼 미검출 또는 클릭 후 팝업 미오픈(상세는 위 재시도 로그 참조)",
+                            f"5) 수집조건수정 오류 · 필터={d_filter} · 목표={target} · "
+                            "사유=버튼 미검출/팝업 미오픈",
                         )
                         screenshot_step(
                             page,
@@ -3356,7 +3356,8 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) 수집조건수정 클릭 후 화면 확인 실패 · 필터={d_filter} · " f"사유={reason}",
+                            f"5) 수집조건수정 오류(수정화면 미진입) · 필터={d_filter} · "
+                            f"사유={reason}",
                         )
                         screenshot_step(
                             page,
@@ -3402,7 +3403,8 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) 저장상품수 입력칸 실패 · 필터={d_filter} · " f"목표저장상품수={target}",
+                            f"5) 수집조건수정 OK → 상품수입력 오류 · 필터={d_filter} · "
+                            f"목표={target}",
                         )
                         try:
                             page.keyboard.press("Escape")
@@ -3418,7 +3420,8 @@ def run_update(
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 5) '저장하기' 버튼 클릭 실패 · 필터={d_filter} · " f"목표저장상품수={target}",
+                            f"5) 수집조건수정 OK → 저장하기 오류 · 필터={d_filter} · "
+                            f"목표={target}",
                         )
                         screenshot_step(
                             page,
@@ -3441,14 +3444,8 @@ def run_update(
                     # ★요건: 상품수 갱신 전·후를 5단계 '저장하기' 로그에 그대로 표출
                     before_cnt = str(count_io.get("before") or "?")
                     after_cnt = str(count_io.get("after") or target)
-                    _log(
-                        progress,
-                        "로직",
-                        f"5) 저장하기 완료 · 상품수 {before_cnt} → {after_cnt}",
-                        major=True,
-                    )
 
-                    if not wait_modify_page_closed(page, timeout_ms=20_000):
+                    if not wait_modify_page_closed(page, timeout_ms=6_000):
                         _log(
                             progress,
                             "경고",
@@ -3465,15 +3462,16 @@ def run_update(
 
                     # 6) '수정되었습니다' 메세지 하단 LABEL '확인' 버튼 클릭
                     if not click_modified_confirm(
-                        page, timeout_ms=20_000, dialog_state=dialog_state
+                        page, timeout_ms=5_000, dialog_state=dialog_state
                     ):
                         result.failed += 1
                         _log(
                             progress,
                             "오류",
-                            f"엑셀{ex.excel_row}행 · 6) '확인' 버튼 클릭 실패 · 필터={d_filter} · " f"목표저장상품수={target} · "
-                            f"네이티브다이얼로그감지={dialog_state.get('seen')} · "
-                            f"수정화면여전히열림={is_modify_page_open(page)}",
+                            f"5) 수집조건수정 OK → 저장하기 OK → 확인 오류 · "
+                            f"필터={d_filter} · 목표={target} · "
+                            f"다이얼로그감지={dialog_state.get('seen')} · "
+                            f"수정화면열림={is_modify_page_open(page)}",
                         )
                         screenshot_step(
                             page,
@@ -3493,10 +3491,12 @@ def run_update(
                         row_no=i,
                         progress=progress,
                     )
+                    # ★요건: 5단계는 한 줄 요약 — 수집조건수정 → 저장하기 → 확인 OK
                     _log(
                         progress,
                         "로직",
-                        "6) 확인 완료",
+                        f"5) 수집조건수정 → 저장하기 → 확인 OK · 상품수 {before_cnt} → "
+                        f"{after_cnt}",
                         major=True,
                     )
 
