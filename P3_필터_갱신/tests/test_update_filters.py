@@ -188,15 +188,23 @@ def test_mango_url_default_and_save(tmp_path: Path, monkeypatch):
 
 
 def test_reveal_browser_page_brings_front():
-    """현재 Chrome 탭/팝업을 bring_to_front 로 보여 준다."""
+    """현재 Chrome 탭/팝업을 bring_to_front 로 보여 준다 (화면상세 로그는 억제)."""
     from playwright.sync_api import sync_playwright
     from update_filters import attach_current_mango_page, describe_page_state, reveal_browser_page
 
     assert callable(attach_current_mango_page)
-    logs: list[tuple[str, str]] = []
+    fronts: list[str] = []
 
-    def progress(step: str, msg: str) -> None:
-        logs.append((step, msg))
+    class Wrap:
+        def __init__(self, page):
+            self._p = page
+
+        def __getattr__(self, name):
+            return getattr(self._p, name)
+
+        def bring_to_front(self):
+            fronts.append("front")
+            return self._p.bring_to_front()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -205,15 +213,14 @@ def test_reveal_browser_page_brings_front():
             "<html><head><title>팝업테스트</title></head>"
             "<body>스토어팝업</body></html>"
         )
+        wrapped = Wrap(page)
         reveal_browser_page(
-            page, progress, step_no="2", action="스토어 팝업 표시", dwell_s=0
+            wrapped, None, step_no="2", action="스토어 팝업 표시", dwell_s=0
         )
         state = describe_page_state(page)
         browser.close()
 
-    assert any(s == "화면" for s, _ in logs)
-    assert "스토어 팝업 표시" in logs[-1][1]
-    assert "망고 Chrome 창 표시" in logs[-1][1]
+    assert fronts == ["front"]
     assert "팝업테스트" in state or "url=" in state
 
 
@@ -272,14 +279,10 @@ def test_attach_mango_browser_uses_p2_connect_browser():
 
 
 def test_maximize_mango_chrome_window_logs_and_cdp():
-    """목록 복귀 후 행 재탐색 전 — 망고 창 최대화 필수."""
+    """목록 복귀 후 행 재탐색 전 — 망고 창 최대화 CDP (화면상세 로그는 억제)."""
     from update_filters import maximize_mango_chrome_window
 
     cdp_states: list[str] = []
-    logs: list[tuple[str, str]] = []
-
-    def progress(step: str, msg: str) -> None:
-        logs.append((step, msg))
 
     class FakePage:
         url = "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsCategory.php"
@@ -294,7 +297,9 @@ def test_maximize_mango_chrome_window_logs_and_cdp():
                     if method == "Browser.getWindowForTarget":
                         return {"windowId": 7}
                     if method == "Browser.setWindowBounds":
-                        cdp_states.append((params or {}).get("bounds", {}).get("windowState"))
+                        cdp_states.append(
+                            (params or {}).get("bounds", {}).get("windowState")
+                        )
                         return {}
                     return {}
 
@@ -315,9 +320,8 @@ def test_maximize_mango_chrome_window_logs_and_cdp():
         def title(self):
             return "더망고"
 
-    maximize_mango_chrome_window(FakePage(), progress, dwell_s=0)
+    maximize_mango_chrome_window(FakePage(), None, dwell_s=0)
     assert "maximized" in cdp_states
-    assert any(s == "화면" and "망고 창 최대화" in m for s, m in logs)
 
 
 def test_read_excel_and_lookup(tmp_path: Path):
@@ -402,20 +406,19 @@ def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
 
 
 def test_edit_click_fixed_4chars_from_allsave():
-    """URL 우측 전체저장 → 한글 4글자 우측을 수집조건수정 버튼 좌표로 고정."""
+    """URL 우측 전체저장 → 한글 4글자 우측 고정 클릭 (1글자씩 이동 없음)."""
     from playwright.sync_api import sync_playwright
     from update_filters import (
         EDIT_CLICK_FIXED_CHARS,
         EDIT_CLICK_MAX_TRIES,
         _edit_click_point_from_allsave,
         _find_allsave_anchor_geometry,
-        edit_click_char_steps,
     )
+    import update_filters as uf
 
     assert EDIT_CLICK_FIXED_CHARS == 4
     assert EDIT_CLICK_MAX_TRIES == 3
-    # 시도 번호와 무관하게 항상 4글자
-    assert [edit_click_char_steps(i) for i in range(1, 6)] == [4, 4, 4, 4, 4]
+    assert not hasattr(uf, "edit_click_char_steps")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
@@ -427,21 +430,79 @@ def test_edit_click_fixed_4chars_from_allsave():
         )
         assert geo is not None
         assert geo.get("foundEditLabel") is True
-        pts = [
-            _edit_click_point_from_allsave(
-                page, int(rows[0]["index"]), rows[0]["url"], attempt=i
-            )
-            for i in range(1, 4)
-        ]
-        assert all(pt is not None for pt in pts)
-        # 시도마다 같은 4글자 좌표
-        assert int(pts[0]["char_steps"]) == 4
-        assert abs(float(pts[0]["x"]) - float(pts[1]["x"])) < 1.0
-        assert float(pts[0]["x"]) > float(pts[0]["allsave_right"])
-        # 4글자 오프셋: start_x + 3.5*char_w 근처
-        expected = float(pts[0]["start_x"]) + 3.5 * float(pts[0]["char_w"])
-        assert abs(float(pts[0]["x"]) - expected) < 2.0
+        pt1 = _edit_click_point_from_allsave(
+            page, int(rows[0]["index"]), rows[0]["url"], log_find=False
+        )
+        pt2 = _edit_click_point_from_allsave(
+            page, int(rows[0]["index"]), rows[0]["url"], log_find=False
+        )
+        assert pt1 is not None and pt2 is not None
+        assert int(pt1["char_offset"]) == 4
+        assert abs(float(pt1["x"]) - float(pt2["x"])) < 1.0
+        assert float(pt1["x"]) > float(pt1["allsave_right"])
+        expected = float(pt1["start_x"]) + 3.5 * float(pt1["char_w"])
+        assert abs(float(pt1["x"]) - expected) < 2.0
         browser.close()
+
+
+def test_allsave_edit_find_logs_text_and_screenshots(tmp_path: Path):
+    """전체저장/수집조건수정 찾기 전·후 — 텍스트·버튼명 + 스크린샷 로그."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import _edit_click_point_from_allsave, _is_major_log
+
+    logs: list[tuple[str, str]] = []
+
+    def progress(step: str, msg: str) -> None:
+        logs.append((step, msg))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
+        rows = list_demango_rows(page)
+        shot_dir = tmp_path / "shots"
+        pt = _edit_click_point_from_allsave(
+            page,
+            int(rows[0]["index"]),
+            rows[0]["url"],
+            progress=progress,
+            shot_dir=shot_dir,
+            row_no=1,
+            log_find=True,
+        )
+        assert pt is not None
+        browser.close()
+
+    texts = [m for s, m in logs]
+    assert any("텍스트 찾기 전" in m and "전체저장" in m for m in texts)
+    assert any("텍스트 찾기 후" in m and "전체저장" in m for m in texts)
+    assert any("버튼명 찾기 전" in m and "수집조건수정" in m for m in texts)
+    assert any("버튼명 찾기 후" in m and "수집조건수정" in m for m in texts)
+    shots = list(shot_dir.glob("*.png"))
+    assert len(shots) >= 4
+    assert _is_major_log("주요", "6) 텍스트 찾기 전 · 텍스트=전체저장")
+    assert not _is_major_log("화면", "망고 Chrome 창 표시")
+
+
+def test_major_log_filter_keeps_steps_drops_noise():
+    from update_filters import _is_major_log
+
+    assert _is_major_log("로직", "6) 수집조건수정 클릭")
+    assert _is_major_log("오류", "행1 실패")
+    assert not _is_major_log("화면", "6) 목록 복귀 · url=...")
+    assert not _is_major_log("준비", "스크린샷 폴더: /tmp/x")
+
+
+def test_store_count_call_disabled_but_function_kept():
+    """상품수 카운트 함수·로그는 유지, CALL 플래그만 False (테스트시간 절약)."""
+    import update_filters as uf
+
+    assert uf.ENABLE_STORE_COUNT_CALL is False
+    assert callable(uf.browse_store_count_cards)
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "def browse_store_count_cards" in src
+    assert "상품수 카드 갯수=" in src
+    assert "if ENABLE_STORE_COUNT_CALL:" in src
 
 
 def test_find_edit_marks_right_of_url():
