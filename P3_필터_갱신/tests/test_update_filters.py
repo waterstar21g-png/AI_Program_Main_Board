@@ -232,15 +232,31 @@ def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
             progress=None,
             shot_dir=shot_dir,
             row_no=7,
-            shot_count=3,
-            shot_interval_s=0,
+            shot_count=0,
+            max_tries=1,
+            try_interval_s=0.5,
         )
         assert ok is True
         assert page.locator("body").get_attribute("data-clicked") == "real-777"
         assert len(context.pages) >= 2
-        assert (shot_dir / "r007_02_after_edit_1of3.png").is_file()
-        assert (shot_dir / "r007_02_after_edit_2of3.png").is_file()
-        assert (shot_dir / "r007_02_after_edit_3of3.png").is_file()
+        # 클릭 성공 시 샷 시리즈는 기본 off (shot_count=0)
+        browser.close()
+
+
+def test_find_edit_marks_right_of_url():
+    """수집조건수정이 URL 오른쪽에 있으면 rightOfUrl=Y."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import _find_and_mark_edit_button
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
+        rows = list_demango_rows(page)
+        info = _find_and_mark_edit_button(page, int(rows[0]["index"]), rows[0]["url"])
+        assert info.get("ok") is True
+        assert info.get("rightOfUrl") is True
+        assert page.locator('[data-p3-edit-target="1"]').count() == 1
         browser.close()
 
 
@@ -296,6 +312,8 @@ def test_click_edit_fails_when_popup_does_not_open():
             fake_href,
             row_url=rows[0]["url"],
             progress=None,
+            max_tries=2,
+            try_interval_s=0.15,
         )
         assert page.locator("body").get_attribute("data-clicked") == "1"
         assert ok is False
