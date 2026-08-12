@@ -505,20 +505,23 @@ def test_click_edit_on_row_uses_real_locator_click_not_coordinates(tmp_path: Pat
 
 
 def test_run_update_uses_canonical_7step_log_messages():
-    """run_update 본문이 사용자 지정 1)~7) 단계 문구를 그대로 사용해야 함."""
+    """run_update 본문이 사용자 지정 1)~7) 단계 문구·중요정보를 사용해야 함."""
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
     assert "1) 망고 수집 URL 링크로 진입" in src
-    assert "2) 망고 URL(KEY) 조회 → 엑셀매칭 OK" in src
-    assert "3) 엑셀 KEY 불일치 → 다음 행" in src
-    assert "3) 필터 불일치 → 다음 행" in src
+    assert "2) KEY매칭 성공 · 필터=" in src
     assert "4) 상품노출수(카드수) 추출 — 건너뛰고 수행" in src
-    assert "5) LABEL '수집조건수정' 버튼 찾아 실제 클릭" in src
-    assert "5) LABEL '저장' 버튼 클릭" in src
-    assert "6) '수정되었습니다' 메세지 하단 LABEL '확인' 버튼 클릭" in src
-    assert "7) 2~6단계 반복 → 다음 행" in src
-    # 옛 Logger 세부로그 클래스는 완전히 제거됨
+    assert "'저장하기' 클릭 완료" in src
+    assert "6) '수정되었습니다' 확인 클릭 완료" in src
+    assert "7) 갱신성공 → 다음 행 반복" in src
+    # 매칭되지 않는 행 정보는 로그에 남기지 않음 (KEY/필터 불일치 시 조용히 skip)
+    assert "매칭되지 않는 정보는 로그에 남기지 않는다" in src
+    # 옛 Logger 세부로그 클래스·미사용 비교로그는 완전히 제거됨
     assert "class Logger" not in src
     assert "DETAIL_EXCEL_ROWS" not in src
+    assert "log_first10_compare" not in src
+    # '저장'이 아닌 '저장하기' 라벨을 찾아 클릭 (요건 정정 반영)
+    assert 'value="저장하기"' in src
+    assert "click_save_button" in src
 
 
 def test_major_log_filter_keeps_steps_drops_noise():
