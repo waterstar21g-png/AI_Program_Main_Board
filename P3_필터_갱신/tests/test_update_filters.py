@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 import openpyxl  # noqa: E402
 from update_filters import (  # noqa: E402
+    click_edit_on_row,
     click_modified_confirm,
     click_save_button,
     excel_by_url,
@@ -20,6 +21,7 @@ from update_filters import (  # noqa: E402
     list_demango_rows,
     map_save_count,
     normalize_url,
+    page_shows_not_found,
     read_excel_rows,
     set_save_count,
     wait_modify_page_closed,
@@ -44,9 +46,9 @@ DEMANGO_LIST_HTML = """
     <a href="https://www.zara.com/de/en/woman-zara-hair-groom-mkt17602.html?v1=2662755">
       https://www.zara.com/de/en/woman-zara-hair-groom-mkt17602.html?v1=2662755
     </a>
-    | 수집개수: 3개 | 전체저장
-    <button type="button"
-      onclick="location.href='admin_group_modify.php?ps_mode=modify_filter&amp;ps_fuid=352'">
+    | <span style="background:#2563eb;color:#fff">수집개수: 3개 | 전체저장</span>
+    <button type="button" id="edit-correct-352"
+      onclick="document.body.setAttribute('data-clicked','352'); location.href='admin_group_modify.php?ps_mode=modify_filter&amp;ps_fuid=352'">
       수집조건수정
     </button>
   </td>
@@ -61,10 +63,38 @@ DEMANGO_LIST_HTML = """
     <a href="https://www.zara.com/de/en/woman-perfumes-l123.html">
       https://www.zara.com/de/en/woman-perfumes-l123.html
     </a>
-    | 수집개수: 3개
-    <input type="button" value="수집조건수정" onclick="go(353)">
+    | <span>수집개수: 3개 | 전체저장</span>
+    <input type="button" id="edit-correct-353" value="수집조건수정" onclick="document.body.setAttribute('data-clicked','353'); go(353)">
   </td>
   <td>2개 / 0개</td>
+</tr>
+</table>
+</body></html>
+"""
+
+# 사용자 스크린샷 구조: URL | 수집개수: 3개 | 전체저장 | 수집조건수정
+# 행 앞쪽에 엉뚱한 '수집조건수정'/not-found 링크가 있어도 옆 버튼만 눌러야 함
+DEMANGO_LIST_WITH_DECOY_HTML = """
+<html><body>
+<table>
+<tr>
+  <th>필터이름(수정가능)</th>
+  <th>검색필터(저장조건)</th>
+</tr>
+<tr>
+  <td><input type="text" value="남성의류_니트"></td>
+  <td>
+    <a href="admin_group_modify.php?ps_mode=modify_filter&amp;ps_fuid=999"
+       id="decoy-wrong">수집조건수정</a>
+    URL 검색:
+    <a href="https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237">
+      https://www.zara.com/de/en/man-knitwear-long-sleeve-l15978.html?v1=2432237
+    </a>
+    |
+    <span style="background:#2b6cb0;color:#fff;padding:2px 6px">수집개수: 3개 | 전체저장</span>
+    <input type="button" id="edit-real" value="수집조건수정"
+      onclick="document.body.setAttribute('data-clicked','real-777'); window.__fuid=777">
+  </td>
 </tr>
 </table>
 </body></html>
@@ -160,6 +190,48 @@ def test_list_demango_rows_filter_input_and_url():
     assert rows[1]["filterName"] == "여성향수_향수"
     assert "woman-perfumes" in rows[1]["url"]
     assert "ps_fuid=353" in (rows[1].get("editHref") or "")
+
+
+def test_click_edit_prefers_button_beside_collect_count():
+    """수집개수|전체저장 바로 옆 수집조건수정만 클릭 (앞쪽 decoy 무시)."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
+        rows = list_demango_rows(page)
+        assert len(rows) == 1
+        href = rows[0].get("editHref") or ""
+        assert "999" not in href
+        ok = click_edit_on_row(
+            page,
+            int(rows[0]["index"]),
+            href,
+            row_url=rows[0]["url"],
+            progress=None,
+        )
+        assert ok is True
+        assert page.locator("body").get_attribute("data-clicked") == "real-777"
+        browser.close()
+
+
+def test_page_shows_not_found():
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(
+            "<html><body><h1>Not Found</h1><p>페이지를 찾을 수 없습니다</p></body></html>"
+        )
+        assert page_shows_not_found(page) is True
+        page.set_content(
+            "<html><body><h1>검색필터 수정</h1><div>저장상품수</div>"
+            "<div>검색결과 상위 3 개</div><button>저장하기</button></body></html>"
+        )
+        assert page_shows_not_found(page) is False
+        browser.close()
 
 
 def test_modify_popup_save_count_and_save_button():

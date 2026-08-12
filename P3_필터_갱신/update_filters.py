@@ -436,11 +436,57 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
     }
     url = url.replace(/[\)\]\>,\;]+$/, '');
 
-    // 3) 수집조건수정 버튼 → href / ps_fuid
-    const editNodes = Array.from(tr.querySelectorAll('a, button, input, span'));
-    for (const el of editNodes) {
+    // 3) 수집조건수정 버튼 → ★「수집개수 … 전체저장」바로 옆 버튼 우선
+    const editNodes = Array.from(tr.querySelectorAll(
+      'a, button, input[type="button"], input[type="submit"], input[value], span'
+    ));
+    const nearCollect = (el) => {
+      let node = el;
+      for (let d = 0; d < 5 && node; d++) {
+        const parent = node.parentElement;
+        if (!parent) break;
+        let before = '';
+        for (const child of Array.from(parent.childNodes)) {
+          if (child === node || (child.contains && el && child.contains(el))) break;
+          before += (child.innerText || child.textContent || '');
+        }
+        const compact = before.replace(/\s+/g, '');
+        if (compact.includes('수집개수') && (
+          compact.includes('전체저장') || /수집개수[:：]?\d+개/.test(compact)
+        )) {
+          return true;
+        }
+        const full = (parent.innerText || '').replace(/\s+/g, '');
+        const iCnt = full.indexOf('수집개수');
+        const iAll = full.indexOf('전체저장');
+        const iBtn = full.indexOf('수집조건수정');
+        if (iCnt >= 0 && iBtn > iCnt && (iAll < 0 || (iAll > iCnt && iAll < iBtn))) {
+          return true;
+        }
+        node = parent;
+      }
+      return false;
+    };
+    const isEditLabel = (el) => {
       const label = (el.value || el.textContent || '').replace(/\s+/g, '');
-      if (!/수집조건수정/.test(label)) continue;
+      return label === '수집조건수정' || /^수집조건수정/.test(label);
+    };
+    const ranked = editNodes
+      .filter(isEditLabel)
+      .map((el, ord) => {
+        const tag = (el.tagName || '').toUpperCase();
+        let score = 0;
+        if (nearCollect(el)) score += 100;
+        if (tag === 'INPUT' || tag === 'BUTTON') score += 20;
+        if (tag === 'A') score += 10;
+        if (((el.value || el.textContent || '').replace(/\s+/g, '')) === '수집조건수정') {
+          score += 15;
+        }
+        return { el, score, ord };
+      })
+      .sort((a, b) => b.score - a.score || a.ord - b.ord);
+    for (const item of ranked) {
+      const el = item.el;
       hasEdit = true;
       if (el.tagName === 'A') {
         editHref = el.href || el.getAttribute('href') || '';
@@ -451,6 +497,7 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
       if (!editHref) {
         const oc = el.getAttribute('onclick') || '';
         const hrefInOc = oc.match(/location\.href\s*=\s*['"]([^'"]+)['"]/i)
+          || oc.match(/window\.open\s*\(\s*['"]([^'"]+)['"]/i)
           || oc.match(/['"]([^'"]*admin_group_modify\.php[^'"]*)['"]/i);
         if (hrefInOc) editHref = hrefInOc[1];
         if (!editHref) {
@@ -492,13 +539,160 @@ def list_demango_rows(page) -> list[dict]:
     return list(data or [])
 
 
-def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
-    """수집조건수정 — 가능하면 수정 페이지로 직접 이동, 아니면 행 버튼 클릭.
+def click_edit_on_row(
+    page,
+    row_index: int,
+    edit_href: str = "",
+    *,
+    row_url: str = "",
+    progress: ProgressFn | None = None,
+) -> bool:
+    """「수집개수: N개 | 전체저장」바로 옆의 「수집조건수정」버튼을 정확히 클릭.
 
-    새 팝업/탭이 열리면 context 에 남기고, 이후 resolve_modify_target 이 잡는다.
+    ★우선순위: DOM 버튼 클릭 (팝업/onclick 경로) → 실패 시에만 editHref 이동.
+    location.href 강제 이동은 엉뚱한 not found 화면을 열 수 있어 후순위로 둔다.
     """
+    before_pages = []
+    try:
+        before_pages = list(page.context.pages)
+    except Exception:
+        before_pages = [page]
+
+    click_info = page.evaluate(
+        """(args) => {
+          const rowIndex = args.rowIndex;
+          const urlHint = (args.urlHint || '').trim();
+          const urlStem = urlHint.split('?')[0];
+
+          const isEditControl = (el) => {
+            if (!el) return false;
+            const tag = (el.tagName || '').toUpperCase();
+            if (!(tag === 'A' || tag === 'BUTTON' || tag === 'INPUT')) return false;
+            if (tag === 'INPUT') {
+              const ty = (el.getAttribute('type') || 'button').toLowerCase();
+              if (!(ty === 'button' || ty === 'submit' || ty === '')) return false;
+            }
+            const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
+            return t === '수집조건수정' || /^수집조건수정/.test(t);
+          };
+
+          const nearCollectCount = (el) => {
+            let node = el;
+            for (let depth = 0; depth < 5 && node; depth++) {
+              const parent = node.parentElement;
+              if (!parent) break;
+              let before = '';
+              for (const child of Array.from(parent.childNodes)) {
+                if (child === node || (child.contains && child.contains(el))) break;
+                before += (child.innerText || child.textContent || '');
+              }
+              const compact = before.replace(/\\s+/g, '');
+              if (compact.includes('수집개수') && (
+                compact.includes('전체저장') || /수집개수[:：]?\\d+개/.test(compact)
+              )) {
+                return true;
+              }
+              const full = (parent.innerText || '').replace(/\\s+/g, '');
+              const iCnt = full.indexOf('수집개수');
+              const iAll = full.indexOf('전체저장');
+              const iBtn = full.indexOf('수집조건수정');
+              if (iCnt >= 0 && iBtn > iCnt && (iAll < 0 || (iAll > iCnt && iAll < iBtn))) {
+                return true;
+              }
+              node = parent;
+            }
+            return false;
+          };
+
+          const score = (el) => {
+            let s = 0;
+            if (nearCollectCount(el)) s += 100;
+            const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
+            if (t === '수집조건수정') s += 20;
+            const tag = (el.tagName || '').toUpperCase();
+            if (tag === 'INPUT' || tag === 'BUTTON') s += 10;
+            if (tag === 'A') s += 5;
+            return s;
+          };
+
+          const rowMatchesUrl = (tr) => {
+            if (!urlHint) return false;
+            const anchors = Array.from(tr.querySelectorAll('a[href]'));
+            for (const a of anchors) {
+              const h = a.href || a.getAttribute('href') || '';
+              if (h && (h === urlHint || h.startsWith(urlStem) || urlHint.startsWith(h.split('?')[0]))) {
+                return true;
+              }
+            }
+            const text = tr.innerText || '';
+            return text.includes(urlStem) || text.includes(urlHint);
+          };
+
+          const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
+          let candidates = [];
+          if (urlHint) {
+            candidates = trs.filter(rowMatchesUrl);
+          }
+          if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
+            candidates = [trs[rowIndex]];
+          }
+          if (!candidates.length) return { ok: false, reason: 'row-not-found' };
+
+          for (const tr of candidates) {
+            const edits = Array.from(tr.querySelectorAll('a, button, input')).filter(isEditControl);
+            if (!edits.length) continue;
+            edits.sort((a, b) => score(b) - score(a));
+            // ★요건: 수집개수/전체저장 옆 버튼이 있으면 그것만 사용
+            const near = edits.filter(nearCollectCount);
+            const pick = (near.length ? near : edits)[0];
+            try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+            const meta = {
+              ok: true,
+              tag: pick.tagName,
+              text: ((pick.value || pick.textContent || '') + '').replace(/\\s+/g, ' ').trim().slice(0, 40),
+              nearCollect: nearCollectCount(pick),
+              score: score(pick),
+              onclick: (pick.getAttribute('onclick') || '').slice(0, 120),
+              href: (pick.getAttribute('href') || pick.href || '').slice(0, 160),
+            };
+            pick.click();
+            return meta;
+          }
+          return { ok: false, reason: 'button-not-found' };
+        }""",
+        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
+    )
+
+    if isinstance(click_info, dict) and click_info.get("ok"):
+        near = "Y" if click_info.get("nearCollect") else "N"
+        _log(
+            progress,
+            "로직",
+            f"2) 수집조건수정 클릭 확인 · 인접(수집개수/전체저장)={near} · "
+            f"tag={click_info.get('tag')} · text={click_info.get('text')!r}",
+        )
+        time.sleep(0.7)
+        try:
+            for p in page.context.pages:
+                if p not in before_pages:
+                    try:
+                        p.wait_for_load_state("domcontentloaded", timeout=15_000)
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+                    return True
+        except Exception:
+            pass
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
+        return True
+
+    # 폴백: editHref 직접 이동 (클릭 실패 시에만)
     href = (edit_href or "").strip()
     if href:
+        _log(progress, "로직", f"2) 수집조건수정 DOM클릭 실패 → href 폴백: {href[:120]}")
         try:
             if href.startswith("http"):
                 page.goto(href, wait_until="domcontentloaded", timeout=60_000)
@@ -510,53 +704,49 @@ def click_edit_on_row(page, row_index: int, edit_href: str = "") -> bool:
         except Exception:
             pass
 
-    before_pages = []
-    try:
-        before_pages = list(page.context.pages)
-    except Exception:
-        before_pages = [page]
-
-    ok = bool(
-        page.evaluate(
-            """(idx) => {
-              const trs = document.querySelectorAll('table tr, form tr, tr');
-              const tr = trs[idx];
-              if (!tr) return false;
-              const nodes = Array.from(tr.querySelectorAll('a, button, span, input'));
-              for (const el of nodes) {
-                const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
-                if (/수집조건수정/.test(t)) {
-                  el.click();
-                  return true;
-                }
-              }
-              return false;
-            }""",
-            row_index,
-        )
+    _log(
+        progress,
+        "오류",
+        f"2) 수집조건수정 버튼 미검출 "
+        f"(info={click_info if isinstance(click_info, dict) else {}})",
     )
-    if not ok:
-        return False
+    return False
 
-    time.sleep(0.7)
-    # 새 팝업/탭?
+
+def page_shows_not_found(page) -> bool:
+    """수정 팝업/페이지가 'not found' 등 잘못된 진입인지."""
+    targets = [page]
     try:
-        for p in page.context.pages:
-            if p not in before_pages:
-                try:
-                    p.wait_for_load_state("domcontentloaded", timeout=15_000)
-                except Exception:
-                    pass
-                time.sleep(0.3)
+        targets = list(page.context.pages) or [page]
+    except Exception:
+        targets = [page]
+    for target in targets:
+        try:
+            title = ""
+            try:
+                title = target.title() or ""
+            except Exception:
+                title = ""
+            body = ""
+            try:
+                body = target.locator("body").inner_text(timeout=400) or ""
+            except Exception:
+                body = ""
+            blob = f"{title}\n{body}"
+            # 정상 수정화면이면 not-found 로 보지 않음
+            if "저장상품수" in blob and (
+                "검색필터 수정" in blob or "검색결과" in blob or "저장하기" in blob
+            ):
+                continue
+            if re.search(
+                r"not\s*found|404\b|찾을\s*수\s*없|존재하지\s*않|페이지를\s*찾을|잘못된\s*접근",
+                blob,
+                re.I,
+            ):
                 return True
-    except Exception:
-        pass
-
-    try:
-        page.wait_for_load_state("domcontentloaded", timeout=15_000)
-    except Exception:
-        pass
-    return True
+        except Exception:
+            continue
+    return False
 
 
 def set_save_count(
@@ -1317,11 +1507,18 @@ def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict 
 def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
     """수집조건수정 후 '검색필터 수정' / 저장상품수 화면 대기.
 
-    팝업 창·iframe 포함.
+    팝업 창·iframe 포함. not found 화면이면 실패.
     """
     end = time.time() + timeout_ms / 1000.0
+    saw_not_found = False
     while time.time() < end:
         try:
+            if page_shows_not_found(page):
+                saw_not_found = True
+                # 잠깐 더 기다려 정상 화면으로 바뀌는지 확인
+                time.sleep(0.35)
+                if page_shows_not_found(page):
+                    return False
             target, kind = resolve_modify_target(page)
             url = ""
             try:
@@ -1329,7 +1526,17 @@ def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
             except Exception:
                 url = page.url or ""
             if "modify_filter" in url or "admin_group_modify" in url:
-                return True
+                if not page_shows_not_found(page):
+                    # URL만 맞고 본문이 not found 인 경우 제외
+                    if wait_for_save_count_ready(target, timeout_ms=400):
+                        return True
+                    body = ""
+                    try:
+                        body = target.locator("body").inner_text(timeout=300) or ""
+                    except Exception:
+                        body = ""
+                    if "저장상품수" in body or "검색필터 수정" in body:
+                        return True
             if kind in ("page", "frame") and kind != "main":
                 # resolve 가 저장상품수 화면을 찾음
                 if wait_for_save_count_ready(target, timeout_ms=500):
@@ -1348,9 +1555,16 @@ def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
                 for p in page.context.pages:
                     if p is page:
                         continue
+                    if page_shows_not_found(p):
+                        saw_not_found = True
+                        continue
                     bu = p.url or ""
                     if "modify_filter" in bu or "admin_group_modify" in bu:
-                        return True
+                        if wait_for_save_count_ready(p, timeout_ms=400):
+                            return True
+                        bt = p.locator("body").inner_text(timeout=300) or ""
+                        if "저장상품수" in bt or "검색필터 수정" in bt:
+                            return True
                     bt = p.locator("body").inner_text(timeout=300) or ""
                     if "저장상품수" in bt:
                         return True
@@ -1359,7 +1573,11 @@ def wait_modify_page(page, *, timeout_ms: int = 20000) -> bool:
         except Exception:
             pass
         time.sleep(0.25)
+    if saw_not_found and page_shows_not_found(page):
+        return False
     target, _kind = resolve_modify_target(page)
+    if page_shows_not_found(page):
+        return False
     return wait_for_save_count_ready(target, timeout_ms=800)
 
 
@@ -1518,9 +1736,15 @@ def run_update(
                 except Exception:
                     pass
 
-                # 2) 수집조건수정
+                # 2) 수집조건수정 — 「수집개수|전체저장」바로 옆 버튼 정확히 클릭
                 lg.step("로직", "2) 수집조건수정 클릭", "2) 조건수정")
-                if not click_edit_on_row(page, row_idx, edit_href):
+                if not click_edit_on_row(
+                    page,
+                    row_idx,
+                    edit_href,
+                    row_url=d_url,
+                    progress=progress,
+                ):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 수집조건수정 클릭 실패")
                     screenshot_step(
@@ -1535,12 +1759,19 @@ def run_update(
                     continue
                 if not wait_modify_page(page):
                     result.failed += 1
-                    _log(progress, "오류", f"행{i} 검색필터 수정 화면 미진입")
+                    if page_shows_not_found(page):
+                        _log(
+                            progress,
+                            "오류",
+                            f"행{i} 수집조건수정 후 not found — 잘못된 버튼/링크 가능",
+                        )
+                    else:
+                        _log(progress, "오류", f"행{i} 검색필터 수정 화면 미진입")
                     screenshot_step(
                         page,
                         shot_dir,
                         step_tag="02_modify_missing",
-                        label="2)검색필터수정 미진입",
+                        label="2)검색필터수정 미진입/notfound",
                         row_no=i,
                         progress=progress,
                     )
