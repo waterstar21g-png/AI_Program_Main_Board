@@ -195,46 +195,39 @@ def reveal_browser_page(
 
 
 def attach_current_mango_page(p2, playwright, *, progress: ProgressFn | None = None):
-    """이미 열려 있는 망고 Chrome 화면에만 연결한다.
+    """열린 망고 Chrome(CDP)에 연결만 한다. (로그인 대기 없음)
 
-    ★로그인 / MAIN·LOGIN URL 이동 / 확장설정 팝업 / 필터URL 진입 — 전부 하지 않음.
-    CDP(9222)로 떠 있는 Chrome이 없으면 오류.
+    이후 호출측에서 DEFAULT_MANGO_URL(검색필터 화면)로 이동한다.
+    CDP가 없으면 P2 connect_browser 로 Chrome을 띄운 뒤 연결한다.
     """
     cdp_open = getattr(p2, "cdp_port_open", None)
-    if callable(cdp_open) and not cdp_open():
-        raise RuntimeError(
-            "이미 열려 있는 더망고 Chrome(CDP)이 없습니다.\n"
-            "검색필터(저장조건) 화면을 연 상태로 다시 실행하세요.\n"
-            "(로그인·화면 진입은 하지 않습니다)"
-        )
-
-    cdp_url = getattr(p2, "CDP_URL", "http://127.0.0.1:9222")
-    _log(progress, "준비", "현재 망고 Chrome에 연결 (로그인·진입 없음)")
-    browser = playwright.chromium.connect_over_cdp(cdp_url)
-    context = browser.contexts[0] if browser.contexts else browser.new_context()
-    if hasattr(p2, "pick_working_page"):
-        page = p2.pick_working_page(context)
+    browser = None
+    page = None
+    if callable(cdp_open) and cdp_open():
+        cdp_url = getattr(p2, "CDP_URL", "http://127.0.0.1:9222")
+        _log(progress, "준비", "열린 망고 Chrome(CDP)에 연결")
+        browser = playwright.chromium.connect_over_cdp(cdp_url)
+        context = browser.contexts[0] if browser.contexts else browser.new_context()
+        if hasattr(p2, "pick_working_page"):
+            page = p2.pick_working_page(context)
+        else:
+            open_pages = [pg for pg in context.pages if not pg.is_closed()]
+            page = open_pages[0] if open_pages else context.new_page()
     else:
-        open_pages = [pg for pg in context.pages if not pg.is_closed()]
-        page = open_pages[0] if open_pages else context.new_page()
+        _log(progress, "준비", "CDP 없음 — P2방식 Chrome 실행 후 연결 (로그인대기 없음)")
+        browser, page = p2.connect_browser(playwright)
+
     if hasattr(p2, "refresh_if_closed"):
         page = p2.refresh_if_closed(page)
     try:
         page.set_default_timeout(120_000)
     except Exception:
         pass
-    reveal_browser_page(
-        page,
-        progress,
-        step_no="0",
-        action="현재 망고 화면 사용",
-        dwell_s=0.4,
-    )
     try:
         cur = (page.url or "").strip()
     except Exception:
         cur = ""
-    _log(progress, "준비", f"현재 화면 URL={cur[:160] or '(없음)'}")
+    _log(progress, "준비", f"연결 직후 URL={cur[:160] or '(없음)'} → 곧 검색필터 URL로 이동")
     return browser, page
 
 
@@ -463,37 +456,47 @@ def navigate_mango_url(
     *,
     progress: ProgressFn | None,
     p2=None,
-) -> None:
-    """검색필터(저장조건) URL로 이동 — P2 safe_goto 사용(리다이렉트 경쟁 회피)."""
-    url = (mango_url or "").strip()
-    if not url:
-        raise ValueError("더망고 URL이 비어 있습니다.")
-    _log(progress, "로직", f"0) 더망고 URL(검색필터·저장조건) 이동: {url}")
-    if p2 is not None and hasattr(p2, "safe_goto"):
-        p2.safe_goto(page, url)
-        if hasattr(p2, "refresh_if_closed"):
-            page = p2.refresh_if_closed(page)
-        if hasattr(p2, "handle_possible_login_page"):
-            try:
-                p2.handle_possible_login_page(page)
-                page = p2.refresh_if_closed(page)
-            except Exception:
-                pass
-    else:
-        page.goto(url, wait_until="domcontentloaded", timeout=90_000)
-    time.sleep(0.5)
+):
+    """검색필터(저장조건) URL로 이동 — 로그인 대기 없음. P2 safe_goto 사용."""
+    url = (mango_url or "").strip() or DEFAULT_MANGO_URL
+    _log(progress, "로직", f"0) 검색필터 URL 이동: {url}")
+    for attempt in range(1, 3):
+        try:
+            if p2 is not None and hasattr(p2, "safe_goto"):
+                p2.safe_goto(page, url)
+                if hasattr(p2, "refresh_if_closed"):
+                    page = p2.refresh_if_closed(page)
+            else:
+                page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+        except Exception as e:  # noqa: BLE001
+            _log(
+                progress,
+                "경고",
+                f"0) URL 이동 예외({attempt}/2): {str(e).split(chr(10))[0][:120]}",
+            )
+        time.sleep(0.6)
+        try:
+            cur = (page.url or "").strip()
+        except Exception:
+            cur = ""
+        _log(progress, "준비", f"이동 후 화면 URL={cur[:180] or '(없음)'}")
+        # admin.php 등에 남으면 재시도
+        if "getGoodsCategory" in cur or "filter" in cur.lower():
+            break
+        if attempt < 2:
+            _log(progress, "경고", "검색필터 화면 미도달 — URL 재이동")
     reveal_browser_page(
         page, progress, step_no="0", action="검색필터(저장조건) 화면 표시", dwell_s=0.5
     )
-    # 화면 문구 확인 (없어도 진행 — URL을 사용자가 지정)
     try:
         body = page.locator("body").inner_text(timeout=3000) or ""
-        if re.search(r"검색\s*필터|저장\s*조건|수집\s*조건", body):
+        if re.search(r"검색\s*필터|저장\s*조건|수집\s*조건|필터이름", body):
             _log(progress, "확인", "검색필터/저장조건 화면 문구 확인")
         else:
             _log(progress, "확인", "화면 문구 미검출 — 지정 URL로 계속 진행")
     except Exception:
         pass
+    return page
 
 
 
@@ -2705,15 +2708,20 @@ def run_update(
 
     try:
         with sync_playwright() as p:
-            # ★로그인 없이 CDP 연결 → 지정 검색필터 URL로 이동
+            # ★로그인 없이 CDP 연결 → 반드시 검색필터 URL(getGoodsCategory)로 이동
             try:
                 browser, page = attach_current_mango_page(p2, p, progress=progress)
             except Exception as e:  # noqa: BLE001
                 result.errors.append(str(e))
                 return result
-            navigate_mango_url(page, mango, progress=progress, p2=p2)
+            page = navigate_mango_url(page, mango, progress=progress, p2=p2) or page
             shot_dir = new_shot_dir()
             _log(progress, "준비", f"스크린샷 폴더: {shot_dir}")
+            try:
+                cur_after = (page.url or "").strip()
+            except Exception:
+                cur_after = ""
+            _log(progress, "준비", f"목록스캔 전 URL={cur_after[:180] or '(없음)'}")
 
             demango_rows = list_demango_rows(page)
             result.total_demango = len(demango_rows)
@@ -2721,8 +2729,9 @@ def run_update(
 
             if result.total_demango == 0:
                 result.errors.append(
-                    "현재 망고 화면에서 검색필터 행을 찾지 못했습니다. "
-                    "검색필터(저장조건) 목록 화면을 연 뒤 다시 실행하세요."
+                    "검색필터 행 0건 — "
+                    f"목표URL={mango[:100]} · 현재URL={cur_after[:100] or '(없음)'}. "
+                    "로그인된 망고 Chrome에서 다시 실행하세요."
                 )
                 return result
 

@@ -1,2 +1,2 @@
-버전 2.1.22 (Python B안)
-업데이트: P3 더망고URL 고정=getGoodsCategory.php(filter_delete)
+버전 2.1.23 (Python B안)
+업데이트: P3 admin.php고착 수정 — 검색필터URL로 강제이동

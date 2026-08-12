@@ -216,9 +216,20 @@ def test_reveal_browser_page_brings_front():
     assert "팝업테스트" in state or "url=" in state
 
 
-def test_attach_current_mango_requires_open_cdp():
-    """CDP Chrome이 없으면 로그인/진입 없이 오류로 안내한다."""
+def test_attach_current_mango_falls_back_to_connect_browser():
+    """CDP 없으면 P2 connect_browser 로 연결한다 (로그인대기 없음)."""
     from update_filters import attach_current_mango_page
+
+    calls: list[str] = []
+
+    class FakePage:
+        url = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+
+        def set_default_timeout(self, *_a, **_k):
+            return None
+
+        def bring_to_front(self):
+            return None
 
     class FakeP2:
         CDP_URL = "http://127.0.0.1:9222"
@@ -227,19 +238,21 @@ def test_attach_current_mango_requires_open_cdp():
         def cdp_port_open():
             return False
 
-    class FakePw:
-        class chromium:
-            @staticmethod
-            def connect_over_cdp(_url):
-                raise AssertionError("CDP 없을 때 connect 하면 안 됨")
+        @staticmethod
+        def connect_browser(_pw):
+            calls.append("connect")
+            return object(), FakePage()
 
-    try:
-        attach_current_mango_page(FakeP2(), FakePw(), progress=None)
-        assert False, "RuntimeError 가 나야 함"
-    except RuntimeError as e:
-        msg = str(e)
-        assert "열려 있는 더망고 Chrome" in msg
-        assert "로그인" in msg
+        @staticmethod
+        def refresh_if_closed(page):
+            return page
+
+    class FakePw:
+        pass
+
+    _browser, page = attach_current_mango_page(FakeP2(), FakePw(), progress=None)
+    assert "connect" in calls
+    assert isinstance(page, FakePage)
 
 
 def test_read_excel_and_lookup(tmp_path: Path):
