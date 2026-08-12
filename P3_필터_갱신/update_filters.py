@@ -2928,135 +2928,16 @@ def run_update(
                 if note:
                     _log(progress, "로직", f"2) {note} · KEY={key_short}", major=True)
 
-                reveal_browser_page(
-                    page,
-                    progress,
-                    step_no="2",
-                    action=f"필터일치 목록행 표시 · filter={d_filter}",
-                )
-                screenshot_step(
-                    page,
-                    shot_dir,
-                    step_tag="02_matched_list",
-                    label=f"2)필터일치 목록행 filter={d_filter}",
-                    row_no=i,
-                    progress=progress,
-                )
-
-                # 목록에 있는지 확인 (이전 저장 후 복귀)
-                try:
-                    cur = page.url or ""
-                    if "modify_filter" in cur or "admin_group_modify" in cur:
-                        _return_to_list(page, mango)
-                except Exception:
-                    pass
-
-                list_page = page
-                reveal_browser_page(
-                    list_page,
-                    progress,
-                    step_no="2",
-                    action="더망고 목록 창 앞으로",
-                    dwell_s=0.2,
-                )
-
-                # 2) URL 클릭 → 스토어/팝업을 브라우저에 표시
-                store = click_demango_row_url(
-                    list_page, row_idx, d_url, progress=progress
-                )
-                if store is None:
-                    result.failed += 1
-                    _log(
-                        progress,
-                        "오류",
-                        f"행{i} · 2) URL 클릭 실패 · 필터={d_filter} · KEY={key_short} · "
-                        f"엑셀행={ex.excel_row} · 사유=스토어/팝업 오픈 실패(행index={row_idx})",
-                    )
-                    screenshot_step(
-                        list_page,
-                        shot_dir,
-                        step_tag="02_url_click_fail",
-                        label="2)URL클릭 실패",
-                        row_no=i,
-                        progress=progress,
-                    )
-                    _return_to_list(list_page, mango)
-                    continue
-                screenshot_step(
-                    store,
-                    shot_dir,
-                    step_tag="02_store_opened",
-                    label="2)URL클릭 후 스토어/팝업",
-                    row_no=i,
-                    progress=progress,
-                )
-
-                # 4) 상품노출수(카드수) 추출 — ★현재 단계는 건너뛰고 수행 (추후 완성본에서 추가)
-                # ※ browse_store_count_cards 함수·상품수 카운트 로그 자체는 유지, CALL만 차단.
+                # 4) 상품노출수(카드수) 추출 — ★현재는 건너뛰고 수행 (추후 완성본에서 추가)
+                # ※ 4단계는 이 페이지·함수를 그대로 재사용할 예정이라 스위치만 남겨둔다.
                 if ENABLE_STORE_COUNT_CALL:
-                    try:
-                        browse_store_count_cards(
-                            store,
-                            excel_count=ex.collectible,
-                            progress=progress,
-                            shot_dir=shot_dir,
-                            row_no=i,
-                        )
-                    except Exception as e:  # noqa: BLE001
-                        _log(
-                            progress,
-                            "경고",
-                            f"행{i} 스토어 스크롤/상품수 집계 예외: "
-                            f"{str(e).split(chr(10))[0][:120]}",
-                        )
-                else:
-                    _log(
-                        progress,
-                        "로직",
-                        "4) 상품노출수(카드수) 추출 — 건너뛰고 수행 (추후 완성본에서 추가)",
-                        major=True,
-                    )
-
-                # 더망고 목록 탭 재연결 후 수집조건수정
-                page = close_store_return_list(
-                    list_page, store, mango, progress=progress
-                )
-                if page is None:
-                    result.failed += 1
-                    _log(
-                        progress,
-                        "오류",
-                        f"행{i} · 필터={d_filter} · KEY={key_short} · "
-                        "더망고 목록 탭 재연결 실패(스토어 닫기 후 핸들 유실)",
-                    )
-                    continue
-                reveal_browser_page(
-                    page,
+                    pass  # TODO: 완성본에서 browse_store_count_cards 등으로 카드수 추출
+                _log(
                     progress,
-                    step_no="5",
-                    action="더망고 목록 복귀·창 표시",
-                    dwell_s=STEP_VIEW_DWELL_SEC,
+                    "로직",
+                    "4) 상품노출수(카드수) 추출 — 건너뛰고 수행 (추후 완성본에서 추가)",
+                    major=True,
                 )
-                # ★필수: 목록 복귀창 표시 후 → 망고 창 최대화 → 그 다음 행 재탐색
-                maximize_mango_chrome_window(page, progress, dwell_s=0.2)
-
-                # 복귀 후 URL로 행 index 재확정 (stale index 방지)
-                row_idx2 = resolve_demango_row_index_by_url(
-                    page,
-                    d_url,
-                    fallback_index=row_idx,
-                    progress=progress,
-                )
-                if row_idx2 is None:
-                    result.failed += 1
-                    _log(
-                        progress,
-                        "오류",
-                        f"행{i} · 필터={d_filter} · KEY={key_short} · "
-                        f"더망고 목록에서 URL 행 재탐색 실패(fallback_index={row_idx})",
-                    )
-                    continue
-                row_idx = int(row_idx2)
 
                 # 5) LABEL '수집조건수정' 버튼 클릭 → 저장상품수 입력 → '저장하기' 클릭
                 target = map_save_count(ex.collectible)
