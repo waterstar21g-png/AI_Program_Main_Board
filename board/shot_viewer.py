@@ -21,6 +21,18 @@ def latest_shot_dir(root: Path) -> Path | None:
     return dirs[0]
 
 
+def latest_p3_shot_dir(root: Path) -> Path | None:
+    """P3_필터_갱신/run-logs 최신 폴더."""
+    base = root / "P3_필터_갱신" / "run-logs"
+    if not base.is_dir():
+        return None
+    dirs = [p for p in base.iterdir() if p.is_dir()]
+    if not dirs:
+        return None
+    dirs.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return dirs[0]
+
+
 def load_shot_items(shot_dir: Path) -> list[dict]:
     idx = shot_dir / "shots.json"
     if idx.is_file():
@@ -46,10 +58,11 @@ def load_shot_items(shot_dir: Path) -> list[dict]:
 class ShotViewer(tk.Toplevel):
     """좌측 목록 + 우측 이미지 미리보기."""
 
-    def __init__(self, master: tk.Misc, shot_dir: Path) -> None:
+    def __init__(self, master: tk.Misc, shot_dir: Path, *, title_prefix: str | None = None) -> None:
         super().__init__(master)
         self.shot_dir = Path(shot_dir)
-        self.title(f"1·2행 전과정 스크린샷 — {self.shot_dir.name}")
+        kind = title_prefix or _viewer_kind(self.shot_dir)
+        self.title(f"{kind} — {self.shot_dir.name}")
         self.geometry("1100x720")
         self.minsize(800, 500)
         self._photo: tk.PhotoImage | None = None
@@ -59,7 +72,7 @@ class ShotViewer(tk.Toplevel):
         head.pack(fill="x")
         tk.Label(
             head,
-            text=f"샷 폴더: {self.shot_dir}  ({len(self._items)}장) · 입력1·2행 단계샷",
+            text=f"샷 폴더: {self.shot_dir}  ({len(self._items)}장) · {kind}",
             fg="white",
             bg="#164a59",
             font=("Malgun Gothic", 10, "bold"),
@@ -193,11 +206,30 @@ def sys_platform_darwin() -> bool:
     return os.name == "posix" and hasattr(os, "uname") and os.uname().sysname == "Darwin"
 
 
-def open_shot_viewer(master: tk.Misc, shot_dir: Path | None = None, root: Path | None = None) -> None:
+def _viewer_kind(shot_dir: Path) -> str:
+    s = str(shot_dir).replace("\\", "/")
+    if "P3_" in s or "필터_갱신" in s:
+        return "P3 필터갱신 스크린샷"
+    return "1·2행 전과정 스크린샷"
+
+
+def open_shot_viewer(
+    master: tk.Misc,
+    shot_dir: Path | None = None,
+    root: Path | None = None,
+    *,
+    prefer_p3: bool = False,
+    empty_hint: str | None = None,
+) -> None:
     folder = shot_dir
     if folder is None and root is not None:
-        folder = latest_shot_dir(root)
+        folder = latest_p3_shot_dir(root) if prefer_p3 else latest_shot_dir(root)
     if folder is None or not Path(folder).is_dir():
-        messagebox.showinfo("안내", "스크린샷 폴더가 없습니다.\n1행 검증 수집을 먼저 실행하세요.", parent=master)
+        hint = empty_hint or (
+            "P3 스크린샷 폴더가 없습니다.\n작업시작 후 필터 일치 행이 있어야 샷이 생성됩니다."
+            if prefer_p3
+            else "스크린샷 폴더가 없습니다.\n1행 검증 수집을 먼저 실행하세요."
+        )
+        messagebox.showinfo("안내", hint, parent=master)
         return
     ShotViewer(master, Path(folder))

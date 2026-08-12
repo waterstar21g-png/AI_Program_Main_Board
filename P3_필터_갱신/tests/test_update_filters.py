@@ -215,6 +215,26 @@ def test_screenshot_step_and_save_count_grid(tmp_path: Path):
         browser.close()
 
 
+def test_set_save_count_always_before_after_shots(tmp_path: Path):
+    """3)저장상품수 갱신 전·후 스크린샷이 항상 생성된다."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(MODIFY_HTML)
+        shot_dir = tmp_path / "shots"
+        assert set_save_count(page, 63, shot_dir=shot_dir, row_no=10)
+        before = shot_dir / "r010_03_save_count_before.png"
+        after = shot_dir / "r010_03_save_count_after.png"
+        assert before.is_file() and before.stat().st_size > 0
+        assert after.is_file() and after.stat().st_size > 0
+        assert (shot_dir / "r010_save_count_before.png").is_file()
+        assert (shot_dir / "r010_save_count_after.png").is_file()
+        assert page.locator("td:has-text('검색결과 상위') input").input_value() == "63"
+        browser.close()
+
+
 def test_modified_confirm_click_after_popup_close():
     """저장 후 '수정되었습니다' 팝업의 확인 버튼 클릭."""
     from playwright.sync_api import sync_playwright

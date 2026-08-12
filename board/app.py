@@ -78,7 +78,7 @@ from log_protocol import (  # noqa: E402
     strip_timestamp,
     sub_time_range,
 )
-from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
+from shot_viewer import latest_p3_shot_dir, latest_shot_dir, open_shot_viewer  # noqa: E402
 from self_update import (  # noqa: E402
     latest_open_pr_url,
     launch_external_updater,
@@ -1715,6 +1715,16 @@ class BoardApp(tk.Tk):
             pady=4,
         )
         self.btn_p3_stop.pack(side="left", padx=6)
+        tk.Button(
+            left_btns,
+            text="스크린샷 보기",
+            command=self._show_p3_shot_viewer,
+            bg="#0f766e",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=8,
+            pady=4,
+        ).pack(side="left", padx=6)
         tk.Button(left_btns, text="새로고침", command=self._refresh_p3_list).pack(
             side="left", padx=6
         )
@@ -1934,6 +1944,10 @@ class BoardApp(tk.Tk):
         if not path or not os.path.isfile(path):
             return
         try:
+            self._p3_last_shot_dir = Path(path).parent
+        except Exception:
+            pass
+        try:
             if os.name == "nt":
                 os.startfile(path)  # type: ignore[attr-defined]
             else:
@@ -1942,6 +1956,23 @@ class BoardApp(tk.Tk):
                 _sp.Popen(["xdg-open", path])
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("열기 실패", f"{path}\n{e}")
+
+    def _show_p3_shot_viewer(self) -> None:
+        """P3 실행 스크린샷 뷰어 (저장상품수 전·후 포함)."""
+        folder = self._p3_last_shot_dir
+        if folder is None or not Path(folder).is_dir():
+            folder = latest_p3_shot_dir(ROOT)
+        open_shot_viewer(
+            self,
+            shot_dir=folder,
+            root=ROOT,
+            prefer_p3=True,
+            empty_hint=(
+                "P3 스크린샷 폴더가 없습니다.\n"
+                "작업시작 후 필터 일치 행에서 단계 샷이 생성됩니다.\n"
+                "(3)저장상품수 갱신 전·후 샷 포함)"
+            ),
+        )
 
     def _p3_stop_flag(self) -> Path:
         return ROOT / "P3_필터_갱신" / ".filter_stop"

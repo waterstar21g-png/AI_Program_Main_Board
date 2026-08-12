@@ -572,15 +572,27 @@ def set_save_count(
     UI: 저장상품수 | 검색결과 상위 [ 3 ] 개 상품만 저장
     1) value가 '3'(또는 숫자)인 input 을 찾음
     2) 그 칸의 값을 상품수(target)로 덮어씀
+    ★갱신 전·후 스크린샷은 성공/실패와 무관하게 항상 로그에 남김
     """
     target = str(int(value))
 
     work, kind = resolve_modify_target(page)
     wait_for_save_count_ready(work, timeout_ms=8_000)
+    shot_page = page if kind == "frame" else work
+
+    # ★요건: 3) 저장상품수 갱신 전 스크린샷 (항상)
+    if shot_dir is not None:
+        screenshot_step(
+            shot_page,
+            shot_dir,
+            step_tag="03_save_count_before",
+            label=f"3)저장상품수 갱신 전 →목표={target}",
+            row_no=row_no,
+            progress=progress,
+        )
 
     # ★요건: 숫자 "3" 이 들어있는 칸 우선 탐색
     loc = find_save_count_locator(work, prefer_value="3")
-    shot_page = page if kind == "frame" else work
 
     before_val = ""
     if loc is not None:
@@ -734,33 +746,39 @@ def set_save_count(
         if filled:
             loc = find_save_count_locator(work, prefer_value=target)
 
-    if filled and loc is not None and shot_dir is not None:
+    after_val = ""
+    if filled:
         after_val = target
-        try:
-            after_val = (loc.input_value(timeout=500) or "").strip() or target
-        except Exception:
-            pass
+        if loc is not None:
+            try:
+                after_val = (loc.input_value(timeout=500) or "").strip() or target
+            except Exception:
+                after_val = target
+            if shot_dir is not None:
+                screenshot_save_count_grid(
+                    shot_page,
+                    loc,
+                    shot_dir,
+                    tag="after",
+                    row_no=row_no,
+                    note=f"{before_val or '3'}→{after_val}",
+                    progress=progress,
+                )
         _log(
             progress,
             "로직",
-            f"3) 저장상품수 대체완료 {before_val or '3'} → {after_val}",
-        )
-        screenshot_save_count_grid(
-            shot_page,
-            loc,
-            shot_dir,
-            tag="after",
-            row_no=row_no,
-            note=f"{before_val or '3'}→{after_val}",
-            progress=progress,
+            f"3) 저장상품수 대체완료 {before_val or '3'} → {after_val or target}",
         )
 
-    if not filled:
+    # ★요건: 3) 저장상품수 갱신 후 스크린샷 (항상 — 성공/실패 공통)
+    if shot_dir is not None:
+        status = "성공" if filled else "실패"
+        note = f"{before_val or '?'}→{after_val or target}" if filled else "칸미검출/대체실패"
         screenshot_step(
-            page,
+            shot_page,
             shot_dir,
-            step_tag="03_save_count_not_found",
-            label="3)저장상품수(값3) 칸 미검출/대체실패",
+            step_tag="03_save_count_after",
+            label=f"3)저장상품수 갱신 후 ({status}) {note}",
             row_no=row_no,
             progress=progress,
         )
@@ -981,6 +999,34 @@ def wait_for_save_count_ready(target, *, timeout_ms: int = 8000) -> bool:
     return find_save_count_locator(target) is not None
 
 
+def _capture_png(page, path: Path, *, timeout_ms: int = 3000) -> bool:
+    """뷰포트 PNG 캡처 — Playwright 실패 시 CDP 폴백(샷이 본작업을 오래 막지 않음)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        page.screenshot(
+            path=str(path),
+            timeout=timeout_ms,
+            animations="disabled",
+        )
+        if path.is_file() and path.stat().st_size > 0:
+            return True
+    except Exception:
+        pass
+    # CDP 폴백
+    try:
+        session = page.context.new_cdp_session(page)
+        result = session.send("Page.captureScreenshot", {"format": "png", "fromSurface": True})
+        import base64
+
+        data = base64.b64decode(result.get("data") or "")
+        if data:
+            path.write_bytes(data)
+            return path.is_file() and path.stat().st_size > 0
+    except Exception:
+        pass
+    return False
+
+
 def screenshot_step(
     page,
     shot_dir: Path | None,
@@ -991,30 +1037,30 @@ def screenshot_step(
     progress: ProgressFn | None = None,
     full_page: bool = False,
 ) -> Path | None:
-    """필터 일치 행의 단계 스크린샷 → 실행 로그에 출력.
-
-    ★타임아웃을 짧게(5초) 잡아 샷 실패가 본 작업(저장상품수 입력)을
-    30초씩 막지 않도록 한다.
-    """
+    """필터 일치 행의 단계 스크린샷 → 실행 로그에 출력."""
     if shot_dir is None:
         return None
     shot_dir.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r"[^\w\-]+", "_", step_tag)[:48]
     name = f"r{row_no:03d}_{safe}.png"
     path = shot_dir / name
-    try:
-        time.sleep(0.08)
-        page.screenshot(
-            path=str(path),
-            full_page=bool(full_page),
-            timeout=5_000,
-            animations="disabled",
-        )
-        if not (path.is_file() and path.stat().st_size > 0):
-            return None
-    except Exception as e:  # noqa: BLE001
-        short = str(e).split("\n")[0][:140]
-        _log(progress, "샷", f"[샷 실패] {label}: {short}")
+    time.sleep(0.05)
+    ok = False
+    if full_page:
+        try:
+            page.screenshot(
+                path=str(path),
+                full_page=True,
+                timeout=4_000,
+                animations="disabled",
+            )
+            ok = path.is_file() and path.stat().st_size > 0
+        except Exception:
+            ok = False
+    if not ok:
+        ok = _capture_png(page, path, timeout_ms=3_000)
+    if not ok:
+        _log(progress, "샷", f"[샷 실패] {label}: 캡처 불가(타임아웃/CDP)")
         return None
 
     _log(progress, "샷", f"{label} -> {path}")
@@ -1042,52 +1088,44 @@ def screenshot_save_count_grid(
         label = f"{label} ({note})"
 
     ok = False
-    try:
-        row = loc.locator("xpath=ancestor::tr[1]")
-        if row.count() > 0:
-            row.first.scroll_into_view_if_needed(timeout=1500)
-            time.sleep(0.1)
-            row.first.screenshot(path=str(path), timeout=5_000, animations="disabled")
-            ok = path.is_file() and path.stat().st_size > 0
-    except Exception:
-        ok = False
-
-    if not ok:
+    if loc is not None:
         try:
-            loc.scroll_into_view_if_needed(timeout=1500)
-            box = loc.bounding_box()
-            if box:
-                pad_l, pad_r, pad_y = 160, 220, 28
-                clip = {
-                    "x": max(0, box["x"] - pad_l),
-                    "y": max(0, box["y"] - pad_y),
-                    "width": max(80, box["width"] + pad_l + pad_r),
-                    "height": max(40, box["height"] + pad_y * 2),
-                }
-                page.screenshot(
-                    path=str(path),
-                    clip=clip,
-                    timeout=5_000,
-                    animations="disabled",
-                )
+            row = loc.locator("xpath=ancestor::tr[1]")
+            if row.count() > 0:
+                row.first.scroll_into_view_if_needed(timeout=1000)
+                time.sleep(0.08)
+                row.first.screenshot(path=str(path), timeout=3_000, animations="disabled")
                 ok = path.is_file() and path.stat().st_size > 0
         except Exception:
             ok = False
 
-    if not ok:
-        try:
-            page.screenshot(
-                path=str(path),
-                timeout=5_000,
-                animations="disabled",
-            )
-            ok = path.is_file()
-        except Exception as e:  # noqa: BLE001
-            short = str(e).split("\n")[0][:140]
-            _log(progress, "샷", f"[샷 실패] {label}: {short}")
-            return None
+        if not ok:
+            try:
+                loc.scroll_into_view_if_needed(timeout=1000)
+                box = loc.bounding_box()
+                if box:
+                    pad_l, pad_r, pad_y = 160, 220, 28
+                    clip = {
+                        "x": max(0, box["x"] - pad_l),
+                        "y": max(0, box["y"] - pad_y),
+                        "width": max(80, box["width"] + pad_l + pad_r),
+                        "height": max(40, box["height"] + pad_y * 2),
+                    }
+                    page.screenshot(
+                        path=str(path),
+                        clip=clip,
+                        timeout=3_000,
+                        animations="disabled",
+                    )
+                    ok = path.is_file() and path.stat().st_size > 0
+            except Exception:
+                ok = False
 
     if not ok:
+        ok = _capture_png(page, path, timeout_ms=3_000)
+
+    if not ok:
+        _log(progress, "샷", f"[샷 실패] {label}: 캡처 불가")
         return None
 
     _log(progress, "샷", f"{label} -> {path}")
@@ -1533,28 +1571,12 @@ def run_update(
                 ):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 저장상품수 입력칸 실패")
-                    screenshot_step(
-                        page,
-                        shot_dir,
-                        step_tag="03_save_count_fail",
-                        label="3)저장상품수 입력 실패",
-                        row_no=i,
-                        progress=progress,
-                    )
                     try:
                         page.keyboard.press("Escape")
                     except Exception:
                         pass
                     _return_to_list(page, mango)
                     continue
-                screenshot_step(
-                    page,
-                    shot_dir,
-                    step_tag="03_save_count_done",
-                    label=f"3)저장상품수 입력완료={target}",
-                    row_no=i,
-                    progress=progress,
-                )
 
                 # 4) 저장하기 → 팝업 닫힘 → "수정되었습니다" 확인 클릭
                 dialog_state = attach_native_dialog_handler(page)
