@@ -6,8 +6,11 @@ $ErrorActionPreference = "Stop"
 
 $PreferredRoot = "D:\My_Project\AI_Program_Main_Board"
 $LnkName = "AI_Program_Main_Board.lnk"
+# ★요건: 머지·버전갱신 전용 바탕화면 아이콘 (보드와 분리)
+$UpdateLnkName = "AI_보드_버전갱신.lnk"
 $IconDll = "$env:SystemRoot\System32\imageres.dll"
 $IconIndex = 109
+$UpdateIconIndex = 23
 
 function Resolve-ProjectRoot {
   if ($PSScriptRoot -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot "run.bat"))) {
@@ -73,6 +76,36 @@ function New-BoardShortcut {
   return $chain
 }
 
+function New-UpdateShortcut {
+  param(
+    [string]$LnkPath,
+    [string]$ProjectRoot
+  )
+  $updateBatKo = Join-Path $ProjectRoot "버전갱신.bat"
+  $updateBatEn = Join-Path $ProjectRoot "update-version.bat"
+  $target = $null
+  if (Test-Path -LiteralPath $updateBatKo) { $target = $updateBatKo }
+  elseif (Test-Path -LiteralPath $updateBatEn) { $target = $updateBatEn }
+  else { throw "버전갱신.bat / update-version.bat not found" }
+
+  $w = New-Object -ComObject WScript.Shell
+  $sc = $w.CreateShortcut($LnkPath)
+  $sc.TargetPath = $target
+  $sc.Arguments = ""
+  $sc.WorkingDirectory = $ProjectRoot
+  $sc.WindowStyle = 1
+  $sc.Description = "Merge+force VERSION update from GitHub main, then start board"
+  if (Test-Path -LiteralPath $IconDll) {
+    $sc.IconLocation = "$IconDll,$UpdateIconIndex"
+  } else {
+    $sc.IconLocation = "$env:SystemRoot\System32\shell32.dll,18"
+  }
+  $sc.Save()
+  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($sc) | Out-Null
+  [System.Runtime.Interopservices.Marshal]::ReleaseComObject($w) | Out-Null
+  return $target
+}
+
 try {
   $root = Resolve-ProjectRoot
   $startBat = Join-Path $root "start.bat"
@@ -91,14 +124,27 @@ try {
   }
 
   Remove-OldShortcuts @($desktop, $taskPin, $startMenu)
+  # also remove previous update shortcut name
+  foreach ($folder in @($desktop, $taskPin, $startMenu)) {
+    if (-not $folder -or -not (Test-Path -LiteralPath $folder)) { continue }
+    $oldUp = Join-Path $folder $UpdateLnkName
+    if (Test-Path -LiteralPath $oldUp) {
+      Remove-Item -LiteralPath $oldUp -Force -ErrorAction SilentlyContinue
+    }
+  }
 
   $desktopLnk = Join-Path $desktop $LnkName
   $taskLnk = Join-Path $taskPin $LnkName
   $menuLnk = Join-Path $startMenu $LnkName
+  $desktopUpdateLnk = Join-Path $desktop $UpdateLnkName
 
   $chain = New-BoardShortcut -LnkPath $desktopLnk -ProjectRoot $root -StartBat $startBat -BootPs1 $bootPs1
   Write-Host "[OK] Desktop : $desktopLnk"
   Write-Host "     Chain   : $chain"
+
+  $updTarget = New-UpdateShortcut -LnkPath $desktopUpdateLnk -ProjectRoot $root
+  Write-Host "[OK] Desktop : $desktopUpdateLnk"
+  Write-Host "     Target  : $updTarget  (머지·버전갱신 전용)"
 
   if (-not (Test-Path -LiteralPath $taskPin)) {
     New-Item -ItemType Directory -Force -Path $taskPin | Out-Null

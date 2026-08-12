@@ -218,3 +218,48 @@ def restart_board(root: Path | None = None) -> None:
     subprocess.Popen(args, **kwargs)
     # 자식이 뜰 시간
     time.sleep(0.8)
+
+
+def launch_external_updater(root: Path | None = None, *, wait_pid: int | None = None) -> tuple[bool, str]:
+    """보드 종료 후 강제 갱신·재시작을 외부 스크립트에 맡긴다.
+
+    실행 중인 board/app.py 가 파일을 잠근 채 git pull 하면 Windows에서
+    버전 파일이 안 바뀌는 문제가 있어, PID 종료 대기 → force-update → 재시작.
+    """
+    root = root or root_dir()
+    pid = int(wait_pid if wait_pid is not None else os.getpid())
+    ps1 = root / "update-and-restart.ps1"
+    bat = root / "버전갱신.bat"
+    bat_en = root / "update-version.bat"
+
+    if os.name == "nt" and ps1.is_file():
+        args = [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(ps1),
+            "-WaitPid",
+            str(pid),
+        ]
+        try:
+            # 새 콘솔에서 실행 — 보드 종료 후에도 살아남음
+            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
+            subprocess.Popen(args, cwd=str(root), creationflags=flags)
+            return True, f"update-and-restart.ps1 WaitPid={pid}"
+        except Exception as e:  # noqa: BLE001
+            return False, f"updater launch fail: {e}"
+
+    # Linux/cloud 또는 ps1 없음 — 동기 force pull 후 재시작
+    ok, msg = pull_main(root)
+    if ok:
+        try:
+            restart_board(root)
+        except Exception as e:  # noqa: BLE001
+            return False, f"pull ok but restart fail: {e}\n{msg}"
+        return True, msg
+    # bat 폴백 안내
+    if bat.is_file() or bat_en.is_file():
+        return False, f"git 갱신 실패 — 바탕화면 'AI_보드_버전갱신' 아이콘을 사용하세요.\n{msg}"
+    return False, msg

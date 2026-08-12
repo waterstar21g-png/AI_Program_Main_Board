@@ -11,8 +11,11 @@ sys.path.insert(0, str(ROOT))
 import openpyxl  # noqa: E402
 from extract import (  # noqa: E402
     COUNT_HEADER,
+    FOOTER_STABLE_ROUNDS,
     POST_POPUP_WAIT_SEC,
+    SCROLL_STABLE_ROUNDS,
     STOP_FLAG_PATH,
+    _collect_ids_from_json,
     clear_stop_flag,
     ensure_column,
     find_header_index,
@@ -72,6 +75,29 @@ def test_parse_zara_grid_without_total_label():
     assert parse_product_count_from_html('{"numberOfItems": 48}') == 48
 
 
+def test_scroll_stop_requires_footer_and_stability():
+    """푸터 도달·안정화 조건을 넉넉히 두어 조기 중단을 막는다."""
+    assert FOOTER_STABLE_ROUNDS >= 4
+    assert SCROLL_STABLE_ROUNDS >= 6
+
+
+def test_collect_ids_from_json_products():
+    data = {
+        "productGroups": [
+            {
+                "products": [
+                    {"id": 11, "name": "A", "price": 1},
+                    {"id": 22, "name": "B", "price": 2},
+                ]
+            },
+            {"products": [{"id": 33, "name": "C", "price": 3}]},
+        ]
+    }
+    out: set[str] = set()
+    _collect_ids_from_json(data, out)
+    assert out == {"11", "22", "33"}
+
+
 def test_format_final_output():
     line = format_final_output("MEN 스니커즈", 77, "https://example.com/a")
     assert "상위 최종 카테고리명=MEN 스니커즈" in line
@@ -113,6 +139,8 @@ if __name__ == "__main__":
     test_parse_art_total_count()
     test_parse_korean_and_english_labels()
     test_parse_zara_grid_without_total_label()
+    test_scroll_stop_requires_footer_and_stability()
+    test_collect_ids_from_json_products()
     test_format_final_output()
     with tempfile.TemporaryDirectory() as d:
         test_find_url_and_ensure_count_column(Path(d))

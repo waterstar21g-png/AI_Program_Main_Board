@@ -79,10 +79,9 @@ from log_protocol import (  # noqa: E402
 )
 from shot_viewer import latest_shot_dir, open_shot_viewer  # noqa: E402
 from self_update import (  # noqa: E402
-    apply_update,
     latest_open_pr_url,
+    launch_external_updater,
     local_version,
-    restart_board,
 )
 
 import re  # noqa: E402
@@ -209,7 +208,7 @@ class BoardApp(tk.Tk):
         side_bottom.pack(side="bottom", fill="x", padx=6, pady=(4, 10))
         self.lbl_update_hint = tk.Label(
             side_bottom,
-            text="변경 반영",
+            text="종료 후 강제 버전갱신",
             bg="#d9d9d9",
             fg="#475569",
             font=("Malgun Gothic", 8),
@@ -231,7 +230,7 @@ class BoardApp(tk.Tk):
         self.btn_merge_update.pack(fill="x")
         self.lbl_update_status = tk.Label(
             side_bottom,
-            text=f"현재 v{VERSION}",
+            text=f"현재 v{VERSION}\n(또는 바탕화면 버전갱신)",
             bg="#d9d9d9",
             fg="#64748b",
             font=("Malgun Gothic", 7),
@@ -276,7 +275,10 @@ class BoardApp(tk.Tk):
 
     # ── 좌측 하단: 머지반영 업데이트 ───────────────────
     def _run_merge_update(self) -> None:
-        """버튼 하나: 머지 URL 안내(필요 시) → GitHub main 반영 → 보드 재시작."""
+        """보드를 종료한 뒤 외부 스크립트로 GitHub main 강제 반영·재시작.
+
+        (실행 중 pull 하면 Windows 파일 잠금으로 버전이 안 바뀌는 문제 방지)
+        """
         if getattr(self, "_merge_update_busy", False):
             messagebox.showinfo("안내", "이미 업데이트를 진행 중입니다.")
             return
@@ -287,9 +289,10 @@ class BoardApp(tk.Tk):
         except Exception:
             pr_url = f"https://github.com/waterstar21g-png/AI_Program_Main_Board/pulls"
 
+        cur = local_version(ROOT) or VERSION
         msg = (
-            "GitHub main 변경을 받아 보드를 재시작합니다.\n\n"
-            f"현재 버전: v{local_version(ROOT) or VERSION}\n\n"
+            "보드를 종료한 뒤 GitHub main 을 강제 반영하고 재시작합니다.\n\n"
+            f"현재 버전: v{cur}\n\n"
             "아직 PR 머지 전이면 아래 머지 URL에서 먼저 머지하세요.\n"
             f"{pr_url}\n\n"
             "계속할까요?"
@@ -297,7 +300,6 @@ class BoardApp(tk.Tk):
         if not messagebox.askyesno("머지반영 업데이트", msg, parent=self):
             return
 
-        # 머지 URL 브라우저로 열어 두어 바로 머지 가능
         try:
             if pr_url.startswith("http"):
                 webbrowser.open(pr_url)
@@ -305,84 +307,56 @@ class BoardApp(tk.Tk):
             pass
 
         self._merge_update_busy = True
-        self.btn_merge_update.configure(state="disabled", text="업데이트 중…")
-        self.lbl_update_status.configure(text="GitHub main 반영 중…", fg="#0f172a")
+        self.btn_merge_update.configure(state="disabled", text="종료 후 갱신…")
+        self.lbl_update_status.configure(
+            text="보드 종료 → 강제 버전갱신 → 재시작",
+            fg="#0f172a",
+        )
 
-        def work() -> None:
-            # 실행 중 수집 중단 (재시작 전 정리)
-            try:
-                if self._p1_101_proc and self._p1_101_proc.poll() is None:
-                    self._p1_101_stop_flag().write_text("stop\n", encoding="utf-8")
-                    self._p1_101_proc.terminate()
-            except Exception:
-                pass
-            try:
-                if self._p2_proc and self._p2_proc.poll() is None:
-                    self._stop_flag_path().write_text("stop\n", encoding="utf-8")
-                    self._p2_proc.terminate()
-            except Exception:
-                pass
+        # 실행 중 수집 중단
+        try:
+            if self._p1_101_proc and self._p1_101_proc.poll() is None:
+                self._p1_101_stop_flag().write_text("stop\n", encoding="utf-8")
+                self._p1_101_proc.terminate()
+        except Exception:
+            pass
+        try:
+            if self._p2_proc and self._p2_proc.poll() is None:
+                self._stop_flag_path().write_text("stop\n", encoding="utf-8")
+                self._p2_proc.terminate()
+        except Exception:
+            pass
 
-            result = apply_update(ROOT)
-            self.after(0, lambda: self._merge_update_done(result, pr_url))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _merge_update_done(self, result: dict, pr_url: str) -> None:
-        self._merge_update_busy = False
-        before = result.get("local_before") or "?"
-        after = result.get("local_after") or "?"
-        remote = result.get("remote") or "?"
-        ok = bool(result.get("ok"))
-        detail = (result.get("message") or "")[:400]
-
-        if ok:
-            self.lbl_update_status.configure(
-                text=f"반영 v{before} → v{after}\n재시작…",
-                fg="#15803d",
-            )
-            self.btn_merge_update.configure(text="재시작 중…")
-            # 버전 안내 후 재시작
-            messagebox.showinfo(
-                "업데이트 완료",
-                f"반영 완료\n\n"
-                f"이전: v{before}\n"
-                f"현재: v{after}\n"
-                f"원격: v{remote}\n\n"
-                "보드를 재시작합니다.",
+        ok, detail = launch_external_updater(ROOT, wait_pid=os.getpid())
+        if not ok:
+            self._merge_update_busy = False
+            self.btn_merge_update.configure(state="normal", text="머지반영\n업데이트")
+            self.lbl_update_status.configure(text="업데이터 실행 실패", fg="#b91c1c")
+            messagebox.showerror(
+                "업데이트 실패",
+                "외부 버전갱신 실행에 실패했습니다.\n\n"
+                f"{detail}\n\n"
+                "바탕화면 'AI_보드_버전갱신' 아이콘을 사용하세요.\n"
+                f"머지 URL:\n{pr_url}",
                 parent=self,
             )
-            try:
-                restart_board(ROOT)
-            except Exception as e:
-                messagebox.showerror(
-                    "재시작 실패",
-                    f"코드는 반영됐을 수 있습니다.\n재시작 실패: {e}\n\n"
-                    "보드를 닫았다가 다시 열어주세요.",
-                    parent=self,
-                )
-                self.btn_merge_update.configure(
-                    state="normal", text="머지반영\n업데이트"
-                )
-                return
-            try:
-                self.destroy()
-            except Exception:
-                pass
-            sys.exit(0)
+            return
 
-        self.btn_merge_update.configure(state="normal", text="머지반영\n업데이트")
-        self.lbl_update_status.configure(
-            text=f"실패 (로컬 v{before})",
-            fg="#b91c1c",
-        )
-        messagebox.showerror(
-            "업데이트 실패",
-            f"GitHub main 반영에 실패했습니다.\n\n"
-            f"머지 URL:\n{pr_url}\n\n"
-            f"{detail}",
+        messagebox.showinfo(
+            "버전갱신 시작",
+            "보드를 종료합니다.\n\n"
+            "이어서 자동으로:\n"
+            "1) GitHub main 강제 반영\n"
+            "2) 보드 재시작\n\n"
+            f"(실패 시 바탕화면 'AI_보드_버전갱신' 아이콘)\n"
+            f"머지 URL:\n{pr_url}",
             parent=self,
         )
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        sys.exit(0)
 
     # ── P1 ─────────────────────────────────────────────
     def _build_p1(self, parent: tk.Frame) -> None:
