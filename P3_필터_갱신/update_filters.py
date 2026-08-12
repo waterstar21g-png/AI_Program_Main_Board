@@ -728,16 +728,18 @@ def _modify_ui_opened(page) -> bool:
 def click_edit_on_row(
     page,
     row_index: int,
-    edit_href: str = "",
+    edit_href: str = "",  # 미사용 — href 재시도 금지(호출부 호환용)
     *,
     row_url: str = "",
     progress: ProgressFn | None = None,
 ) -> bool:
-    """「수집개수|전체저장」옆 「수집조건수정」을 Playwright 실클릭 → 팝업/수정화면 오픈 확인.
+    """「수집개수|전체저장」옆 「수집조건수정」버튼만 클릭 → 팝업이 열리면 성공.
 
-    ★JS el.click() 만으로는 window.open 팝업이 안 뜨는 경우가 많음.
-    ★클릭 성공만으로 True 반환하지 않고, 수정 팝업/화면이 실제로 열린 뒤에만 True.
+    ★대체 방법 없음: href / location.href / window.open(url) 재시도 절대 금지.
+    ★오직 버튼 실클릭 후 팝업(또는 클릭으로 열린 수정화면)이 확인될 때만 True.
     """
+    _ = edit_href  # 명시적 무시 (href 경로 사용 금지)
+
     before_pages = []
     try:
         before_pages = list(page.context.pages)
@@ -749,12 +751,8 @@ def click_edit_on_row(
         _log(
             progress,
             "오류",
-            f"2) 수집조건수정 버튼 미검출 (info={info})",
+            f"2) 수집조건수정 버튼 미검출 (info={info}) — href 대체 안 함",
         )
-        # 최후: editHref 로 팝업 시도
-        href = (edit_href or "").strip()
-        if href:
-            return _open_modify_via_href(page, href, progress=progress)
         return False
 
     near = "Y" if info.get("nearCollect") else "N"
@@ -762,17 +760,16 @@ def click_edit_on_row(
         progress,
         "로직",
         f"2) 수집조건수정 버튼 찾음 · 인접(수집개수/전체저장)={near} · "
-        f"tag={info.get('tag')} · text={info.get('text')!r} · "
-        f"popup예상={'Y' if info.get('opensPopup') else '?'}",
+        f"tag={info.get('tag')} · text={info.get('text')!r}",
     )
 
     loc = page.locator('[data-p3-edit-target="1"]').first
     clicked = False
     popup = None
 
-    # 1) Playwright 실클릭 + 새 창(팝업) 대기
+    # Playwright 실클릭 + 새 창(팝업) 대기 — 버튼 클릭만
     try:
-        with page.expect_popup(timeout=6_000) as pop_info:
+        with page.expect_popup(timeout=8_000) as pop_info:
             loc.click(timeout=4_000, no_wait_after=True)
             clicked = True
         popup = pop_info.value
@@ -784,20 +781,32 @@ def click_edit_on_row(
             loc.click(timeout=4_000, force=True, no_wait_after=True)
             clicked = True
         except Exception as e:
-            _log(progress, "샷", f"2) Playwright 클릭 실패: {str(e).split(chr(10))[0][:120]}")
+            _log(
+                progress,
+                "오류",
+                f"2) 수집조건수정 버튼 클릭 실패: {str(e).split(chr(10))[0][:120]}",
+            )
+            return False
 
     if popup is not None:
         try:
             popup.wait_for_load_state("domcontentloaded", timeout=15_000)
         except Exception:
             pass
-        _log(progress, "로직", f"2) 수집조건수정 팝업창 열림 · url={(popup.url or '')[:120]}")
+        _log(
+            progress,
+            "로직",
+            f"2) 수집조건수정 팝업창 열림 · url={(popup.url or '')[:120]}",
+        )
         time.sleep(0.35)
+        if page_shows_not_found(page):
+            _log(progress, "오류", "2) 팝업이 not found — 중단 (href 재시도 없음)")
+            return False
         if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=8_000):
             return True
 
-    # 2) 같은 탭 이동/레이어 모달
-    time.sleep(0.5)
+    # 클릭으로 이미 새 창이 열렸을 수 있음 (expect_popup 타이밍 이탈)
+    time.sleep(0.45)
     try:
         for p in page.context.pages:
             if p not in before_pages:
@@ -805,99 +814,24 @@ def click_edit_on_row(
                     p.wait_for_load_state("domcontentloaded", timeout=10_000)
                 except Exception:
                     pass
-                _log(progress, "로직", f"2) 새 창 감지 · url={(p.url or '')[:120]}")
-    except Exception:
-        pass
-
-    if wait_modify_page(page, timeout_ms=6_000) or _modify_ui_opened(page):
-        _log(progress, "로직", "2) 수집조건수정 후 수정화면 확인(팝업/동일탭/iframe)")
-        return True
-
-    # 3) href / onclick URL 로 window.open 폴백 (팝업 차단 환경 대비)
-    href = (info.get("href") or edit_href or "").strip()
-    if href:
-        _log(progress, "로직", f"2) 팝업 미오픈 → href로 재시도: {href[:120]}")
-        if _open_modify_via_href(page, href, progress=progress):
-            return True
-
-    _log(progress, "오류", "2) 수집조건수정 클릭 후에도 수정 팝업/화면이 열리지 않음")
-    return False
-
-
-def _open_modify_via_href(
-    page,
-    href: str,
-    *,
-    progress: ProgressFn | None = None,
-) -> bool:
-    """수정 URL을 window.open 우선으로 연다 (location.href 는 not found 위험)."""
-    h = (href or "").strip()
-    if not h:
-        return False
-    before = []
-    try:
-        before = list(page.context.pages)
-    except Exception:
-        before = [page]
-
-    opened = None
-    try:
-        with page.expect_popup(timeout=5_000) as pop_info:
-            page.evaluate(
-                """(url) => {
-                  const w = window.open(url, '_blank');
-                  if (!w) {
-                    // 팝업 차단 시 같은 탭 이동은 최후
-                    location.href = url;
-                  }
-                }""",
-                h,
-            )
-        opened = pop_info.value
-    except Exception:
-        try:
-            page.evaluate(
-                """(url) => {
-                  const w = window.open(url, '_blank');
-                  if (!w) location.href = url;
-                }""",
-                h,
-            )
-        except Exception:
-            try:
-                if h.startswith("http"):
-                    page.goto(h, wait_until="domcontentloaded", timeout=60_000)
-                else:
-                    page.evaluate("(u) => { location.href = u; }", h)
-                    page.wait_for_load_state("domcontentloaded", timeout=60_000)
-            except Exception:
-                return False
-
-    if opened is not None:
-        try:
-            opened.wait_for_load_state("domcontentloaded", timeout=15_000)
-        except Exception:
-            pass
-        _log(progress, "로직", f"2) href 팝업 오픈 · url={(opened.url or '')[:120]}")
-
-    time.sleep(0.5)
-    try:
-        for p in page.context.pages:
-            if p not in before:
-                try:
-                    p.wait_for_load_state("domcontentloaded", timeout=10_000)
-                except Exception:
-                    pass
+                _log(progress, "로직", f"2) 버튼클릭 후 새 창 감지 · url={(p.url or '')[:120]}")
     except Exception:
         pass
 
     if page_shows_not_found(page):
-        _log(progress, "오류", "2) href 오픈 결과 not found")
+        _log(progress, "오류", "2) 클릭 후 not found — 중단 (href 재시도 없음)")
         return False
-    ok = wait_modify_page(page, timeout_ms=8_000) or _modify_ui_opened(page)
-    if ok:
-        _log(progress, "로직", "2) href 경로로 수정화면 확인")
-    return bool(ok)
+
+    if wait_modify_page(page, timeout_ms=6_000) or _modify_ui_opened(page):
+        _log(progress, "로직", "2) 버튼클릭 후 수정 팝업/화면 확인")
+        return True
+
+    _log(
+        progress,
+        "오류",
+        "2) 수집조건수정 버튼 클릭 후에도 팝업이 열리지 않음 (href 대체 없음)",
+    )
+    return False
 
 
 def page_shows_not_found(page) -> bool:

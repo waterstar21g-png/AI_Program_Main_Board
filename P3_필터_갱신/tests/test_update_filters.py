@@ -237,7 +237,7 @@ def test_click_edit_prefers_button_beside_collect_count():
 
 
 def test_click_edit_fails_when_popup_does_not_open():
-    """클릭은 되나 팝업/수정화면이 없으면 False."""
+    """클릭은 되나 팝업이 없으면 False — href 대체 없이 실패."""
     from playwright.sync_api import sync_playwright
 
     html = """
@@ -257,16 +257,30 @@ def test_click_edit_fails_when_popup_does_not_open():
         page = browser.new_page()
         page.set_content(html)
         rows = list_demango_rows(page)
+        # editHref 가 있어도 사용하지 않고 실패해야 함
+        fake_href = "admin_group_modify.php?ps_mode=modify_filter&ps_fuid=999"
         ok = click_edit_on_row(
             page,
             int(rows[0]["index"]),
-            rows[0].get("editHref") or "",
+            fake_href,
             row_url=rows[0]["url"],
             progress=None,
         )
         assert page.locator("body").get_attribute("data-clicked") == "1"
         assert ok is False
+        # 같은 탭이 href 로 이동하지 않았는지
+        assert "admin_group_modify" not in (page.url or "")
         browser.close()
+
+
+def test_no_href_fallback_in_click_edit_source():
+    """수집조건수정 클릭 경로에 href 재시도 코드가 없어야 함."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "_open_modify_via_href" not in src
+    assert "href로 재시도" not in src
+    assert "href 폴백" not in src
+    # click_edit_on_row 본문에 금지 문구 명시
+    assert "href 재시도 금지" in src or "href 대체 없음" in src
 
 
 def test_page_shows_not_found():
