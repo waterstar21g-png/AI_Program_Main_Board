@@ -385,14 +385,43 @@ class BoardApp(tk.Tk):
         sys.exit(0)
 
     # ── P1 ─────────────────────────────────────────────
-    def _build_p1(self, parent: tk.Frame) -> None:
+    def _pack_panel_summary(
+        self, parent: tk.Frame, title: str, lines: list[str]
+    ) -> None:
+        """우측 화면 상단 — 프로그램 핵심 요약 5줄."""
+        box = tk.Frame(parent, bg="#e8f0f4", padx=10, pady=8)
+        box.pack(fill="x", pady=(0, 8))
         tk.Label(
-            parent,
-            text="P1 — 사이트·상위 카테고리 → 엑셀 (P2 입력용)",
-            bg="#f1f5f9",
+            box,
+            text=title,
+            bg="#e8f0f4",
+            fg="#0f172a",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",
-        ).pack(fill="x", pady=(0, 8))
+        ).pack(fill="x")
+        body = "\n".join((lines + [""] * 5)[:5])
+        tk.Label(
+            box,
+            text=body,
+            bg="#e8f0f4",
+            fg="#334155",
+            font=("Malgun Gothic", 9),
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", pady=(4, 0))
+
+    def _build_p1(self, parent: tk.Frame) -> None:
+        self._pack_panel_summary(
+            parent,
+            "P1 — ABC마트 카테고리 URL 추출",
+            [
+                "1) ABC마트(A-RT) 사이트·상위 카테고리를 입력한다",
+                "2) 사이트에서 카테고리 URL을 크롤링해 목록을 만든다",
+                "3) 결과를 엑셀로 저장한다 (P2 대량수집 입력용)",
+                "4) 상위명 치환(명1:명2)으로 엑셀 표기를 맞출 수 있다",
+                "5) 저장 후 카테고리URL목록에 반영·P2로 이동할 수 있다",
+            ],
+        )
 
         form = tk.Frame(parent, bg="#ffffff", padx=10, pady=10, relief="solid", bd=1)
         form.pack(fill="x")
@@ -584,13 +613,17 @@ class BoardApp(tk.Tk):
 
     # ── P1_101 상품수 추출 ─────────────────────────────
     def _build_p1_101(self, parent: tk.Frame) -> None:
-        tk.Label(
+        self._pack_panel_summary(
             parent,
-            text="P1_101 — 엑셀 URL → 팝업닫기 → 카드갯수 → 출력폴더 저장",
-            bg="#f1f5f9",
-            font=("Malgun Gothic", 10, "bold"),
-            anchor="w",
-        ).pack(fill="x", pady=(0, 8))
+            "P1_101 — 엑셀 URL 상품수 추출",
+            [
+                "1) 엑셀의 카테고리 URL을 순서대로 브라우저에서 연다",
+                "2) 첫 팝업을 닫고 잠시 대기한 뒤 상품 카드를 센다",
+                "3) 상품수(및 상품수집가능개수)를 엑셀에 반영한다",
+                "4) 결과는 별도 출력폴더(P2_INPUT_건수집계)에 저장한다",
+                "5) 메인보드에서 직접 실행하며 브라우저 동작을 확인한다",
+            ],
+        )
 
         form = tk.Frame(parent, bg="#ffffff", padx=10, pady=10, relief="solid", bd=1)
         form.pack(fill="x")
@@ -941,13 +974,17 @@ class BoardApp(tk.Tk):
 
     # ── P1_ZARA_DE ─────────────────────────────────────
     def _build_p1_zara(self, parent: tk.Frame) -> None:
-        tk.Label(
+        self._pack_panel_summary(
             parent,
-            text="P1_ZARA_DE — 독일자라 카테고리 → 엑셀 (P2 입력용)",
-            bg="#f1f5f9",
-            font=("Malgun Gothic", 10, "bold"),
-            anchor="w",
-        ).pack(fill="x", pady=(0, 8))
+            "P1_ZARA_DE — 독일자라 카테고리 URL 추출",
+            [
+                "1) 독일 ZARA(DE) 사이트 URL과 카테고리 그리드를 입력한다",
+                "2) 상위명·중위명·하위 URL(최대 20행)로 경로를 지정한다",
+                "3) 지정 경로의 카테고리 URL을 크롤링한다",
+                "4) 결과를 엑셀로 저장한다 (P2 대량수집 입력용)",
+                "5) 저장 후 카테고리URL목록에 반영·P2로 이동할 수 있다",
+            ],
+        )
 
         form = tk.Frame(parent, bg="#ffffff", padx=10, pady=10, relief="solid", bd=1)
         form.pack(fill="x")
@@ -1351,13 +1388,17 @@ class BoardApp(tk.Tk):
 
     # ── P2 ─────────────────────────────────────────────
     def _build_p2(self, parent: tk.Frame) -> None:
-        tk.Label(
+        self._pack_panel_summary(
             parent,
-            text="P2 — 폴더의 엑셀 파일 선택 → 카테고리URL목록 확인 → 수집 실행",
-            bg="#f1f5f9",
-            font=("Malgun Gothic", 10, "bold"),
-            anchor="w",
-        ).pack(fill="x", pady=(0, 6))
+            "P2 — 더망고 대량수집",
+            [
+                "1) 엑셀을 고르고 카테고리URL목록을 확인한 뒤 수집을 시작한다",
+                "2) 실제 Chrome(CDP)으로 더망고에 연결한다 (확장·세션 유지)",
+                "3) 로그인창이 뜨면 직접 로그인하고, 이후 URL검색·수집을 진행한다",
+                "4) 행마다 상품수집 → 저장상품수 반영 → 저장하기까지 처리한다",
+                "5) MAIN/SUB 실행로그와 스크린샷으로 단계 상태를 확인한다",
+            ],
+        )
 
         # 1. 디렉터리 파일 목록 (리스트박스 + 스크롤)
         search = tk.LabelFrame(
@@ -1606,13 +1647,17 @@ class BoardApp(tk.Tk):
 
     # ── P3_필터_갱신 (UI 구조 = P2와 유사 + 더망고 URL 입력) ──
     def _build_p3(self, parent: tk.Frame) -> None:
-        tk.Label(
+        self._pack_panel_summary(
             parent,
-            text="P3_필터_갱신 — 엑셀 선택 → 더망고 URL 입력 → 저장상품수 갱신",
-            bg="#f1f5f9",
-            font=("Malgun Gothic", 10, "bold"),
-            anchor="w",
-        ).pack(fill="x", pady=(0, 6))
+            "P3_필터_갱신 — 검색필터 저장상품수 갱신",
+            [
+                "1) 엑셀과 더망고 검색필터(저장조건) URL을 지정한다",
+                "2) P2와 같이 CDP Chrome·확장·로그인으로 망고에 연결한다",
+                "3) 더망고 URL·검색필터가 엑셀과 일치하는 행만 처리한다",
+                "4) 스토어 상품수를 확인한 뒤 수집조건수정으로 저장상품수를 갱신한다",
+                "5) 규칙: ≤200 그대로 / 201~500→300 / 500초과→400",
+            ],
+        )
 
         search = tk.LabelFrame(
             parent, text="1. 디렉터리 파일 목록", bg="#ffffff", padx=8, pady=6
