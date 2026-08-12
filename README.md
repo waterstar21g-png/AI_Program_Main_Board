@@ -1,4 +1,8 @@
+<<<<<<< HEAD
+# AI_Program_Main_Board **v2.1.3** (Python B안)
+=======
 # AI_Program_Main_Board **v2.1.2** (Python B안)
+>>>>>>> origin/main
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 

@@ -10,16 +10,19 @@ sys.path.insert(0, str(ROOT))
 
 import openpyxl  # noqa: E402
 from update_filters import (  # noqa: E402
+    click_modified_confirm,
     click_save_button,
     excel_by_url,
     filter_compare_note,
     find_excel_by_demango_url,
     filters_equal,
+    is_modify_page_open,
     list_demango_rows,
     map_save_count,
     normalize_url,
     read_excel_rows,
     set_save_count,
+    wait_modify_page_closed,
 )
 
 DEMANGO_LIST_HTML = """
@@ -168,6 +171,36 @@ def test_modify_popup_save_count_and_save_button():
         val = page.locator("tr:has-text('저장상품수') input").input_value()
         assert val == "400"
         assert click_save_button(page)
+        assert is_modify_page_open(page) is True
+        browser.close()
+
+
+def test_modified_confirm_click_after_popup_close():
+    """저장 후 '수정되었습니다' 팝업의 확인 버튼 클릭."""
+    from playwright.sync_api import sync_playwright
+
+    html = """
+    <html><body>
+      <div class="ui-dialog" role="dialog">
+        <div>수정되었습니다</div>
+        <input type="button" id="okbtn" value="확인">
+      </div>
+      <script>
+        document.getElementById('okbtn').onclick = function() {
+          document.body.setAttribute('data-confirmed', '1');
+          this.closest('.ui-dialog').remove();
+        };
+      </script>
+    </body></html>
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html)
+        assert wait_modify_page_closed(page, timeout_ms=2000) is True
+        assert click_modified_confirm(page, timeout_ms=5000) is True
+        assert page.locator("body").get_attribute("data-confirmed") == "1"
+        assert page.locator("text=수정되었습니다").count() == 0
         browser.close()
 
 
@@ -181,4 +214,5 @@ if __name__ == "__main__":
         test_read_excel_and_lookup(Path(d))
     test_list_demango_rows_filter_input_and_url()
     test_modify_popup_save_count_and_save_button()
+    test_modified_confirm_click_after_popup_close()
     print("PASS P3_필터_갱신 tests")
