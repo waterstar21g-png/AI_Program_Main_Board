@@ -136,13 +136,32 @@ P3_MAJOR_LOG_ONLY = True
 
 
 def _is_major_log(step: str, message: str) -> bool:
-    """1)~7) 로 시작하는 단계 로그 + 오류/중단/완료/샷 메타 로그만 True."""
+    """1)~7) 로 시작하는 단계 로그 + 오류/중단/완료 메타 로그만 MAIN(True)."""
     s = (step or "").strip()
     m = (message or "").strip()
-    if s in ("오류", "중단", "완료", "샷"):
+    if s in ("오류", "중단", "완료"):
         return True
-    # 1)~7) 단계 로그만 유지 — 그 외(화면/준비/경고/확인/동작 등)는 전부 억제
+    # 1)~7) 단계 로그만 MAIN — 그 외(화면/준비/경고/확인/동작/샷 등)는 SUB
     return bool(re.match(r"^\d+\)", m))
+
+
+# ★P2와 동일 프로토콜(board/log_protocol.py) — MAIN(1~7단계)/SUB(세부정보)/SUBSHOT(샷)
+# 발생(seq)마다 MAIN 1행 + 그 seq 에 딸린 SUB·SUBSHOT 여러 행으로 보드에 표시된다.
+_SEQ_STATE = {"seq": 0, "cur_seq": 0}
+
+# main 그리드 표시용 — 1)~7) 은 그대로, 오류/완료/중단은 숫자 밖 코드로 구분
+_META_STEP_N = {"오류": 90, "완료": 91, "중단": 92}
+
+
+def _next_seq() -> int:
+    _SEQ_STATE["seq"] += 1
+    return _SEQ_STATE["seq"]
+
+
+def _current_seq() -> int:
+    if not _SEQ_STATE["cur_seq"]:
+        _SEQ_STATE["cur_seq"] = _next_seq()
+    return _SEQ_STATE["cur_seq"]
 
 
 def _log(
@@ -152,17 +171,37 @@ def _log(
     *,
     major: bool | None = None,
 ) -> None:
-    """보드/콘솔 로그. P3_MAJOR_LOG_ONLY 이면 주요 단계만 출력."""
-    keep = True if major is True else (
-        False if major is False else (
-            True if not P3_MAJOR_LOG_ONLY else _is_major_log(step, message)
-        )
-    )
-    if not keep:
+    """실행로그 — P2와 동일 MAIN/SUB 프로토콜로 표준출력에 남긴다.
+
+    - MAIN(##MAIN##seq##n##msg): 1)~7) 단계 + 오류/중단/완료 → 보드 MAIN 그리드
+    - SUB(##SUB##seq##msg): 그 외 세부정보 → 보드 SUB 그리드(선택한 MAIN 행에 연결)
+    """
+    s = (step or "").strip()
+    m = (message or "").strip()
+    if not m:
         return
-    print(f"[{step}] {message}", flush=True)
+    is_main = True if major is True else (
+        False if major is False else _is_major_log(s, m)
+    )
+    ts = time.strftime("%H:%M:%S")
+    if is_main:
+        num = re.match(r"^(\d+)\)", m)
+        n = int(num.group(1)) if num else _META_STEP_N.get(s, 0)
+        seq = _next_seq()
+        _SEQ_STATE["cur_seq"] = seq
+        print(f"[{ts}] ##MAIN##{seq}##{n}##{m}", flush=True)
+    else:
+        seq = _current_seq()
+        print(f"[{ts}] ##SUB##{seq}##{m}", flush=True)
     if progress:
-        progress(step, message)
+        progress(s, m)
+
+
+def _emit_subshot(path, label: str) -> None:
+    """스크린샷을 현재 MAIN 발생(seq)에 딸린 SUB 항목으로 보드에 알린다."""
+    ts = time.strftime("%H:%M:%S")
+    seq = _current_seq()
+    print(f"[{ts}] ##SUBSHOT##{seq}##{path}##{label}", flush=True)
 
 
 # ★P2와 동일: 실제 Chrome(CDP) 창을 OS 앞으로 가져와 동작을 보여 줌
@@ -2263,17 +2302,36 @@ def find_save_count_locator(page, prefer_value: str = "3"):
 
 
 def _all_pages_and_frames(page):
-    """page 의 context 안 모든 page(팝업 포함) + 그 안의 frame 을 (target, kind)로 나열.
+    """열려있는 모든 page(팝업 포함) + 그 안의 frame 을 (target, kind)로 나열.
 
-    현재 page 를 항상 먼저 반환한다.
+    현재 page 를 항상 먼저 반환한다. ★팝업이 page 와 다른 BrowserContext 에
+    열리는 경우까지 대비해, page.context 뿐 아니라 같은 browser 의 모든
+    context 를 함께 탐색한다 (admin_etc_ok.php 같은 확인창이 별도 컨텍스트로
+    뜨는 경우에도 놓치지 않도록).
     """
     ordered: list[tuple] = [("page", page)]
+    seen_ids = {id(page)}
+
+    def _add_pages(pages) -> None:
+        for p in pages:
+            if id(p) in seen_ids:
+                continue
+            seen_ids.add(id(p))
+            ordered.append(("page", p))
+
     try:
-        for p in page.context.pages:
-            if p is not page:
-                ordered.append(("page", p))
+        _add_pages(page.context.pages)
     except Exception:
         pass
+    try:
+        for ctx in page.context.browser.contexts:
+            try:
+                _add_pages(ctx.pages)
+            except Exception:
+                continue
+    except Exception:
+        pass
+
     out: list[tuple] = list(ordered)
     for _kind, p in ordered:
         try:
@@ -2304,22 +2362,6 @@ def resolve_modify_target(page):
                 return p, kind
         except Exception:
             pass
-    return page, "main"
-
-
-def _find_confirm_target(page):
-    """'수정되었습니다' 메세지가 보이는 page/frame 을 찾는다.
-
-    저장하기 클릭 후 확인 팝업은 원래 목록 page 가 아닌 별도 팝업/프레임에
-    뜰 수 있으므로, 수정화면과 마찬가지로 context 전체를 탐색한다.
-    """
-    for kind, p in _all_pages_and_frames(page):
-        try:
-            body = p.locator("body").inner_text(timeout=300) or ""
-            if "수정되었습니다" in body or "수정 되었습니다" in body:
-                return p, kind
-        except Exception:
-            continue
     return page, "main"
 
 
@@ -2600,6 +2642,9 @@ def attach_native_dialog_handler(page) -> dict:
     """브라우저 alert/confirm 대비 — '수정되었습니다' 등 네이티브 다이얼로그 accept.
 
     저장하기 클릭 *전에* 등록해야 한다.
+    ★수정화면이 원래 page 가 아닌 별도 팝업에서 열릴 수 있으므로, 현재 열려있는
+    모든 page 와 이후 새로 열리는 page 에도 동일하게 등록한다 — 그래야 팝업에서
+    뜨는 네이티브 alert/confirm 도 놓치지 않는다.
     """
     state: dict = {"seen": False, "message": "", "accepted": False}
 
@@ -2616,89 +2661,81 @@ def attach_native_dialog_handler(page) -> dict:
                 pass
 
     try:
-        page.on("dialog", _on_dialog)
+        for p in page.context.pages:
+            try:
+                p.on("dialog", _on_dialog)
+            except Exception:
+                continue
+    except Exception:
+        try:
+            page.on("dialog", _on_dialog)
+        except Exception:
+            pass
+
+    try:
+        page.context.on("page", lambda new_page: new_page.on("dialog", _on_dialog))
     except Exception:
         pass
+
     return state
 
 
 def is_modify_page_open(page) -> bool:
-    """검색필터 수정 팝업/페이지가 열려 있는지."""
-    try:
-        url = page.url or ""
-        if "modify_filter" in url or "admin_group_modify" in url:
-            return True
-    except Exception:
-        pass
-    try:
-        body = page.locator("body").inner_text(timeout=400) or ""
-        if "검색필터 수정" in body and "저장상품수" in body:
-            return True
-        if "저장상품수" in body and "검색결과" in body and "저장하기" in body:
-            return True
-    except Exception:
-        pass
+    """검색필터 수정 팝업/페이지(팝업·프레임 포함)가 열려 있는지."""
+    for _kind, p in _all_pages_and_frames(page):
+        try:
+            url = p.url or ""
+            if "modify_filter" in url or "admin_group_modify" in url:
+                return True
+        except Exception:
+            pass
+        try:
+            body = p.locator("body").inner_text(timeout=300) or ""
+            if "검색필터 수정" in body and "저장상품수" in body:
+                return True
+            if "저장상품수" in body and "검색결과" in body and "저장하기" in body:
+                return True
+        except Exception:
+            continue
     return False
 
 
 def wait_modify_page_closed(page, *, timeout_ms: int = 20000) -> bool:
-    """저장하기 후 '검색필터 수정' 팝업/페이지 닫힘 확인."""
+    """저장하기 후 '검색필터 수정' 팝업/페이지(팝업·프레임 포함) 닫힘 확인."""
     end = time.time() + timeout_ms / 1000.0
     # 잠깐은 열려 있을 수 있음 — 닫힐 때까지 대기
     while time.time() < end:
         if not is_modify_page_open(page):
             return True
         # 수정되었습니다 팝업이 뜨면 수정화면은 사실상 닫힌 것으로 본다
-        try:
-            body = page.locator("body").inner_text(timeout=300) or ""
-            if "수정되었습니다" in body or "수정 되었습니다" in body:
-                return True
-        except Exception:
-            pass
+        for _kind, p in _all_pages_and_frames(page):
+            try:
+                body = p.locator("body").inner_text(timeout=300) or ""
+                if "수정되었습니다" in body or "수정 되었습니다" in body:
+                    return True
+            except Exception:
+                continue
         time.sleep(0.2)
     return not is_modify_page_open(page)
 
 
 _CONFIRM_CLICK_JS = """() => {
-  const bodyText = (document.body && document.body.innerText) || '';
-  const hasMsg = /수정\\s*되었습니다|수정되었습니다/.test(bodyText);
-  const nodes = Array.from(document.querySelectorAll(
-    'button, a, input[type="button"], input[type="submit"], input[type="image"]'
-  ));
-  // 정확히 '확인' 우선
+  const nodes = Array.from(document.querySelectorAll('a,button,input'));
   for (const el of nodes) {
-    const t = ((el.value || el.innerText || el.textContent || '') + '')
-      .replace(/\\s+/g, '');
-    if (t !== '확인') continue;
-    // 메시지 보이거나, alert 레이어 안이면 클릭
-    const scope = el.closest(
-      '.ui-dialog, .modal, .layer, .popup, .alert, [role="dialog"], form, body'
-    );
-    const scopeText = ((scope && scope.innerText) || bodyText);
-    if (hasMsg || /수정\\s*되었습니다|수정되었습니다/.test(scopeText)) {
-      el.click();
-      return true;
-    }
-  }
-  // 폴백: 화면에 수정되었습니다가 보이면 첫 '확인' 클릭
-  if (hasMsg) {
-    for (const el of nodes) {
-      const t = ((el.value || el.innerText || el.textContent || '') + '')
-        .replace(/\\s+/g, '');
-      if (t === '확인') { el.click(); return true; }
-    }
+    const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
+    if (t === '확인') { el.click(); return true; }
   }
   return false;
 }"""
 
 
 def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict | None = None) -> bool:
-    """'저장하기' 클릭 후 뜨는 '수정되었습니다' 팝업에서 '확인' 버튼을 반드시 클릭.
+    """LABEL '확인' 과 일치하는 요소를 찾으면 그대로 클릭한다.
 
     - 네이티브 alert: attach_native_dialog_handler 가 이미 accept
-    - HTML 레이어/모달: '확인' 버튼 클릭
-    ★'수정되었습니다' 팝업이 원래 page 가 아닌 별도 팝업/프레임에서 뜰 수 있으므로,
-    context 전체(page.context.pages + frames)를 탐색해서 클릭한다.
+    - HTML: LABEL이 정확히 '확인'인 요소를 클릭 (다른 조건 없음)
+    ★'확인' 버튼이 원래 page 가 아닌 별도 팝업/프레임(다른 BrowserContext 포함)에
+    뜰 수 있으므로 열려있는 모든 page/frame 을 탐색한다.
     """
     end = time.time() + timeout_ms / 1000.0
 
@@ -2724,7 +2761,7 @@ def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict 
         if _dialog_confirms_done():
             return True
 
-        # 2) HTML 팝업: '수정되었습니다' 근처의 '확인' — 모든 page/frame 탐색
+        # 2) LABEL '확인' 과 일치하는 요소를 찾으면 그대로 클릭 — 모든 page/frame 탐색
         for _kind, tgt in _all_pages_and_frames(page):
             try:
                 ok = tgt.evaluate(_CONFIRM_CLICK_JS)
@@ -2733,25 +2770,6 @@ def click_modified_confirm(page, *, timeout_ms: int = 20000, dialog_state: dict 
                     return True
             except Exception:
                 continue
-
-        # 3) Playwright locator 폴백 — '수정되었습니다' 가 보이는 target만
-        confirm_target, _kind = _find_confirm_target(page)
-        try:
-            msg = confirm_target.locator("text=수정되었습니다").first
-            if msg.count() > 0 and msg.is_visible(timeout=200):
-                for sel in (
-                    'button:has-text("확인")',
-                    'input[type="button"][value="확인"]',
-                    'input[value="확인"]',
-                    'a:has-text("확인")',
-                ):
-                    loc = confirm_target.locator(sel).last
-                    if loc.count() > 0 and loc.is_visible(timeout=200):
-                        loc.click(timeout=2000, force=True)
-                        time.sleep(0.3)
-                        return True
-        except Exception:
-            pass
 
         time.sleep(0.25)
 
@@ -3204,7 +3222,8 @@ def run_update(
                         "오류",
                         f"행{i} · 6) '확인' 버튼 클릭 실패 · 필터={d_filter} · "
                         f"KEY={key_short} · 목표저장상품수={target} · "
-                        f"수정팝업닫힘여부={dialog_state.get('seen')}",
+                        f"네이티브다이얼로그감지={dialog_state.get('seen')} · "
+                        f"수정화면여전히열림={is_modify_page_open(page)}",
                     )
                     screenshot_step(
                         page,
