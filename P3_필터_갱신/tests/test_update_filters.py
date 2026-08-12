@@ -11,6 +11,7 @@ sys.path.insert(0, str(ROOT))
 import openpyxl  # noqa: E402
 from update_filters import (  # noqa: E402
     excel_by_url,
+    filter_compare_note,
     filters_equal,
     map_save_count,
     normalize_url,
@@ -36,6 +37,12 @@ def test_normalize_url():
 def test_filters_equal():
     assert filters_equal("MEN 스니커즈", "MEN 스니커즈")
     assert not filters_equal("A", "B")
+    # 불일치 → 엑셀 중간 공백을 _ 로 바꿔 재비교
+    assert filters_equal("MEN 스니커즈", "MEN_스니커즈")
+    assert filters_equal("A B C", "A_B_C")
+    assert not filters_equal("MEN스니커즈", "MEN_스니커즈")  # 엑셀에 공백 없음
+    assert filter_compare_note("MEN 스니커즈", "MEN_스니커즈")
+    assert filter_compare_note("SAME", "SAME") == ""
 
 
 def test_read_excel_and_lookup(tmp_path: Path):
