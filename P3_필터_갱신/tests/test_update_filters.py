@@ -163,20 +163,18 @@ def test_list_demango_rows_filter_input_and_url():
 
 
 def test_modify_popup_save_count_and_save_button():
-    """저장상품수 입력필드(= 현재 3이 있는 '상위 N개' 칸)에 상품개수 입력."""
+    """저장상품수: 값 '3' 칸을 찾아 상품수값으로 대체."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.set_content(MODIFY_HTML)
-        # 초기값 3 확인
         before = page.locator("td:has-text('검색결과 상위') input").input_value()
         assert before == "3"
-        assert set_save_count(page, 400)
+        assert set_save_count(page, 44)
         val = page.locator("td:has-text('검색결과 상위') input").input_value()
-        assert val == "400"
-        # 다른 입력(검색 URL)은 건드리지 않음
+        assert val == "44"
         url_val = page.locator("tr:has-text('검색 URL') input").input_value()
         assert "zara.com" in url_val
         assert click_save_button(page)
