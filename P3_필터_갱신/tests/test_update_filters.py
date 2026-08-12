@@ -176,6 +176,90 @@ def test_mango_url_default_and_save(tmp_path: Path, monkeypatch):
     assert load_mango_url_default().endswith("filter.php")
 
 
+def test_reveal_browser_page_brings_front():
+    """P2와 동일 — Chrome 탭/팝업을 bring_to_front 로 보여 준다."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import describe_page_state, ensure_mango_ready_like_p2, reveal_browser_page
+
+    assert callable(ensure_mango_ready_like_p2)
+    logs: list[tuple[str, str]] = []
+
+    def progress(step: str, msg: str) -> None:
+        logs.append((step, msg))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(
+            "<html><head><title>팝업테스트</title></head>"
+            "<body>스토어팝업</body></html>"
+        )
+        reveal_browser_page(
+            page, progress, step_no="2", action="스토어 팝업 표시", dwell_s=0
+        )
+        state = describe_page_state(page)
+        browser.close()
+
+    assert any(s == "화면" for s, _ in logs)
+    assert "스토어 팝업 표시" in logs[-1][1]
+    assert "팝업테스트" in state or "url=" in state
+
+
+def test_ensure_mango_ready_calls_p2_helpers():
+    """P3 망고 준비는 P2 확장설정·세션재사용 헬퍼를 호출한다."""
+    from update_filters import ensure_mango_ready_like_p2
+
+    calls: list[str] = []
+
+    class FakePage:
+        url = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+        context = object()
+
+        def locator(self, _sel):
+            class L:
+                def count(self_inner):
+                    return 0
+
+            return L()
+
+        def bring_to_front(self):
+            calls.append("bring")
+
+        def wait_for_load_state(self, *_a, **_k):
+            return None
+
+    class FakeP2:
+        ADMIN_HOST = "tmg1898.cafe24.com"
+        MAIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+        LOGIN_URL = "https://tmg1898.cafe24.com/mall/admin/admin_login.php"
+
+        @staticmethod
+        def ensure_mango_extension_settings(context, shot_ctx=None):
+            calls.append("ext")
+
+        @staticmethod
+        def refresh_if_closed(page):
+            calls.append("refresh")
+            return page
+
+        @staticmethod
+        def safe_goto(page, url):
+            calls.append(f"goto:{url}")
+
+        @staticmethod
+        def wait_for_user_login(page):
+            calls.append("login")
+            return page
+
+    page = FakePage()
+    out = ensure_mango_ready_like_p2(FakeP2(), page, progress=None)
+    assert out is page
+    assert "ext" in calls
+    assert "refresh" in calls
+    # 이미 로그인된 admin.php 이면 login 대기 생략
+    assert "login" not in calls
+
+
 def test_read_excel_and_lookup(tmp_path: Path):
     fp = tmp_path / "sample.xlsx"
     wb = openpyxl.Workbook()

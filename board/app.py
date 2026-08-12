@@ -2038,12 +2038,16 @@ class BoardApp(tk.Tk):
         self.p3_status.configure(
             text=(
                 f"작업시작: {Path(path).name} / 총 {len(self._p3_excel_rows)}행 — "
-                "브라우저에서 더망고 로그인 상태를 확인하세요"
+                "P2와 동일: Chrome(CDP)에서 더망고 로그인·팝업 확인"
             ),
             fg="#15803d",
         )
         self._append_p3_log("실행", f"엑셀={path}")
         self._append_p3_log("실행", f"더망고URL={mango}")
+        self._append_p3_log(
+            "실행",
+            "P2 망고연동 재현: CDP Chrome · 확장설정 · 로그인대기 · 필터URL",
+        )
 
         try:
             creationflags = 0
