@@ -4,18 +4,15 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
 0) 보드에 입력한 더망고 URL(검색필터 저장조건 화면)로 이동
 1) ★더망고 행의 URL을 기준값으로 엑셀에서 동일 URL을 찾음
    → 검색필터 동일 시 진행 (엑셀 중간공백→'_' 재비교 포함)
-2) "수집조건수정" 클릭
-3) 팝업에서 저장상품수 갱신
-   - 상품수집가능개수 ≤ 200 → 그대로
-   - 200 < n ≤ 500 → 300
-   - n > 500 → 400
-4) 팝업 하단 "저장하기"
-5) 팝업(검색필터 수정) 닫힘 확인
-6) "수정되었습니다" 팝업에서 "확인" 반드시 클릭 → 다음 행
-7) 더망고 화면 전 행 반복
 
-필터 일치 행: 모든 단계 스크린샷을 run-logs + 실행로그에 남김
-(목록일치 → 수정화면 → 저장상품수 입력그리드 → 저장하기 → 닫힘 → 확인 → 목록복귀)
+필터 일치 시:
+  1) URL 클릭
+  2) 첫 팝업창 닫기
+  3) 스크롤 푸터까지 내리기
+  4) 하단→상단 스크롤하며 상품수 카드 갯수 로그
+  5) 엑셀 상품수와 비교값 출력
+  6) URL 바로 오른쪽 「수집조건수정」만 클릭 — 2초 간격 최대 5회(팝업 열릴 때까지, href 금지)
+  7) 팝업에서 저장상품수 수정 → 저장하기 → 확인
 
 로그:
 - 더망고 처음 10건: 더망고/엑셀 각각 1줄(검색필터·URL)
@@ -48,8 +45,11 @@ except Exception:
 
 ROOT = Path(__file__).resolve().parent.parent
 P2_DIR = ROOT / "P2"
+P1_101_DIR = ROOT / "P1_101"
 if str(P2_DIR) not in sys.path:
     sys.path.insert(0, str(P2_DIR))
+if str(P1_101_DIR) not in sys.path:
+    sys.path.insert(0, str(P1_101_DIR))
 
 ProgressFn = Callable[[str, str], None]
 
@@ -540,7 +540,7 @@ def list_demango_rows(page) -> list[dict]:
 
 
 def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
-    """수집개수|전체저장 옆 「수집조건수정」버튼을 찾아 data-p3-edit-target 마킹 (클릭은 안 함)."""
+    """URL 바로 오른쪽·수집개수|전체저장 옆 「수집조건수정」을 data-p3-edit-target 마킹."""
     info = page.evaluate(
         """(args) => {
           const rowIndex = args.rowIndex;
@@ -590,8 +590,37 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
             return false;
           };
 
-          const score = (el) => {
+          const findUrlAnchor = (tr) => {
+            const anchors = Array.from(tr.querySelectorAll('a[href]'));
+            for (const a of anchors) {
+              const h = a.href || a.getAttribute('href') || '';
+              if (!h || h.indexOf('http') !== 0) continue;
+              if (!urlHint) return a;
+              if (h === urlHint || h.startsWith(urlStem) || urlHint.startsWith(h.split('?')[0])) {
+                return a;
+              }
+            }
+            return anchors.find(a => {
+              const h = a.href || '';
+              return h.indexOf('http') === 0 && !/수집조건수정/.test((a.textContent||''));
+            }) || null;
+          };
+
+          const rightOfUrl = (el, urlA) => {
+            if (!urlA || !el) return false;
+            try {
+              const ub = urlA.getBoundingClientRect();
+              const eb = el.getBoundingClientRect();
+              // URL 앵커의 오른쪽 (같은 행 근처)
+              if (eb.left >= ub.right - 12) return true;
+              if (eb.left > ub.left && eb.right > ub.right + 20) return true;
+            } catch (e) {}
+            return false;
+          };
+
+          const score = (el, urlA) => {
             let s = 0;
+            if (rightOfUrl(el, urlA)) s += 120;
             if (nearCollectCount(el)) s += 100;
             const t = (el.value || el.textContent || '').replace(/\\s+/g, '');
             if (t === '수집조건수정') s += 20;
@@ -623,34 +652,25 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
           if (!candidates.length) return { ok: false, reason: 'row-not-found' };
 
           for (const tr of candidates) {
+            const urlA = findUrlAnchor(tr);
             const edits = Array.from(tr.querySelectorAll('a, button, input')).filter(isEditControl);
             if (!edits.length) continue;
-            edits.sort((a, b) => score(b) - score(a));
+            edits.sort((a, b) => score(b, urlA) - score(a, urlA));
+            const right = edits.filter(e => rightOfUrl(e, urlA));
             const near = edits.filter(nearCollectCount);
-            const pick = (near.length ? near : edits)[0];
+            const pick = (right.length ? right : (near.length ? near : edits))[0];
             try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
             pick.setAttribute('data-p3-edit-target', '1');
+            if (urlA) urlA.setAttribute('data-p3-url-target', '1');
             const oc = pick.getAttribute('onclick') || '';
-            let href = pick.getAttribute('href') || pick.href || '';
-            const mOpen = oc.match(/window\\.open\\s*\\(\\s*['"]([^'"]+)['"]/i);
-            const mLoc = oc.match(/location\\.href\\s*=\\s*['"]([^'"]+)['"]/i);
-            const mPhp = oc.match(/['"]([^'"]*admin_group_modify\\.php[^'"]*)['"]/i);
-            const mGo = oc.match(/(?:go|open|modify|edit)\\s*\\(\\s*(\\d+)\\s*\\)/i);
-            if (!href && mOpen) href = mOpen[1];
-            if (!href && mLoc) href = mLoc[1];
-            if (!href && mPhp) href = mPhp[1];
-            if (!href && mGo) {
-              href = 'admin_group_modify.php?ps_mode=modify_filter&ps_fuid=' + mGo[1];
-            }
             return {
               ok: true,
               tag: pick.tagName,
               text: ((pick.value || pick.textContent || '') + '').replace(/\\s+/g, ' ').trim().slice(0, 40),
               nearCollect: nearCollectCount(pick),
-              score: score(pick),
+              rightOfUrl: rightOfUrl(pick, urlA),
+              score: score(pick, urlA),
               onclick: oc.slice(0, 160),
-              href: (href || '').slice(0, 200),
-              opensPopup: /window\\.open/i.test(oc) || (pick.tagName === 'A' && pick.target === '_blank'),
             };
           }
           return { ok: false, reason: 'button-not-found' };
@@ -658,6 +678,177 @@ def _find_and_mark_edit_button(page, row_index: int, row_url: str = "") -> dict:
         {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
     )
     return info if isinstance(info, dict) else {"ok": False, "reason": "evaluate-failed"}
+
+
+def _p1_browse():
+    """P1_101 팝업닫기·스크롤집계 재사용 (중단 플래그는 P3)."""
+    import extract as p1_extract  # noqa: WPS433
+
+    p1_extract.stop_requested = stop_requested
+    return p1_extract
+
+
+def _find_and_mark_row_url(page, row_index: int, row_url: str = "") -> dict:
+    """행의 URL 검색 링크를 data-p3-url-target 으로 마킹."""
+    info = page.evaluate(
+        """(args) => {
+          const rowIndex = args.rowIndex;
+          const urlHint = (args.urlHint || '').trim();
+          const urlStem = urlHint.split('?')[0];
+          document.querySelectorAll('[data-p3-url-target]').forEach(el => {
+            el.removeAttribute('data-p3-url-target');
+          });
+          const rowMatchesUrl = (tr) => {
+            if (!urlHint) return false;
+            const text = tr.innerText || '';
+            if (text.includes(urlStem) || text.includes(urlHint)) return true;
+            return Array.from(tr.querySelectorAll('a[href]')).some(a => {
+              const h = a.href || a.getAttribute('href') || '';
+              return h === urlHint || h.startsWith(urlStem);
+            });
+          };
+          const trs = Array.from(document.querySelectorAll('table tr, form tr, tr'));
+          let candidates = urlHint ? trs.filter(rowMatchesUrl) : [];
+          if (!candidates.length && rowIndex >= 0 && rowIndex < trs.length) {
+            candidates = [trs[rowIndex]];
+          }
+          for (const tr of candidates) {
+            const anchors = Array.from(tr.querySelectorAll('a[href]'));
+            let pick = null;
+            for (const a of anchors) {
+              const h = a.href || a.getAttribute('href') || '';
+              const label = (a.textContent || '').replace(/\\s+/g, '');
+              if (/수집조건수정/.test(label)) continue;
+              if (h.indexOf('http') !== 0) continue;
+              if (!urlHint || h === urlHint || h.startsWith(urlStem) || urlHint.startsWith(h.split('?')[0])) {
+                pick = a; break;
+              }
+            }
+            if (!pick) {
+              pick = anchors.find(a => {
+                const h = a.href || '';
+                return h.indexOf('http') === 0 && !/수집조건수정/.test((a.textContent||''));
+              });
+            }
+            if (!pick) continue;
+            try { pick.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}
+            pick.setAttribute('data-p3-url-target', '1');
+            return { ok: true, href: (pick.href || '').slice(0, 200) };
+          }
+          return { ok: false, reason: 'url-not-found' };
+        }""",
+        {"rowIndex": int(row_index), "urlHint": (row_url or "").strip()},
+    )
+    return info if isinstance(info, dict) else {"ok": False}
+
+
+def click_demango_row_url(
+    page,
+    row_index: int,
+    row_url: str = "",
+    *,
+    progress: ProgressFn | None = None,
+):
+    """1) 필터일치 행의 URL 클릭 → 스토어 페이지(팝업/새탭) 반환."""
+    info = _find_and_mark_row_url(page, row_index, row_url)
+    if not info.get("ok"):
+        _log(progress, "오류", f"1) URL 링크 미검출 ({info})")
+        return None
+    _log(progress, "로직", f"1) URL 클릭 · {(info.get('href') or row_url)[:120]}")
+    before = []
+    try:
+        before = list(page.context.pages)
+    except Exception:
+        before = [page]
+    loc = page.locator('[data-p3-url-target="1"]').first
+    store = None
+    try:
+        with page.expect_popup(timeout=10_000) as pop_info:
+            loc.click(timeout=5_000, no_wait_after=True)
+        store = pop_info.value
+    except Exception:
+        try:
+            loc.click(timeout=5_000, force=True, no_wait_after=True)
+        except Exception as e:
+            _log(progress, "오류", f"1) URL 클릭 실패: {str(e).split(chr(10))[0][:120]}")
+            return None
+    time.sleep(0.6)
+    if store is None:
+        try:
+            for p in page.context.pages:
+                if p not in before:
+                    store = p
+                    break
+        except Exception:
+            pass
+    if store is None:
+        # 같은 탭 이동된 경우 — 목록 복귀는 호출측에서 mango 로
+        _log(progress, "로직", "1) URL 클릭 후 새 창 없음 — 현재 탭을 스토어로 사용")
+        store = page
+    try:
+        store.wait_for_load_state("domcontentloaded", timeout=30_000)
+    except Exception:
+        pass
+    time.sleep(0.4)
+    return store
+
+
+def browse_store_count_cards(
+    store_page,
+    *,
+    excel_count: int,
+    progress: ProgressFn | None = None,
+) -> tuple[int, bool]:
+    """2)~5) 첫팝업 닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교."""
+    p1 = _p1_browse()
+    _log(progress, "로직", "2) 첫 팝업창 닫기")
+    closed = p1.dismiss_popups(store_page)
+    time.sleep(0.8)
+    closed += p1.dismiss_popups(store_page)
+    _log(progress, "로직", f"2) 팝업 닫기 완료 · closed={closed}")
+
+    _log(progress, "로직", "3) 스크롤 푸터 영역까지 내리기")
+    p1.scroll_down_to_footer(store_page, progress=progress)
+
+    _log(progress, "로직", "4) 하단→상단 스크롤 · 상품수 카드 갯수 집계")
+    card_n = int(p1.scroll_up_count_card_images(store_page, progress=progress) or 0)
+    _log(progress, "로직", f"4) 상품수 카드 갯수={card_n}")
+
+    excel_n = int(excel_count or 0)
+    matched = card_n == excel_n
+    _log(
+        progress,
+        "로직",
+        f"5) 비교 · 카드상품수={card_n} · 엑셀상품수={excel_n} · 일치={'Y' if matched else 'N'}",
+    )
+    return card_n, matched
+
+
+def close_store_return_list(list_page, store_page, mango_url: str) -> None:
+    """스토어 탭 닫고 더망고 목록으로 복귀."""
+    try:
+        if store_page is not None and store_page is not list_page:
+            if not store_page.is_closed():
+                store_page.close()
+    except Exception:
+        pass
+    try:
+        if list_page.is_closed():
+            return
+        list_page.bring_to_front()
+    except Exception:
+        pass
+    try:
+        cur = list_page.url or ""
+        if "modify_filter" in cur or "admin_group_modify" in cur:
+            _return_to_list(list_page, mango_url)
+        elif mango_url and "zara.com" in cur.lower():
+            _return_to_list(list_page, mango_url)
+    except Exception:
+        try:
+            _return_to_list(list_page, mango_url)
+        except Exception:
+            pass
 
 
 def _modify_ui_opened(page) -> bool:
@@ -734,117 +925,130 @@ def click_edit_on_row(
     progress: ProgressFn | None = None,
     shot_dir: Path | None = None,
     row_no: int = 0,
-    shot_count: int = 3,
-    shot_interval_s: float = 3.0,
+    shot_count: int = 0,
+    shot_interval_s: float = 0.0,
+    max_tries: int = 5,
+    try_interval_s: float = 2.0,
 ) -> bool:
-    """「수집개수|전체저장」옆 「수집조건수정」버튼만 클릭 → 팝업이 열리면 성공.
+    """6) URL 바로 오른쪽 「수집조건수정」만 클릭 — 2초 간격 최대 5회(팝업 열릴 때까지).
 
-    ★대체 방법 없음: href / location.href / window.open(url) 재시도 절대 금지.
-    ★오직 버튼 실클릭 후 팝업(또는 클릭으로 열린 수정화면)이 확인될 때만 True.
-    ★클릭 직후 3초 간격 스크린샷 3장 (로그/뷰어에 출력).
+    ★href / location / window.open(url) 대체 절대 금지. 오로지 버튼 클릭만.
     """
-    _ = edit_href  # 명시적 무시 (href 경로 사용 금지)
+    _ = edit_href
+    tries = max(1, int(max_tries))
+    gap = max(0.2, float(try_interval_s))
 
-    before_pages = []
-    try:
-        before_pages = list(page.context.pages)
-    except Exception:
-        before_pages = [page]
-
-    info = _find_and_mark_edit_button(page, row_index, row_url)
-    if not info.get("ok"):
-        _log(
-            progress,
-            "오류",
-            f"2) 수집조건수정 버튼 미검출 (info={info}) — href 대체 안 함",
-        )
-        return False
-
-    near = "Y" if info.get("nearCollect") else "N"
-    _log(
-        progress,
-        "로직",
-        f"2) 수집조건수정 버튼 찾음 · 인접(수집개수/전체저장)={near} · "
-        f"tag={info.get('tag')} · text={info.get('text')!r}",
-    )
-
-    loc = page.locator('[data-p3-edit-target="1"]').first
-    clicked = False
-    popup = None
-
-    # Playwright 실클릭 + 새 창(팝업) 대기 — 버튼 클릭만
-    try:
-        with page.expect_popup(timeout=8_000) as pop_info:
-            loc.click(timeout=4_000, no_wait_after=True)
-            clicked = True
-        popup = pop_info.value
-    except Exception:
-        popup = None
-
-    if not clicked:
-        try:
-            loc.click(timeout=4_000, force=True, no_wait_after=True)
-            clicked = True
-        except Exception as e:
-            _log(
-                progress,
-                "오류",
-                f"2) 수집조건수정 버튼 클릭 실패: {str(e).split(chr(10))[0][:120]}",
-            )
+    for attempt in range(1, tries + 1):
+        if stop_requested():
             return False
 
-    # ★요건: 클릭 직후 → 3초 간격 스크린샷 3장
-    if popup is not None:
-        try:
-            popup.wait_for_load_state("domcontentloaded", timeout=5_000)
-        except Exception:
-            pass
+        info = _find_and_mark_edit_button(page, row_index, row_url)
+        if not info.get("ok"):
+            _log(
+                progress,
+                "로직",
+                f"6) 수집조건수정 미검출 · 시도 {attempt}/{tries} ({info})",
+            )
+            if attempt < tries:
+                time.sleep(gap)
+            continue
+
+        near = "Y" if info.get("nearCollect") else "N"
+        right = "Y" if info.get("rightOfUrl") else "N"
         _log(
             progress,
             "로직",
-            f"2) 수집조건수정 팝업창 열림 · url={(popup.url or '')[:120]}",
+            f"6) 수집조건수정 클릭 시도 {attempt}/{tries} · "
+            f"URL오른쪽={right} · 수집개수옆={near} · tag={info.get('tag')}",
         )
-    screenshot_after_edit_click_series(
-        page,
-        shot_dir,
-        row_no=row_no,
-        progress=progress,
-        prefer_page=popup,
-        count=shot_count,
-        interval_s=shot_interval_s,
-    )
 
-    if popup is not None:
+        before_pages = []
+        try:
+            before_pages = list(page.context.pages)
+        except Exception:
+            before_pages = [page]
+
+        loc = page.locator('[data-p3-edit-target="1"]').first
+        popup = None
+        try:
+            with page.expect_popup(timeout=int(gap * 1000)) as pop_info:
+                loc.click(timeout=4_000, no_wait_after=True)
+            popup = pop_info.value
+        except Exception:
+            popup = None
+            try:
+                loc.click(timeout=4_000, force=True, no_wait_after=True)
+            except Exception as e:
+                _log(
+                    progress,
+                    "로직",
+                    f"6) 클릭 예외 시도{attempt}: {str(e).split(chr(10))[0][:100]}",
+                )
+
+        if popup is not None:
+            try:
+                popup.wait_for_load_state("domcontentloaded", timeout=12_000)
+            except Exception:
+                pass
+            _log(
+                progress,
+                "로직",
+                f"6) 팝업창 열림 · url={(popup.url or '')[:120]}",
+            )
+
+        # 2초 간격 동안 팝업/수정화면 확인
+        deadline = time.time() + gap
+        while time.time() < deadline:
+            try:
+                for p in page.context.pages:
+                    if p not in before_pages:
+                        try:
+                            p.wait_for_load_state("domcontentloaded", timeout=2_000)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            if page_shows_not_found(page):
+                _log(progress, "오류", "6) 팝업 not found — 중단 (href 재시도 없음)")
+                return False
+            if _modify_ui_opened(page):
+                _log(progress, "로직", f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries}")
+                if shot_dir is not None and shot_count > 0:
+                    screenshot_after_edit_click_series(
+                        page,
+                        shot_dir,
+                        row_no=row_no,
+                        progress=progress,
+                        prefer_page=popup,
+                        count=shot_count,
+                        interval_s=shot_interval_s,
+                    )
+                return True
+            time.sleep(0.25)
+
         if page_shows_not_found(page):
-            _log(progress, "오류", "2) 팝업이 not found — 중단 (href 재시도 없음)")
+            _log(progress, "오류", "6) 팝업 not found — 중단 (href 재시도 없음)")
             return False
-        if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=5_000):
+        if _modify_ui_opened(page) or wait_modify_page(page, timeout_ms=800):
+            _log(progress, "로직", f"6) 수집조건수정 팝업 확인 · 시도 {attempt}/{tries}")
+            if shot_dir is not None and shot_count > 0:
+                screenshot_after_edit_click_series(
+                    page,
+                    shot_dir,
+                    row_no=row_no,
+                    progress=progress,
+                    prefer_page=popup,
+                    count=shot_count,
+                    interval_s=shot_interval_s,
+                )
             return True
 
-    # 클릭으로 이미 새 창이 열렸을 수 있음 (expect_popup 타이밍 이탈)
-    try:
-        for p in page.context.pages:
-            if p not in before_pages:
-                try:
-                    p.wait_for_load_state("domcontentloaded", timeout=10_000)
-                except Exception:
-                    pass
-                _log(progress, "로직", f"2) 버튼클릭 후 새 창 감지 · url={(p.url or '')[:120]}")
-    except Exception:
-        pass
-
-    if page_shows_not_found(page):
-        _log(progress, "오류", "2) 클릭 후 not found — 중단 (href 재시도 없음)")
-        return False
-
-    if wait_modify_page(page, timeout_ms=5_000) or _modify_ui_opened(page):
-        _log(progress, "로직", "2) 버튼클릭 후 수정 팝업/화면 확인")
-        return True
+        _log(progress, "로직", f"6) 팝업 미오픈 · 다음 시도 대기 ({gap:g}s)")
 
     _log(
         progress,
         "오류",
-        "2) 수집조건수정 버튼 클릭 후에도 팝업이 열리지 않음 (href 대체 없음)",
+        f"6) 수집조건수정 클릭 {tries}회 실패 — 팝업 미오픈 (href 대체 없음)",
     )
     return False
 
@@ -1940,8 +2144,52 @@ def run_update(
                 except Exception:
                     pass
 
-                # 2) 수집조건수정 — 「수집개수|전체저장」바로 옆 버튼 정확히 클릭
-                lg.step("로직", "2) 수집조건수정 클릭", "2) 조건수정")
+                list_page = page
+
+                # 1) URL 클릭
+                lg.step("로직", "1) URL 클릭", "1) URL클릭")
+                store = click_demango_row_url(
+                    list_page, row_idx, d_url, progress=progress
+                )
+                if store is None:
+                    result.failed += 1
+                    _log(progress, "오류", f"행{i} URL 클릭 실패")
+                    screenshot_step(
+                        list_page,
+                        shot_dir,
+                        step_tag="01_url_click_fail",
+                        label="1)URL클릭 실패",
+                        row_no=i,
+                        progress=progress,
+                    )
+                    _return_to_list(list_page, mango)
+                    continue
+
+                # 2)~5) 팝업닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교
+                try:
+                    browse_store_count_cards(
+                        store,
+                        excel_count=ex.collectible,
+                        progress=progress,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    _log(
+                        progress,
+                        "경고",
+                        f"행{i} 스토어 스크롤/상품수 집계 예외: {str(e).split(chr(10))[0][:120]}",
+                    )
+
+                # 더망고 목록으로 복귀 후 수집조건수정
+                close_store_return_list(list_page, store, mango)
+                page = list_page
+                time.sleep(0.4)
+
+                # 6) URL 오른쪽 수집조건수정 — 2초 간격 최대 5회 클릭만
+                lg.step(
+                    "로직",
+                    "6) 수집조건수정 클릭 (URL오른쪽 · 2초×5회)",
+                    "6) 조건수정 클릭",
+                )
                 if not click_edit_on_row(
                     page,
                     row_idx,
@@ -1950,14 +2198,16 @@ def run_update(
                     progress=progress,
                     shot_dir=shot_dir,
                     row_no=i,
+                    max_tries=5,
+                    try_interval_s=2.0,
                 ):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 수집조건수정 클릭 실패")
                     screenshot_step(
                         page,
                         shot_dir,
-                        step_tag="02_edit_fail",
-                        label="2)수집조건수정 실패",
+                        step_tag="06_edit_fail",
+                        label="6)수집조건수정 실패",
                         row_no=i,
                         progress=progress,
                     )
@@ -1976,8 +2226,8 @@ def run_update(
                     screenshot_step(
                         page,
                         shot_dir,
-                        step_tag="02_modify_missing",
-                        label="2)검색필터수정 미진입/notfound",
+                        step_tag="06_modify_missing",
+                        label="6)검색필터수정 미진입/notfound",
                         row_no=i,
                         progress=progress,
                     )
@@ -1986,18 +2236,18 @@ def run_update(
                 screenshot_step(
                     page,
                     shot_dir,
-                    step_tag="02_modify_opened",
-                    label="2)검색필터 수정 화면",
+                    step_tag="06_modify_opened",
+                    label="6)검색필터 수정 화면",
                     row_no=i,
                     progress=progress,
                 )
 
-                # 3) 저장상품수 갱신 (입력그리드 before/after 샷 포함)
+                # 7) 저장상품수 수정 → 저장하기 → 확인
                 target = map_save_count(ex.collectible)
                 lg.step(
                     "로직",
-                    f"3) 저장상품수 갱신 — 수집가능={ex.collectible} → 저장상품수={target}",
-                    f"3) 저장상품수={target}",
+                    f"7) 저장상품수 갱신 — 수집가능={ex.collectible} → 저장상품수={target}",
+                    f"7) 저장상품수={target}",
                 )
                 if not set_save_count(
                     page,
@@ -2015,17 +2265,17 @@ def run_update(
                     _return_to_list(page, mango)
                     continue
 
-                # 4) 저장하기 → 팝업 닫힘 → "수정되었습니다" 확인 클릭
+                # 저장하기 → 팝업 닫힘 → "수정되었습니다" 확인 클릭
                 dialog_state = attach_native_dialog_handler(page)
-                lg.step("로직", "4) 팝업 하단 저장하기 클릭", "4) 저장하기")
+                lg.step("로직", "7) 팝업 하단 저장하기 클릭", "7) 저장하기")
                 if not click_save_button(page):
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 저장하기 클릭 실패")
                     screenshot_step(
                         page,
                         shot_dir,
-                        step_tag="04_save_click_fail",
-                        label="4)저장하기 클릭 실패",
+                        step_tag="07_save_click_fail",
+                        label="7)저장하기 클릭 실패",
                         row_no=i,
                         progress=progress,
                     )
@@ -2034,47 +2284,43 @@ def run_update(
                 screenshot_step(
                     page,
                     shot_dir,
-                    step_tag="04_after_save_click",
-                    label="4)저장하기 클릭 후",
+                    step_tag="07_after_save_click",
+                    label="7)저장하기 클릭 후",
                     row_no=i,
                     progress=progress,
                 )
 
                 lg.step(
                     "로직",
-                    "5) 검색필터 수정 팝업 닫힘 확인",
-                    "5) 수정팝업 닫힘",
+                    "7) 검색필터 수정 팝업 닫힘 확인",
+                    "7) 수정팝업 닫힘",
                 )
                 if not wait_modify_page_closed(page, timeout_ms=20_000):
                     _log(progress, "경고", f"행{i} 수정팝업 닫힘 대기 시간초과 — 확인 팝업 계속 시도")
                 screenshot_step(
                     page,
                     shot_dir,
-                    step_tag="05_modify_closed",
-                    label="5)수정팝업 닫힘/확인대기",
+                    step_tag="07_modify_closed",
+                    label="7)수정팝업 닫힘/확인대기",
                     row_no=i,
                     progress=progress,
                 )
 
                 lg.step(
                     "로직",
-                    "6) '수정되었습니다' 팝업에서 확인 클릭",
-                    "6) 수정완료 확인",
+                    "7) '수정되었습니다' 확인 클릭",
+                    "7) 수정완료 확인",
                 )
                 if not click_modified_confirm(
                     page, timeout_ms=20_000, dialog_state=dialog_state
                 ):
                     result.failed += 1
-                    _log(
-                        progress,
-                        "오류",
-                        f"행{i} '수정되었습니다' 확인 버튼 클릭 실패",
-                    )
+                    _log(progress, "오류", f"행{i} 수정되었습니다 확인 클릭 실패")
                     screenshot_step(
                         page,
                         shot_dir,
-                        step_tag="06_confirm_fail",
-                        label="6)수정되었습니다 확인 실패",
+                        step_tag="07_confirm_fail",
+                        label="7)수정완료확인 실패",
                         row_no=i,
                         progress=progress,
                     )
@@ -2083,8 +2329,8 @@ def run_update(
                 screenshot_step(
                     page,
                     shot_dir,
-                    step_tag="06_confirm_ok",
-                    label="6)수정되었습니다 확인 클릭 후",
+                    step_tag="07_confirmed",
+                    label="7)수정완료 확인클릭",
                     row_no=i,
                     progress=progress,
                 )
@@ -2095,17 +2341,16 @@ def run_update(
                     f"행{i} 갱신완료 · 엑셀행{ex.excel_row} · 저장상품수={target}",
                     f"갱신OK · 저장상품수={target}",
                 )
-
-                # 다음 행을 위해 목록 복귀
                 _return_to_list(page, mango)
                 screenshot_step(
                     page,
                     shot_dir,
-                    step_tag="07_back_to_list",
-                    label="7)목록 복귀",
+                    step_tag="08_back_to_list",
+                    label="8)목록복귀",
                     row_no=i,
                     progress=progress,
                 )
+                time.sleep(0.35)
 
                 if stop_requested():
                     break
