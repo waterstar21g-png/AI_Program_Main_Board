@@ -688,6 +688,165 @@ def _p1_browse():
     return p1_extract
 
 
+def dismiss_store_layers_only(page) -> int:
+    """스토어(자라) 페이지의 레이어/쿠키만 닫기.
+
+    ★다른 탭(더망고 목록)은 절대 page.close() 하지 않음.
+    P1 dismiss_popups 는 다른 창을 닫아 더망고 핸들이 끊길 수 있음.
+    """
+    closed = 0
+    try:
+        page.on("dialog", lambda d: d.dismiss())
+    except Exception:
+        pass
+    try:
+        p1 = _p1_browse()
+        selectors = getattr(p1, "POPUP_CLOSE_SELECTORS", ())
+    except Exception:
+        selectors = (
+            'button[aria-label="Close"]',
+            'button:has-text("닫기")',
+            'button:has-text("Accept")',
+            'button:has-text("동의")',
+        )
+    for sel in selectors:
+        try:
+            loc = page.locator(sel)
+            count = loc.count()
+        except Exception:
+            continue
+        for i in range(min(count, 3)):
+            try:
+                el = loc.nth(i)
+                if el.is_visible(timeout=300):
+                    el.click(timeout=800, force=True)
+                    closed += 1
+                    time.sleep(0.15)
+            except Exception:
+                continue
+    try:
+        page.keyboard.press("Escape")
+        time.sleep(0.1)
+    except Exception:
+        pass
+    return closed
+
+
+def find_alive_mango_page(context, mango_url: str, prefer=None):
+    """열려 있는 더망고 목록 탭을 다시 찾는다 (죽은 핸들 대체)."""
+    pages: list = []
+    try:
+        pages = list(context.pages)
+    except Exception:
+        pages = []
+    if prefer is not None and prefer not in pages:
+        pages = [prefer] + pages
+
+    mu = (mango_url or "").strip().lower()
+    mu_stem = mu.split("?")[0]
+
+    def _score(p) -> int:
+        try:
+            if p.is_closed():
+                return -999
+        except Exception:
+            return -999
+        try:
+            u = (p.url or "").lower()
+        except Exception:
+            u = ""
+        s = 0
+        if prefer is not None and p is prefer:
+            s += 30
+        if mu and (mu in u or (mu_stem and mu_stem in u)):
+            s += 120
+        if any(k in u for k in ("demango", "admin_group", "filter", "mango")):
+            s += 60
+        if "zara.com" in u:
+            s -= 100
+        if u in ("", "about:blank"):
+            s -= 20
+        return s
+
+    ranked = sorted(pages, key=_score, reverse=True)
+    for p in ranked:
+        if _score(p) > 0:
+            return p
+    return None
+
+
+def page_is_usable(page) -> bool:
+    """evaluate 가능한 살아 있는 페이지인지."""
+    if page is None:
+        return False
+    try:
+        if page.is_closed():
+            return False
+    except Exception:
+        return False
+    try:
+        page.evaluate("() => 1", timeout=1500)
+        return True
+    except TypeError:
+        # 구버전 playwright 는 evaluate timeout kw 없음
+        try:
+            page.evaluate("() => 1")
+            return True
+        except Exception:
+            return False
+    except Exception:
+        return False
+
+
+def resolve_demango_row_index_by_url(
+    page,
+    row_url: str,
+    *,
+    fallback_index: int | None = None,
+    progress: ProgressFn | None = None,
+) -> int | None:
+    """더망고 목록에서 URL로 행 index를 다시 찾는다 (복귀 후 stale index 방지)."""
+    url = (row_url or "").strip()
+    if not url:
+        return fallback_index
+    try:
+        rows = list_demango_rows(page)
+    except Exception as e:  # noqa: BLE001
+        _log(progress, "경고", f"행 재탐색 실패(목록스캔): {str(e).split(chr(10))[0][:100]}")
+        return fallback_index
+
+    target = normalize_url(url)
+    for r in rows:
+        ru = normalize_url((r.get("url") or "").strip())
+        if ru and target and ru == target:
+            idx = int(r.get("index") or 0)
+            _log(
+                progress,
+                "로직",
+                f"더망고 행 재탐색 OK · index={idx} · url={url[:100]}",
+            )
+            return idx
+    # 느슨 매칭: stem
+    stem = url.split("?")[0]
+    for r in rows:
+        ru = (r.get("url") or "").strip()
+        if stem and stem in ru:
+            idx = int(r.get("index") or 0)
+            _log(
+                progress,
+                "로직",
+                f"더망고 행 재탐색(느슨) OK · index={idx} · url={url[:100]}",
+            )
+            return idx
+
+    _log(
+        progress,
+        "경고",
+        f"더망고 행 재탐색 실패 → fallback index={fallback_index} · url={url[:100]}",
+    )
+    return fallback_index
+
+
 def _find_and_mark_row_url(page, row_index: int, row_url: str = "") -> dict:
     """행의 URL 검색 링크를 data-p3-url-target 으로 마킹."""
     info = page.evaluate(
@@ -799,20 +958,29 @@ def browse_store_count_cards(
     excel_count: int,
     progress: ProgressFn | None = None,
 ) -> tuple[int, bool]:
-    """2)~5) 첫팝업 닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교."""
+    """2)~5) 첫팝업 닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교.
+
+    ★팝업 닫기 시 다른 탭(더망고)을 닫지 않음.
+    """
     p1 = _p1_browse()
-    _log(progress, "로직", "2) 첫 팝업창 닫기")
-    closed = p1.dismiss_popups(store_page)
-    time.sleep(0.8)
-    closed += p1.dismiss_popups(store_page)
-    _log(progress, "로직", f"2) 팝업 닫기 완료 · closed={closed}")
+    # 스크롤 중 P1 이 dismiss_popups 로 타 탭을 닫지 못하게 교체
+    orig_dismiss = p1.dismiss_popups
+    p1.dismiss_popups = dismiss_store_layers_only  # type: ignore[assignment]
+    try:
+        _log(progress, "로직", "2) 첫 팝업창 닫기 (스토어 레이어만 · 더망고탭 유지)")
+        closed = dismiss_store_layers_only(store_page)
+        time.sleep(0.8)
+        closed += dismiss_store_layers_only(store_page)
+        _log(progress, "로직", f"2) 팝업 닫기 완료 · closed={closed}")
 
-    _log(progress, "로직", "3) 스크롤 푸터 영역까지 내리기")
-    p1.scroll_down_to_footer(store_page, progress=progress)
+        _log(progress, "로직", "3) 스크롤 푸터 영역까지 내리기")
+        p1.scroll_down_to_footer(store_page, progress=progress)
 
-    _log(progress, "로직", "4) 하단→상단 스크롤 · 상품수 카드 갯수 집계")
-    card_n = int(p1.scroll_up_count_card_images(store_page, progress=progress) or 0)
-    _log(progress, "로직", f"4) 상품수 카드 갯수={card_n}")
+        _log(progress, "로직", "4) 하단→상단 스크롤 · 상품수 카드 갯수 집계")
+        card_n = int(p1.scroll_up_count_card_images(store_page, progress=progress) or 0)
+        _log(progress, "로직", f"4) 상품수 카드 갯수={card_n}")
+    finally:
+        p1.dismiss_popups = orig_dismiss  # type: ignore[assignment]
 
     excel_n = int(excel_count or 0)
     matched = card_n == excel_n
@@ -824,31 +992,84 @@ def browse_store_count_cards(
     return card_n, matched
 
 
-def close_store_return_list(list_page, store_page, mango_url: str) -> None:
-    """스토어 탭 닫고 더망고 목록으로 복귀."""
+def close_store_return_list(
+    list_page,
+    store_page,
+    mango_url: str,
+    *,
+    progress: ProgressFn | None = None,
+):
+    """스토어 탭만 닫고, 살아 있는 더망고 목록 탭을 다시 찾아 반환."""
+    ctx = None
+    try:
+        if list_page is not None:
+            ctx = list_page.context
+        elif store_page is not None:
+            ctx = store_page.context
+    except Exception:
+        ctx = None
+
+    # 스토어(자라) 탭만 닫기 — 더망고와 동일 핸들이면 닫지 않음
     try:
         if store_page is not None and store_page is not list_page:
-            if not store_page.is_closed():
-                store_page.close()
+            store_url = ""
+            try:
+                store_url = (store_page.url or "").lower()
+            except Exception:
+                store_url = ""
+            # 더망고 URL 이면 닫지 않음
+            mu = (mango_url or "").lower()
+            is_mango = bool(mu) and (mu in store_url or store_url.startswith(mu.split("?")[0]))
+            if (not is_mango) and ("zara.com" in store_url or "http" in store_url):
+                if not store_page.is_closed():
+                    store_page.close()
+                    _log(progress, "로직", "스토어 탭 닫음 → 더망고 목록 재연결")
+    except Exception as e:  # noqa: BLE001
+        _log(progress, "경고", f"스토어 탭 닫기 예외: {str(e).split(chr(10))[0][:80]}")
+
+    time.sleep(0.35)
+
+    mango = None
+    if ctx is not None:
+        mango = find_alive_mango_page(ctx, mango_url, prefer=list_page)
+
+    if mango is None or not page_is_usable(mango):
+        # prefer 가 죽었어도 context 에서 재탐색
+        if ctx is not None:
+            mango = find_alive_mango_page(ctx, mango_url, prefer=None)
+        if mango is None or not page_is_usable(mango):
+            _log(progress, "오류", "더망고 목록 탭 재연결 실패 (usable page 없음)")
+            return None
+
+    try:
+        mango.bring_to_front()
     except Exception:
         pass
+
     try:
-        if list_page.is_closed():
-            return
-        list_page.bring_to_front()
-    except Exception:
-        pass
-    try:
-        cur = list_page.url or ""
-        if "modify_filter" in cur or "admin_group_modify" in cur:
-            _return_to_list(list_page, mango_url)
-        elif mango_url and "zara.com" in cur.lower():
-            _return_to_list(list_page, mango_url)
+        cur = mango.url or ""
+        if (
+            "modify_filter" in cur
+            or "admin_group_modify" in cur
+            or "zara.com" in cur.lower()
+        ):
+            _return_to_list(mango, mango_url)
     except Exception:
         try:
-            _return_to_list(list_page, mango_url)
+            _return_to_list(mango, mango_url)
         except Exception:
             pass
+
+    if not page_is_usable(mango):
+        _log(progress, "오류", "더망고 목록 탭 evaluate 불가")
+        return None
+
+    _log(
+        progress,
+        "로직",
+        f"더망고 목록 탭 재연결 OK · url={(mango.url or '')[:120]}",
+    )
+    return mango
 
 
 def _modify_ui_opened(page) -> bool:
@@ -2179,10 +2400,28 @@ def run_update(
                         f"행{i} 스토어 스크롤/상품수 집계 예외: {str(e).split(chr(10))[0][:120]}",
                     )
 
-                # 더망고 목록으로 복귀 후 수집조건수정
-                close_store_return_list(list_page, store, mango)
-                page = list_page
-                time.sleep(0.4)
+                # 더망고 목록 탭 재연결 후 수집조건수정
+                page = close_store_return_list(
+                    list_page, store, mango, progress=progress
+                )
+                if page is None:
+                    result.failed += 1
+                    _log(progress, "오류", f"행{i} 더망고 목록 탭 재연결 실패")
+                    continue
+                time.sleep(0.3)
+
+                # 복귀 후 URL로 행 index 재확정 (stale index 방지)
+                row_idx2 = resolve_demango_row_index_by_url(
+                    page,
+                    d_url,
+                    fallback_index=row_idx,
+                    progress=progress,
+                )
+                if row_idx2 is None:
+                    result.failed += 1
+                    _log(progress, "오류", f"행{i} 더망고 목록에서 URL 행 재탐색 실패")
+                    continue
+                row_idx = int(row_idx2)
 
                 # 6) URL 오른쪽 수집조건수정 — 2초 간격 최대 5회 클릭만
                 lg.step(
@@ -2190,6 +2429,10 @@ def run_update(
                     "6) 수집조건수정 클릭 (URL오른쪽 · 2초×5회)",
                     "6) 조건수정 클릭",
                 )
+                if not page_is_usable(page):
+                    result.failed += 1
+                    _log(progress, "오류", f"행{i} 더망고 페이지 핸들 사용불가")
+                    continue
                 if not click_edit_on_row(
                     page,
                     row_idx,

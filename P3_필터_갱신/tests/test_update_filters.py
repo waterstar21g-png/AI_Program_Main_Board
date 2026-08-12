@@ -332,6 +332,69 @@ def test_no_href_fallback_in_click_edit_source():
     assert "href 재시도 금지" in src or "href 대체 없음" in src
 
 
+def test_find_alive_mango_and_dismiss_keeps_other_tab():
+    """스토어 레이어 닫기가 더망고 탭을 닫지 않고, 재연결이 된다."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import (
+        dismiss_store_layers_only,
+        find_alive_mango_page,
+        page_is_usable,
+    )
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        mango = context.new_page()
+        mango.goto("https://example.com/demango/admin_group_list.php?x=1")
+        store = context.new_page()
+        store.set_content(
+            "<html><body>"
+            "<button aria-label='Close'>X</button>"
+            "<div>zara store</div></body></html>"
+        )
+        n_before = len(context.pages)
+        closed = dismiss_store_layers_only(store)
+        assert closed >= 1
+        assert len(context.pages) == n_before
+        assert not mango.is_closed()
+        found = find_alive_mango_page(
+            context,
+            "https://example.com/demango/admin_group_list.php?x=1",
+            prefer=mango,
+        )
+        assert found is mango
+        assert page_is_usable(found) is True
+        # 스토어만 닫은 뒤에도 더망고 재연결
+        store.close()
+        found2 = find_alive_mango_page(
+            context,
+            "https://example.com/demango/admin_group_list.php?x=1",
+            prefer=mango,
+        )
+        assert found2 is mango
+        assert page_is_usable(found2) is True
+        browser.close()
+
+
+def test_resolve_demango_row_index_by_url():
+    """복귀 후 URL로 행 index를 다시 찾는다."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import resolve_demango_row_index_by_url
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_HTML)
+        rows = list_demango_rows(page)
+        assert len(rows) >= 2
+        want = rows[1]["url"]
+        idx = resolve_demango_row_index_by_url(
+            page, want, fallback_index=999, progress=None
+        )
+        assert idx == int(rows[1]["index"])
+        browser.close()
+
+
 def test_page_shows_not_found():
     from playwright.sync_api import sync_playwright
 
