@@ -271,6 +271,55 @@ def test_attach_mango_browser_uses_p2_connect_browser():
     assert isinstance(page, FakePage)
 
 
+def test_maximize_mango_chrome_window_logs_and_cdp():
+    """목록 복귀 후 행 재탐색 전 — 망고 창 최대화 필수."""
+    from update_filters import maximize_mango_chrome_window
+
+    cdp_states: list[str] = []
+    logs: list[tuple[str, str]] = []
+
+    def progress(step: str, msg: str) -> None:
+        logs.append((step, msg))
+
+    class FakePage:
+        url = "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsCategory.php"
+        context = None
+
+        def __init__(self):
+            self.context = self
+
+        def new_cdp_session(self, _page):
+            class S:
+                def send(self, method, params=None):
+                    if method == "Browser.getWindowForTarget":
+                        return {"windowId": 7}
+                    if method == "Browser.setWindowBounds":
+                        cdp_states.append((params or {}).get("bounds", {}).get("windowState"))
+                        return {}
+                    return {}
+
+                def detach(self):
+                    return None
+
+            return S()
+
+        def bring_to_front(self):
+            return None
+
+        def evaluate(self, *_a, **_k):
+            return None
+
+        def is_closed(self):
+            return False
+
+        def title(self):
+            return "더망고"
+
+    maximize_mango_chrome_window(FakePage(), progress, dwell_s=0)
+    assert "maximized" in cdp_states
+    assert any(s == "화면" and "망고 창 최대화" in m for s, m in logs)
+
+
 def test_read_excel_and_lookup(tmp_path: Path):
     fp = tmp_path / "sample.xlsx"
     wb = openpyxl.Workbook()

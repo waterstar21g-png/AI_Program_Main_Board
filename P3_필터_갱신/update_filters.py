@@ -159,63 +159,126 @@ def describe_page_state(page) -> str:
     return " · ".join(parts)
 
 
-def _activate_chrome_window(page) -> None:
-    """최소화/뒤로 간 Chrome 창을 복원·앞으로 (CDP Browser.setWindowBounds)."""
+def _set_chrome_window_state(page, *, window_state: str = "normal") -> bool:
+    """CDP로 Chrome 창 상태 변경 (normal / maximized). 성공 시 True."""
     if page is None:
-        return
+        return False
     try:
         session = page.context.new_cdp_session(page)
     except Exception:
-        return
+        return False
+    ok = False
     try:
-        # targetId 없이 현재 페이지 기준 windowId 조회
         info = session.send("Browser.getWindowForTarget")
         wid = info.get("windowId") if isinstance(info, dict) else None
         if wid is None:
-            return
+            return False
+        # maximized 는 일부 환경에서 normal→maximized 순이 안정적
+        if window_state == "maximized":
+            try:
+                session.send(
+                    "Browser.setWindowBounds",
+                    {"windowId": wid, "bounds": {"windowState": "normal"}},
+                )
+            except Exception:
+                pass
         session.send(
             "Browser.setWindowBounds",
-            {"windowId": wid, "bounds": {"windowState": "normal"}},
+            {"windowId": wid, "bounds": {"windowState": window_state}},
         )
+        ok = True
     except Exception:
-        pass
+        ok = False
     finally:
         try:
             session.detach()
         except Exception:
             pass
-    # Windows: 작업표시줄에 숨은 Chrome을 강제 앞으로
-    if os.name == "nt":
-        try:
-            import ctypes
+    return ok
 
-            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-            SW_RESTORE = 9
-            hwnd = user32.GetForegroundWindow()
-            # Chrome 창 찾기 (클래스 Chrome_WidgetWin_1)
-            found = ctypes.c_void_p(0)
 
-            @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-            def _enum(h, _l):  # noqa: ANN001
-                length = user32.GetWindowTextLengthW(h)
-                if length <= 0:
-                    return True
-                buf = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(h, buf, length + 1)
-                title = buf.value or ""
-                if "Chrome" in title or "더망고" in title or "cafe24" in title.lower():
-                    found.value = h
-                    return False
+def _foreground_chrome_window_windows(*, maximize: bool = False) -> None:
+    """Windows: Chrome/더망고 창을 앞으로(필요 시 최대화)."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        SW_RESTORE = 9
+        SW_MAXIMIZE = 3
+        show_cmd = SW_MAXIMIZE if maximize else SW_RESTORE
+        hwnd = user32.GetForegroundWindow()
+        found = ctypes.c_void_p(0)
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        def _enum(h, _l):  # noqa: ANN001
+            length = user32.GetWindowTextLengthW(h)
+            if length <= 0:
                 return True
+            buf = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(h, buf, length + 1)
+            title = buf.value or ""
+            if "Chrome" in title or "더망고" in title or "cafe24" in title.lower():
+                found.value = h
+                return False
+            return True
 
-            user32.EnumWindows(_enum, 0)
-            if found.value:
-                user32.ShowWindow(found.value, SW_RESTORE)
-                user32.SetForegroundWindow(found.value)
-            elif hwnd:
-                user32.ShowWindow(hwnd, SW_RESTORE)
-        except Exception:
-            pass
+        user32.EnumWindows(_enum, 0)
+        target = found.value or hwnd
+        if target:
+            user32.ShowWindow(target, show_cmd)
+            user32.SetForegroundWindow(target)
+    except Exception:
+        pass
+
+
+def _activate_chrome_window(page) -> None:
+    """최소화/뒤로 간 Chrome 창을 복원·앞으로 (CDP Browser.setWindowBounds)."""
+    _set_chrome_window_state(page, window_state="normal")
+    _foreground_chrome_window_windows(maximize=False)
+
+
+def maximize_mango_chrome_window(
+    page,
+    progress: ProgressFn | None = None,
+    *,
+    dwell_s: float = 0.8,
+) -> None:
+    """망고 Chrome 창을 반드시 최대화한다 (목록 복귀 후 · 행 재탐색 전)."""
+    if page is None:
+        return
+    try:
+        if hasattr(page, "is_closed") and page.is_closed():
+            _log(progress, "화면", "망고 창 최대화 — 창이 이미 닫힘")
+            return
+    except Exception:
+        pass
+    cdp_ok = _set_chrome_window_state(page, window_state="maximized")
+    _foreground_chrome_window_windows(maximize=True)
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+    try:
+        page.evaluate("() => { try { window.focus(); } catch (e) {} }")
+    except Exception:
+        pass
+    state = ""
+    try:
+        state = describe_page_state(page)
+    except Exception:
+        state = ""
+    msg = "망고 창 최대화 필수"
+    if cdp_ok:
+        msg += " OK"
+    else:
+        msg += " (CDP 실패·Windows 최대화 시도)"
+    if state:
+        msg += f" · {state}"
+    _log(progress, "화면", msg)
+    if dwell_s > 0:
+        time.sleep(dwell_s)
 
 
 def reveal_browser_page(
@@ -2958,6 +3021,8 @@ def run_update(
                     action="더망고 목록 복귀·창 표시",
                     dwell_s=STEP_VIEW_DWELL_SEC,
                 )
+                # ★필수: 목록 복귀창 표시 후 → 망고 창 최대화 → 그 다음 행 재탐색
+                maximize_mango_chrome_window(page, progress, dwell_s=0.8)
 
                 # 복귀 후 URL로 행 index 재확정 (stale index 방지)
                 row_idx2 = resolve_demango_row_index_by_url(
