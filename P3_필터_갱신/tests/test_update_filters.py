@@ -74,6 +74,7 @@ DEMANGO_LIST_HTML = """
 
 # 사용자 스크린샷 구조: URL | 수집개수: 3개 | 전체저장 | 수집조건수정
 # 행 앞쪽에 엉뚱한 '수집조건수정'/not-found 링크가 있어도 옆 버튼만 눌러야 함
+# 옆 버튼은 window.open 으로 수정 팝업을 띄움
 DEMANGO_LIST_WITH_DECOY_HTML = """
 <html><body>
 <table>
@@ -93,10 +94,26 @@ DEMANGO_LIST_WITH_DECOY_HTML = """
     |
     <span style="background:#2b6cb0;color:#fff;padding:2px 6px">수집개수: 3개 | 전체저장</span>
     <input type="button" id="edit-real" value="수집조건수정"
-      onclick="document.body.setAttribute('data-clicked','real-777'); window.__fuid=777">
+      onclick="document.body.setAttribute('data-clicked','real-777'); window.open('about:blank','mod777');">
   </td>
 </tr>
 </table>
+<script>
+// about:blank 팝업에 수정화면 골격 주입 (Playwright expect_popup 검증용)
+(function() {
+  const _open = window.open;
+  window.open = function(url, name) {
+    const w = _open.call(window, url, name);
+    try {
+      w.document.write('<html><body><h1>검색필터 수정</h1>'
+        + '<div>저장상품수</div><div>검색결과 상위 <input value="3"> 개</div>'
+        + '<input type="button" value="저장하기"></body></html>');
+      w.document.close();
+    } catch (e) {}
+    return w;
+  };
+})();
+</script>
 </body></html>
 """
 
@@ -193,12 +210,13 @@ def test_list_demango_rows_filter_input_and_url():
 
 
 def test_click_edit_prefers_button_beside_collect_count():
-    """수집개수|전체저장 바로 옆 수집조건수정만 클릭 (앞쪽 decoy 무시)."""
+    """수집개수|전체저장 옆 버튼 클릭 → 수정 팝업이 실제로 열린다."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+        context = browser.new_context()
+        page = context.new_page()
         page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
         rows = list_demango_rows(page)
         assert len(rows) == 1
@@ -213,6 +231,41 @@ def test_click_edit_prefers_button_beside_collect_count():
         )
         assert ok is True
         assert page.locator("body").get_attribute("data-clicked") == "real-777"
+        # 팝업(새 페이지)에 저장상품수 수정화면이 떠야 함
+        assert len(context.pages) >= 2
+        browser.close()
+
+
+def test_click_edit_fails_when_popup_does_not_open():
+    """클릭은 되나 팝업/수정화면이 없으면 False."""
+    from playwright.sync_api import sync_playwright
+
+    html = """
+    <html><body>
+    <table><tr>
+      <td><input type="text" value="테스트_필터"></td>
+      <td>
+        URL 검색: <a href="https://www.zara.com/de/en/x.html">https://www.zara.com/de/en/x.html</a>
+        | <span>수집개수: 3개 | 전체저장</span>
+        <input type="button" value="수집조건수정" onclick="document.body.setAttribute('data-clicked','1')">
+      </td>
+    </tr></table>
+    </body></html>
+    """
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(html)
+        rows = list_demango_rows(page)
+        ok = click_edit_on_row(
+            page,
+            int(rows[0]["index"]),
+            rows[0].get("editHref") or "",
+            row_url=rows[0]["url"],
+            progress=None,
+        )
+        assert page.locator("body").get_attribute("data-clicked") == "1"
+        assert ok is False
         browser.close()
 
 
