@@ -1,5 +1,6 @@
 """
-AI_Program_Main_Board — Python B안 보드 (P1 / P1_101 / P1_ZARA_DE / P2=구P3)
+AI_Program_Main_Board — Python B안 보드
+(P1 / P1_101 / P1_ZARA_DE / P2 / P3_필터_갱신)
 아주 단순한 UI, 필요한 기능만.
 """
 
@@ -124,10 +125,12 @@ class BoardApp(tk.Tk):
         self._p1_101_result = None
         self._p1_101_proc: subprocess.Popen | None = None
         self._p2_proc: subprocess.Popen | None = None
+        self._p3_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
         self._build()
         self._show("p1")
         self._refresh_p2_list()
+        self._refresh_p3_list()
 
     def _build(self) -> None:
         head = tk.Frame(self, bg="#164a59", pady=10)
@@ -141,7 +144,7 @@ class BoardApp(tk.Tk):
         ).pack()
         tk.Label(
             head,
-            text="P1 · P1_101 상품수 · P1_ZARA_DE  ·  P2 더망고 대량수집",
+            text="P1 · P1_101 · P1_ZARA_DE · P2 대량수집 · P3_필터_갱신",
             fg="#cbd5e1",
             bg="#164a59",
             font=("Malgun Gothic", 9),
@@ -203,6 +206,16 @@ class BoardApp(tk.Tk):
         )
         self.btn_p2.pack(fill="x", padx=6, pady=6)
 
+        self.btn_p3 = tk.Button(
+            side,
+            text="P3_필터_갱신\n수집건수 갱신",
+            command=lambda: self._show("p3"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p3.pack(fill="x", padx=6, pady=6)
+
         # ★요건: 좌측 하단 — 머지반영 업데이트 (아이콘/run.bat 대체, 버튼 하나)
         side_bottom = tk.Frame(side, bg="#d9d9d9")
         side_bottom.pack(side="bottom", fill="x", padx=6, pady=(4, 10))
@@ -246,20 +259,24 @@ class BoardApp(tk.Tk):
         self.frame_p1_101 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p1_zara = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p2 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self.frame_p3 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self._build_p1(self.frame_p1)
         self._build_p1_101(self.frame_p1_101)
         self._build_p1_zara(self.frame_p1_zara)
         self._build_p2(self.frame_p2)
+        self._build_p3(self.frame_p3)
 
     def _show(self, which: str) -> None:
         self.frame_p1.pack_forget()
         self.frame_p1_101.pack_forget()
         self.frame_p1_zara.pack_forget()
         self.frame_p2.pack_forget()
+        self.frame_p3.pack_forget()
         self.btn_p1.configure(bg="#ececec")
         self.btn_p1_101.configure(bg="#ececec")
         self.btn_p1_zara.configure(bg="#ececec")
         self.btn_p2.configure(bg="#ececec")
+        self.btn_p3.configure(bg="#ececec")
         if which == "p1":
             self.frame_p1.pack(fill="both", expand=True)
             self.btn_p1.configure(bg="#dbeafe")
@@ -269,6 +286,9 @@ class BoardApp(tk.Tk):
         elif which == "p1_zara":
             self.frame_p1_zara.pack(fill="both", expand=True)
             self.btn_p1_zara.configure(bg="#dbeafe")
+        elif which == "p3":
+            self.frame_p3.pack(fill="both", expand=True)
+            self.btn_p3.configure(bg="#dbeafe")
         else:
             self.frame_p2.pack(fill="both", expand=True)
             self.btn_p2.configure(bg="#dbeafe")
@@ -1577,6 +1597,464 @@ class BoardApp(tk.Tk):
 
         self.p2_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
         self.p2_status.pack(fill="x", pady=4)
+
+    # ── P3_필터_갱신 (UI 구조 = P2와 유사 + 더망고 URL 입력) ──
+    def _build_p3(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P3_필터_갱신 — 엑셀 선택 → 더망고 URL 입력 → 저장상품수 갱신",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        search = tk.LabelFrame(
+            parent, text="1. 디렉터리 파일 목록", bg="#ffffff", padx=8, pady=6
+        )
+        search.pack(fill="x")
+
+        self.var_p3_dir = tk.StringVar(
+            value=(default_roots() or [str(Path.home())])[0]
+        )
+        self.var_p3_q = tk.StringVar(value="카테고리URL")
+        # ★요건: 더망고 URL 은 화면 입력항목
+        self.var_p3_mango_url = tk.StringVar(value="")
+
+        r1 = tk.Frame(search, bg="#ffffff")
+        r1.pack(fill="x", pady=2)
+        tk.Label(r1, text="폴더", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        tk.Entry(r1, textvariable=self.var_p3_dir).pack(
+            side="left", fill="x", expand=True
+        )
+        tk.Button(r1, text="…", width=3, command=self._pick_p3_dir).pack(
+            side="left", padx=4
+        )
+
+        r2 = tk.Frame(search, bg="#ffffff")
+        r2.pack(fill="x", pady=2)
+        tk.Label(r2, text="필터", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        tk.Entry(r2, textvariable=self.var_p3_q, width=20).pack(side="left")
+        tk.Button(
+            r2, text="파일 새로고침", command=self._search_p3_xlsx, bg="#e2e8f0"
+        ).pack(side="left", padx=6)
+        tk.Button(r2, text="선택 파일 열기", command=self._add_p3_found).pack(
+            side="left"
+        )
+
+        r3 = tk.Frame(search, bg="#ffffff")
+        r3.pack(fill="x", pady=(6, 2))
+        tk.Label(
+            r3, text="더망고 URL", width=10, anchor="w", bg="#ffffff",
+            font=("Malgun Gothic", 9, "bold"),
+        ).pack(side="left")
+        tk.Entry(r3, textvariable=self.var_p3_mango_url).pack(
+            side="left", fill="x", expand=True
+        )
+        tk.Label(
+            search,
+            text="검색필터(저장조건) 화면 URL을 붙여넣으세요",
+            bg="#ffffff",
+            fg="#64748b",
+            anchor="w",
+            font=("Malgun Gothic", 8),
+        ).pack(fill="x")
+
+        self._p3_file_list_height = 5
+        self._p3_url_list_height = 8
+
+        found_wrap = tk.Frame(search, bg="#ffffff")
+        found_wrap.pack(fill="x", pady=4)
+        self.p3_found_list = tk.Listbox(
+            found_wrap,
+            height=self._p3_file_list_height,
+            selectmode="browse",
+            font=("Consolas", 9),
+            exportselection=False,
+        )
+        found_sb = tk.Scrollbar(
+            found_wrap, orient="vertical", command=self.p3_found_list.yview
+        )
+        self.p3_found_list.configure(yscrollcommand=found_sb.set)
+        self.p3_found_list.pack(side="left", fill="both", expand=True)
+        found_sb.pack(side="right", fill="y")
+        self.p3_found_list.bind("<<ListboxSelect>>", self._on_p3_found_select)
+        self.p3_found_list.bind("<Double-Button-1>", lambda _e: self._add_p3_found())
+        self._p3_found_paths: list[str] = []
+
+        actions = tk.LabelFrame(parent, text="실행", bg="#ffffff", padx=8, pady=6)
+        actions.pack(fill="x", pady=(8, 0))
+        btn_row = tk.Frame(actions, bg="#ffffff")
+        btn_row.pack(fill="x")
+        left_btns = tk.Frame(btn_row, bg="#ffffff")
+        left_btns.pack(side="left", fill="x", expand=True)
+        self.btn_p3_run = tk.Button(
+            left_btns,
+            text="갱신 시작",
+            command=self._run_p3,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=10,
+            pady=4,
+        )
+        self.btn_p3_run.pack(side="left")
+        self.btn_p3_stop = tk.Button(
+            left_btns,
+            text="갱신 종료",
+            command=self._stop_p3,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=10,
+            pady=4,
+        )
+        self.btn_p3_stop.pack(side="left", padx=6)
+        tk.Button(left_btns, text="새로고침", command=self._refresh_p3_list).pack(
+            side="left", padx=6
+        )
+        tk.Button(left_btns, text="로그 지우기", command=self._clear_p3_log).pack(
+            side="left", padx=6
+        )
+
+        lib = tk.LabelFrame(
+            parent, text="카테고리URL목록 (엑셀)", bg="#ffffff", padx=8, pady=4
+        )
+        lib.pack(fill="x", pady=(8, 0))
+        lib_wrap = tk.Frame(lib, bg="#ffffff")
+        lib_wrap.pack(fill="both", expand=True)
+        self.p3_lib_list = tk.Listbox(
+            lib_wrap,
+            height=self._p3_url_list_height,
+            font=("Malgun Gothic", 10),
+            exportselection=False,
+            activestyle="none",
+        )
+        lib_sb = tk.Scrollbar(
+            lib_wrap, orient="vertical", command=self.p3_lib_list.yview
+        )
+        self.p3_lib_list.configure(yscrollcommand=lib_sb.set)
+        self.p3_lib_list.pack(side="left", fill="both", expand=True)
+        lib_sb.pack(side="right", fill="y")
+        self._p3_excel_rows: list[dict] = []
+        self._p3_current_excel: str = ""
+        self.p3_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
+        self.p3_sel.pack(fill="x", pady=(2, 0))
+
+        log_frame = tk.LabelFrame(
+            parent,
+            text="실행 로그",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
+        )
+        log_frame.pack(fill="both", expand=True, pady=(8, 0))
+        self.p3_log = ttk.Treeview(
+            log_frame,
+            columns=("time", "step", "message"),
+            show="headings",
+            height=10,
+        )
+        self.p3_log.heading("time", text="시각")
+        self.p3_log.heading("step", text="단계")
+        self.p3_log.heading("message", text="내용")
+        self.p3_log.column("time", width=90, minwidth=70, stretch=False, anchor="center")
+        self.p3_log.column("step", width=70, minwidth=50, stretch=False, anchor="center")
+        self.p3_log.column(
+            "message", width=640, minwidth=200, stretch=True, anchor="w"
+        )
+        log_sb = tk.Scrollbar(log_frame, orient="vertical", command=self.p3_log.yview)
+        self.p3_log.configure(yscrollcommand=log_sb.set)
+        self.p3_log.pack(side="left", fill="both", expand=True)
+        log_sb.pack(side="right", fill="y")
+        self.p3_log.tag_configure("err", foreground="#b91c1c")
+        self.p3_log.tag_configure("ok", foreground="#166534")
+
+        self.p3_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
+        self.p3_status.pack(fill="x", pady=4)
+
+    def _pick_p3_dir(self) -> None:
+        d = filedialog.askdirectory(
+            initialdir=self.var_p3_dir.get() or str(Path.home())
+        )
+        if d:
+            self.var_p3_dir.set(d)
+            self._search_p3_xlsx()
+
+    def _search_p3_xlsx(self) -> None:
+        self.p3_found_list.delete(0, "end")
+        self._p3_found_paths = []
+        try:
+            files = search_xlsx(
+                self.var_p3_dir.get().strip(), self.var_p3_q.get().strip()
+            )
+        except Exception as e:
+            messagebox.showerror("검색 실패", str(e))
+            return
+        for f in files:
+            self._p3_found_paths.append(f["path"])
+            self.p3_found_list.insert("end", f["name"])
+        self.p3_status.configure(
+            text=f"파일 {len(files)}개" if files else "해당 폴더에서 .xlsx 없음",
+            fg="#0f172a",
+        )
+
+    def _on_p3_found_select(self, _event=None) -> None:
+        sel = self.p3_found_list.curselection()
+        if not sel:
+            return
+        path = self._p3_found_paths[sel[0]]
+        self._load_p3_category_list(path)
+
+    def _add_p3_found(self) -> None:
+        sel = self.p3_found_list.curselection()
+        if not sel:
+            messagebox.showinfo("안내", "목록에서 엑셀 파일을 선택하세요.")
+            return
+        path = self._p3_found_paths[sel[0]]
+        try:
+            add_paths([path])
+            set_selected(path)
+        except Exception:
+            pass
+        self._load_p3_category_list(path)
+
+    def _load_p3_category_list(self, path: str) -> None:
+        """P2와 동일 엑셀 컬럼으로 카테고리URL목록 표시."""
+        self.p3_lib_list.delete(0, "end")
+        self._p3_excel_rows = []
+        self._p3_current_excel = path
+        try:
+            from openpyxl import load_workbook
+
+            wb = load_workbook(path, data_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            wb.close()
+        except Exception as e:
+            self.p3_sel.configure(text=f"엑셀 읽기 실패: {e}")
+            return
+        if not rows:
+            self.p3_sel.configure(text="(빈 엑셀)")
+            return
+        headers = [str(h or "").strip() for h in rows[0]]
+        try:
+            label_i = headers.index("상위 최종 카테고리명")
+            url_i = headers.index("최종 카테고리 URL주소")
+        except ValueError:
+            # P3: 검색필터 URL 헤더도 허용
+            label_i = next(
+                (i for i, h in enumerate(headers) if "카테고리명" in h or "필터" in h),
+                0,
+            )
+            url_i = next(
+                (i for i, h in enumerate(headers) if "URL" in h.upper()),
+                None,
+            )
+            if url_i is None:
+                self.p3_sel.configure(text="URL 열을 찾지 못했습니다")
+                return
+        for vals in rows[1:]:
+            cells = list(vals) if vals else []
+            url = str(cells[url_i] or "").strip() if url_i < len(cells) else ""
+            if not url.lower().startswith("http"):
+                continue
+            label = (
+                str(cells[label_i] or "").strip() if label_i < len(cells) else ""
+            )
+            item = {"label": label, "url": url}
+            self._p3_excel_rows.append(item)
+            self.p3_lib_list.insert(
+                "end", f"{len(self._p3_excel_rows):03d}  {label}  |  {url}"
+            )
+        self.p3_sel.configure(
+            text=f"선택: {Path(path).name} · {len(self._p3_excel_rows)}행"
+        )
+
+    def _refresh_p3_list(self) -> None:
+        cur = self._p3_current_excel
+        self._search_p3_xlsx()
+        if cur and os.path.isfile(cur):
+            self._load_p3_category_list(cur)
+
+    def _clear_p3_log(self) -> None:
+        tv = getattr(self, "p3_log", None)
+        if tv is None:
+            return
+        for item in tv.get_children():
+            tv.delete(item)
+
+    def _append_p3_log(self, step: str, message: str) -> None:
+        tv = getattr(self, "p3_log", None)
+        if tv is None:
+            return
+        ts = time.strftime("%H:%M:%S")
+        tag = ()
+        if step in ("오류", "ERROR", "FAIL") or "실패" in (message or ""):
+            tag = ("err",)
+        elif step in ("완료", "OK") or "갱신OK" in (message or ""):
+            tag = ("ok",)
+        item = tv.insert("", "end", values=(ts, step, message), tags=tag)
+        tv.see(item)
+
+    def _p3_stop_flag(self) -> Path:
+        return ROOT / "P3_필터_갱신" / ".filter_stop"
+
+    def _run_p3(self) -> None:
+        path = self._p3_current_excel
+        if not path:
+            sel = self.p3_found_list.curselection()
+            if sel:
+                path = self._p3_found_paths[sel[0]]
+                self._load_p3_category_list(path)
+        if not path or not os.path.isfile(path):
+            messagebox.showinfo("안내", "엑셀 파일을 선택하세요.")
+            return
+        mango = self.var_p3_mango_url.get().strip()
+        if not mango:
+            messagebox.showinfo(
+                "안내",
+                "더망고 URL(검색필터·저장조건 화면)을 입력하세요.",
+            )
+            return
+        if not mango.lower().startswith("http"):
+            messagebox.showerror("오류", "더망고 URL은 http(s)로 시작해야 합니다.")
+            return
+        if self._p3_proc and self._p3_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 갱신이 진행 중입니다.")
+            return
+        if not self._p3_excel_rows:
+            messagebox.showerror("오류", "엑셀에 처리할 URL 행이 없습니다.")
+            return
+
+        update_py = ROOT / "P3_필터_갱신" / "update_filters.py"
+        if not update_py.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{update_py}")
+            return
+
+        try:
+            self._p3_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+        args = [
+            sys.executable,
+            str(update_py),
+            path,
+            "--mango-url",
+            mango,
+        ]
+        try:
+            add_paths([path])
+            set_selected(path)
+        except Exception:
+            pass
+
+        self._clear_p3_log()
+        self.p3_status.configure(
+            text=(
+                f"갱신 시작: {Path(path).name} / 총 {len(self._p3_excel_rows)}행 — "
+                "브라우저에서 더망고 로그인 상태를 확인하세요"
+            ),
+            fg="#15803d",
+        )
+        self._append_p3_log("실행", f"엑셀={path}")
+        self._append_p3_log("실행", f"더망고URL={mango}")
+
+        try:
+            creationflags = 0
+            if os.name == "nt":
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+            env = os.environ.copy()
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            self._p3_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P3_필터_갱신"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p3_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p3_proc,
+            args=(self._p3_proc, path),
+            daemon=True,
+        ).start()
+
+    def _stop_p3(self) -> None:
+        proc = self._p3_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 갱신이 없습니다.")
+            return
+        try:
+            self._p3_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p3_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
+            return
+        self.p3_status.configure(text="갱신 종료 요청 중…", fg="#b45309")
+
+    def _watch_p3_proc(self, proc: subprocess.Popen, path: str) -> None:
+        assert proc.stdout is not None
+        buf = b""
+        try:
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = ""
+                    for enc in ("utf-8", "cp949", "mbcs"):
+                        try:
+                            text = line.decode(enc).rstrip("\r")
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    if not text:
+                        continue
+                    # [step] message
+                    step, msg = "로그", text
+                    if text.startswith("[") and "]" in text:
+                        end = text.index("]")
+                        step = text[1:end].strip() or "로그"
+                        msg = text[end + 1 :].strip()
+                    self.after(0, lambda s=step, m=msg: self._append_p3_log(s, m))
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p3_status.configure(
+                    text=f"로그 수신 오류: {e}", fg="#b91c1c"
+                ),
+            )
+        code = proc.wait()
+        self.after(0, lambda: self._on_p3_finished(path, code))
+
+    def _on_p3_finished(self, path: str, code: int) -> None:
+        self._p3_proc = None
+        try:
+            self._p3_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+        if code == 0:
+            self.p3_status.configure(
+                text=f"완료 · {Path(path).name}",
+                fg="#15803d",
+            )
+            self._append_p3_log("완료", "보드 직접실행 종료")
+        else:
+            self.p3_status.configure(
+                text=f"종료 (exit={code}) · {Path(path).name}",
+                fg="#b91c1c",
+            )
+            self._append_p3_log("오류", f"종료 코드 {code}")
 
     def _pick_search_dir(self) -> None:
         d = filedialog.askdirectory(initialdir=self.var_dir.get() or str(Path.home()))
