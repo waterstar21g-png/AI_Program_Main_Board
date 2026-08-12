@@ -1,2 +1,2 @@
-버전 2.0.92 (Python B안)
-업데이트: 바탕화면 아이콘 생성 실패 수정(PS ASCII·VBS폴백·다중Desktop)
+버전 2.0.93 (Python B안)
+업데이트: 버전강제갱신 수정 머지가능화(Vercel배포스킵)+ZIP폴백
