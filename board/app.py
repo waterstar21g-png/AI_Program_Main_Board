@@ -74,8 +74,11 @@ from log_protocol import (  # noqa: E402
     META_FIELDS,
     META_INTERNAL_FIELDS,
     format_meta_line,
+    main_tag_p3,
     parse_line,
+    step_label_p3,
     step_tag,
+    step_tag_p3,
     strip_timestamp,
     sub_time_range,
 )
@@ -1699,6 +1702,7 @@ class BoardApp(tk.Tk):
         actions.pack(fill="x", pady=(8, 0))
         btn_row = tk.Frame(actions, bg="#ffffff")
         btn_row.pack(fill="x")
+
         left_btns = tk.Frame(btn_row, bg="#ffffff")
         left_btns.pack(side="left", fill="x", expand=True)
         self.btn_p3_run = tk.Button(
@@ -1764,37 +1768,164 @@ class BoardApp(tk.Tk):
         self.p3_sel = tk.Label(lib, text="", bg="#ffffff", fg="#64748b", anchor="w")
         self.p3_sel.pack(fill="x", pady=(2, 0))
 
-        log_frame = tk.LabelFrame(
-            parent,
-            text="실행 로그",
+        # ★요건: 실행 로그 = MAIN(1~7단계만) / SUB(단계별 세부내용) / 스크린샷(오류·원인
+        # 파악용 캡처) 3단 그리드로 명확히 구분 + 상단 체크박스 3개로 표출여부 선택
+        log_wrap = tk.LabelFrame(
+            parent, text="실행 로그", bg="#ffffff", padx=6, pady=4
+        )
+        log_wrap.pack(fill="both", expand=True, pady=(8, 0))
+
+        self.var_p3_show_main = tk.BooleanVar(value=True)
+        self.var_p3_show_sub = tk.BooleanVar(value=True)
+        self.var_p3_show_shot = tk.BooleanVar(value=True)
+        log_checks = tk.Frame(log_wrap, bg="#ffffff")
+        log_checks.pack(fill="x", pady=(0, 4))
+        tk.Label(
+            log_checks, text="표시:", bg="#ffffff", font=("Malgun Gothic", 9)
+        ).pack(side="left", padx=(0, 4))
+        tk.Checkbutton(
+            log_checks,
+            text="MAIN",
+            variable=self.var_p3_show_main,
+            command=self._toggle_p3_log_panels,
+            bg="#ffffff",
+            font=("Malgun Gothic", 9),
+        ).pack(side="left", padx=(0, 6))
+        tk.Checkbutton(
+            log_checks,
+            text="SUB",
+            variable=self.var_p3_show_sub,
+            command=self._toggle_p3_log_panels,
+            bg="#ffffff",
+            font=("Malgun Gothic", 9),
+        ).pack(side="left", padx=(0, 6))
+        tk.Checkbutton(
+            log_checks,
+            text="스크린샷",
+            variable=self.var_p3_show_shot,
+            command=self._toggle_p3_log_panels,
+            bg="#ffffff",
+            font=("Malgun Gothic", 9),
+        ).pack(side="left")
+
+        log_area = tk.Frame(log_wrap, bg="#f1f5f9")
+        log_area.pack(fill="both", expand=True)
+
+        style = ttk.Style(self)
+        try:
+            style.configure("P3Log.Treeview", rowheight=22, font=("Malgun Gothic", 9))
+            style.configure("P3Log.Treeview.Heading", font=("Malgun Gothic", 9, "bold"))
+        except tk.TclError:
+            pass
+
+        self._p3_log_area = log_area
+
+        # 1) MAIN — 7단계만 표시
+        self.p3_main_frame = tk.LabelFrame(
+            log_area,
+            text="MAIN (1~7단계만)",
             bg="#ffffff",
             padx=6,
             pady=4,
         )
-        log_frame.pack(fill="both", expand=True, pady=(8, 0))
-        self.p3_log = ttk.Treeview(
-            log_frame,
+        self.p3_main_frame.pack(fill="both", expand=True)
+
+        self.p3_main_log = ttk.Treeview(
+            self.p3_main_frame,
             columns=("time", "step", "message"),
             show="headings",
-            height=10,
+            height=7,
+            style="P3Log.Treeview",
         )
-        self.p3_log.heading("time", text="시각")
-        self.p3_log.heading("step", text="단계")
-        self.p3_log.heading("message", text="내용")
-        self.p3_log.column("time", width=90, minwidth=70, stretch=False, anchor="center")
-        self.p3_log.column("step", width=70, minwidth=50, stretch=False, anchor="center")
-        self.p3_log.column(
-            "message", width=640, minwidth=200, stretch=True, anchor="w"
+        self.p3_main_log.heading("time", text="시각")
+        self.p3_main_log.heading("step", text="단계")
+        self.p3_main_log.heading("message", text="내용 (1~7단계)")
+        self.p3_main_log.column("time", width=90, minwidth=70, stretch=False, anchor="center")
+        self.p3_main_log.column("step", width=44, minwidth=40, stretch=False, anchor="center")
+        self.p3_main_log.column(
+            "message", width=640, minwidth=220, stretch=True, anchor="w"
         )
-        log_sb = tk.Scrollbar(log_frame, orient="vertical", command=self.p3_log.yview)
-        self.p3_log.configure(yscrollcommand=log_sb.set)
-        self.p3_log.pack(side="left", fill="both", expand=True)
-        log_sb.pack(side="right", fill="y")
-        self.p3_log.tag_configure("err", foreground="#b91c1c")
-        self.p3_log.tag_configure("ok", foreground="#166534")
-        self.p3_log.tag_configure("shot", foreground="#0f766e")
-        self.p3_log.bind("<Double-Button-1>", self._on_p3_log_double_click)
-        self._p3_shot_paths: dict[str, str] = {}
+        main_sb = tk.Scrollbar(
+            self.p3_main_frame, orient="vertical", command=self.p3_main_log.yview
+        )
+        self.p3_main_log.configure(yscrollcommand=main_sb.set)
+        self.p3_main_log.pack(side="left", fill="both", expand=True)
+        main_sb.pack(side="right", fill="y")
+        self.p3_main_log.bind("<<TreeviewSelect>>", self._on_p3_main_log_select)
+        self._setup_p3_log_tags()
+
+        # 2) SUB — 선택한 MAIN 단계의 세부내용(텍스트)
+        self.p3_sub_frame = tk.LabelFrame(
+            log_area,
+            text="SUB (선택한 단계의 세부내용)",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
+        )
+        self.p3_sub_frame.pack(fill="both", expand=True, pady=(6, 0))
+
+        self.p3_sub_log = ttk.Treeview(
+            self.p3_sub_frame,
+            columns=("time", "message"),
+            show="headings",
+            height=5,
+            style="P3Log.Treeview",
+        )
+        self.p3_sub_log.heading("time", text="시각")
+        self.p3_sub_log.heading("message", text="세부내용")
+        self.p3_sub_log.column("time", width=90, minwidth=70, stretch=False, anchor="center")
+        self.p3_sub_log.column("message", width=700, minwidth=220, stretch=True, anchor="w")
+        sub_sb = tk.Scrollbar(
+            self.p3_sub_frame, orient="vertical", command=self.p3_sub_log.yview
+        )
+        self.p3_sub_log.configure(yscrollcommand=sub_sb.set)
+        self.p3_sub_log.pack(side="left", fill="both", expand=True)
+        sub_sb.pack(side="right", fill="y")
+        self.p3_sub_log.tag_configure("err", foreground="#b91c1c")
+        self.p3_sub_log.tag_configure("done", foreground="#166534")
+        self.p3_sub_log.tag_configure("stop", foreground="#b45309")
+
+        # 3) 스크린샷 — SUB 하단, 오류/원인 파악용 캡처 전용 그리드
+        self.p3_shot_frame = tk.LabelFrame(
+            log_area,
+            text="스크린샷 (선택한 단계의 캡처 · 오류/원인 파악용 · 더블클릭으로 열기)",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
+        )
+        self.p3_shot_frame.pack(fill="both", expand=True, pady=(6, 0))
+
+        self.p3_shot_log = ttk.Treeview(
+            self.p3_shot_frame,
+            columns=("time", "label"),
+            show="headings",
+            height=5,
+            style="P3Log.Treeview",
+        )
+        self.p3_shot_log.heading("time", text="시각")
+        self.p3_shot_log.heading("label", text="스크린샷 라벨 · 더블클릭으로 열기")
+        self.p3_shot_log.column("time", width=90, minwidth=70, stretch=False, anchor="center")
+        self.p3_shot_log.column("label", width=700, minwidth=220, stretch=True, anchor="w")
+        shot_sb = tk.Scrollbar(
+            self.p3_shot_frame, orient="vertical", command=self.p3_shot_log.yview
+        )
+        self.p3_shot_log.configure(yscrollcommand=shot_sb.set)
+        self.p3_shot_log.pack(side="left", fill="both", expand=True)
+        shot_sb.pack(side="right", fill="y")
+        self.p3_shot_log.tag_configure("shot", foreground="#0f766e")
+        self.p3_shot_log.tag_configure("err", foreground="#b91c1c")
+        self.p3_shot_log.bind("<Double-Button-1>", self._on_p3_shot_log_double_click)
+
+        # seq(단계 발생 고유번호) 기반 main↔sub↔스크린샷 연결 데이터
+        self._p3_sub_by_seq: dict[int, list[tuple[str, str, str]]] = {}
+        self._p3_shots_by_seq: dict[int, list[tuple[str, str, str]]] = {}
+        self._p3_shot_path_by_seq: dict[tuple[int, int], str] = {}
+        self._p3_main_item_by_seq: dict[int, str] = {}
+        self._p3_main_ts_end: dict[int, str] = {}
+        self._p3_seq_by_main_item: dict[str, int] = {}
+        self._p3_selected_seq: int | None = None
+        self._p3_latest_seq: int = 0
+        self._p3_follow_latest: bool = True
         self._p3_last_shot_dir: Path | None = None
 
         self.p3_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
@@ -1905,50 +2036,210 @@ class BoardApp(tk.Tk):
             self._load_p3_category_list(cur)
 
     def _clear_p3_log(self) -> None:
-        tv = getattr(self, "p3_log", None)
-        if tv is None:
-            return
-        for item in tv.get_children():
-            tv.delete(item)
-        self._p3_shot_paths = {}
+        for tv in (
+            getattr(self, "p3_main_log", None),
+            getattr(self, "p3_sub_log", None),
+            getattr(self, "p3_shot_log", None),
+        ):
+            if tv is not None:
+                for item in tv.get_children():
+                    tv.delete(item)
+        self._p3_sub_by_seq = {}
+        self._p3_shots_by_seq = {}
+        self._p3_shot_path_by_seq = {}
+        self._p3_main_item_by_seq = {}
+        self._p3_main_ts_end = {}
+        self._p3_seq_by_main_item = {}
+        self._p3_selected_seq = None
+        self._p3_latest_seq = 0
+        self._p3_follow_latest = True
 
-    def _append_p3_log(self, step: str, message: str, *, shot_path: str = "") -> None:
-        tv = getattr(self, "p3_log", None)
-        if tv is None:
-            return
-        ts = time.strftime("%H:%M:%S")
-        tag = ()
-        if step in ("오류", "ERROR", "FAIL") or "실패" in (message or ""):
-            tag = ("err",)
-        elif step in ("완료", "OK") or "갱신OK" in (message or ""):
-            tag = ("ok",)
-        elif step == "샷" or "[샷]" in (message or "") or shot_path:
-            tag = ("shot",)
-        item = tv.insert("", "end", values=(ts, step, message), tags=tag)
-        if shot_path:
-            self._p3_shot_paths[item] = shot_path
-            try:
-                self._p3_last_shot_dir = Path(shot_path).parent
-            except Exception:
-                pass
-        tv.see(item)
+    def _setup_p3_log_tags(self) -> None:
+        """MAIN 실행로그 — 단계 성격별 색상 태그 (P2와 동일 팔레트)."""
+        tv = self.p3_main_log
+        tv.tag_configure("normal", foreground="#0f172a")
+        tv.tag_configure("login", foreground="#7c3aed", background="#f5f3ff")
+        tv.tag_configure("save", foreground="#5b21b6", background="#f3e8ff")
+        tv.tag_configure("err", foreground="#b91c1c", background="#fef2f2")
 
-    def _on_p3_log_double_click(self, _event=None) -> None:
-        """실행 로그 샷 행 더블클릭 → PNG 열기."""
-        tv = getattr(self, "p3_log", None)
-        if tv is None:
+    def _toggle_p3_log_panels(self) -> None:
+        """MAIN / SUB / 스크린샷 체크박스 — 실행로그 3개 패널 표시/숨김.
+
+        표시 순서(위→아래)는 항상 MAIN → SUB → 스크린샷으로 고정.
+        """
+        show_main = bool(self.var_p3_show_main.get())
+        show_sub = bool(self.var_p3_show_sub.get())
+        show_shot = bool(self.var_p3_show_shot.get())
+        panels = (
+            (getattr(self, "p3_main_frame", None), show_main),
+            (getattr(self, "p3_sub_frame", None), show_sub),
+            (getattr(self, "p3_shot_frame", None), show_shot),
+        )
+        for frame, _ in panels:
+            if frame is not None:
+                frame.pack_forget()
+        first = True
+        for frame, show in panels:
+            if frame is None or not show:
+                continue
+            frame.pack(fill="both", expand=True, pady=(0, 0) if first else (6, 0))
+            first = False
+
+    def _handle_p3_line(self, message: str) -> None:
+        """update_filters.py stdout 한 줄 처리 — MAIN/SUB/스크린샷 3단 그리드에 반영.
+
+        ★요건:
+        - MAIN엔 1~7단계만 (오류/완료/중단은 새 MAIN 행을 만들지 않고 SUB에 표시)
+        - SUB엔 선택한 단계의 세부내용(텍스트)만
+        - 스크린샷엔 그 단계의 캡처(오류/원인 파악용)만 — SUB 하단 별도 그리드
+        - 마커 없는 잡다한 줄은 화면에 출력하지 않음
+        """
+        text = (message or "").rstrip()
+        if not text:
             return
-        sel = tv.selection()
+        if text.startswith("##P3SHOT##"):
+            # 스크린샷 폴더 기억용(「스크린샷 보기」) — 그리드 행은 ##SUB## 줄로 그린다
+            # (경로가 그 줄에 함께 들어 있어 도착 순서와 무관하다)
+            parts = text.split("##")
+            self._capture_p3_shot_dir_from_path(
+                parts[2].strip() if len(parts) > 2 else ""
+            )
+            return
+        t, text = strip_timestamp(text)
+        parsed = parse_line(text)
+        if parsed is None:
+            return  # 마커 없는 줄은 화면에 출력하지 않음
+        kind = parsed[0]
+        if kind == "main":
+            _, seq, n, msg = parsed
+            if 1 <= n <= 7:
+                self._insert_p3_main_row(t, seq, n, msg)
+            else:
+                # 오류/완료/중단(90/91/92) — MAIN엔 표시하지 않고, 마지막 실행단계의
+                # SUB에 요약을 남긴다 (요건: MAIN은 7단계만).
+                target_seq = self._p3_latest_seq or seq
+                label = step_label_p3(n)
+                tag = step_tag_p3(n)
+                self._append_p3_sub_entry(target_seq, t, tag, f"[{label}] {msg}")
+        elif kind == "sub":
+            _, seq, msg = parsed
+            shot_ok = re.match(r"^(.*)\s->\s(.+\.png)\s*$", msg)
+            shot_fail = re.match(r"^\[샷 실패\]\s*(.*)$", msg)
+            if shot_ok:
+                label, path = shot_ok.group(1).strip(), shot_ok.group(2).strip()
+                self._capture_p3_shot_dir_from_path(path)
+                self._append_p3_shot_entry(seq, t, label, path)
+            elif shot_fail:
+                self._append_p3_shot_entry(
+                    seq, t, f"[샷 실패] {shot_fail.group(1).strip()}", ""
+                )
+            else:
+                self._append_p3_sub_entry(seq, t, "info", msg)
+        elif kind == "subshot":
+            _, seq, path, label = parsed
+            self._capture_p3_shot_dir_from_path(path)
+            self._append_p3_shot_entry(seq, t, label, path)
+        # ##META## 마커는 P3(update_filters.py)에서 사용하지 않음 — 무시
+
+    def _p3_main_ts_for_seq(self, seq: int) -> str | None:
+        item = self._p3_main_item_by_seq.get(seq)
+        if not item:
+            return None
+        vals = self.p3_main_log.item(item, "values")
+        return vals[0] if vals else None
+
+    def _p3_ts_for_sub(self, seq: int, t: str) -> str:
+        """sub/스크린샷 시각 = 현단계 MAIN 진입 ~ 다음 MAIN 진입 (P2와 동일)."""
+        if "~" in (t or ""):
+            return t
+        start = self._p3_main_ts_for_seq(seq)
+        if not start:
+            return t
+        end = self._p3_main_ts_end.get(seq, start)
+        return sub_time_range(start, end)
+
+    def _insert_p3_main_row(self, t: str, seq: int, n: int, msg: str) -> None:
+        if seq > 1:
+            self._p3_main_ts_end[seq - 1] = t
+            if self._p3_selected_seq == seq - 1:
+                self._render_p3_sub_grid(seq - 1)
+                self._render_p3_shot_grid(seq - 1)
+        tag = main_tag_p3(n, msg)
+        item = self.p3_main_log.insert("", "end", values=(t, n, msg), tags=(tag,))
+        self._p3_main_item_by_seq[seq] = item
+        self._p3_seq_by_main_item[item] = seq
+        self._p3_latest_seq = max(self._p3_latest_seq, seq)
+        self.p3_main_log.see(item)
+        if self._p3_follow_latest:
+            self.p3_main_log.selection_set(item)
+            self._p3_selected_seq = seq
+            self._render_p3_sub_grid(seq)
+            self._render_p3_shot_grid(seq)
+
+    def _append_p3_sub_entry(self, seq: int, t: str, kind: str, msg: str) -> None:
+        display_t = self._p3_ts_for_sub(seq, t)
+        self._p3_sub_by_seq.setdefault(seq, []).append((display_t, kind, msg))
+        if self._p3_selected_seq == seq:
+            tag = (kind,) if kind in ("err", "done", "stop") else ()
+            item = self.p3_sub_log.insert("", "end", values=(display_t, msg), tags=tag)
+            self.p3_sub_log.see(item)
+
+    def _render_p3_sub_grid(self, seq: int) -> None:
+        for item in self.p3_sub_log.get_children():
+            self.p3_sub_log.delete(item)
+        for t, kind, msg in self._p3_sub_by_seq.get(seq, []):
+            display_t = self._p3_ts_for_sub(seq, t)
+            tag = (kind,) if kind in ("err", "done", "stop") else ()
+            self.p3_sub_log.insert("", "end", values=(display_t, msg), tags=tag)
+
+    def _append_p3_shot_entry(self, seq: int, t: str, label: str, path: str) -> None:
+        display_t = self._p3_ts_for_sub(seq, t)
+        entries = self._p3_shots_by_seq.setdefault(seq, [])
+        entries.append((display_t, label, path))
+        idx = len(entries) - 1
+        self._p3_shot_path_by_seq[(seq, idx)] = path
+        if self._p3_selected_seq == seq:
+            tag = ("shot",) if path else ("err",)
+            item = self.p3_shot_log.insert(
+                "", "end", values=(display_t, label), tags=tag
+            )
+            self.p3_shot_log.see(item)
+
+    def _render_p3_shot_grid(self, seq: int) -> None:
+        for item in self.p3_shot_log.get_children():
+            self.p3_shot_log.delete(item)
+        for t, label, path in self._p3_shots_by_seq.get(seq, []):
+            display_t = self._p3_ts_for_sub(seq, t)
+            tag = ("shot",) if path else ("err",)
+            self.p3_shot_log.insert("", "end", values=(display_t, label), tags=tag)
+
+    def _on_p3_main_log_select(self, _evt=None) -> None:
+        sel = self.p3_main_log.selection()
         if not sel:
             return
-        item = sel[0]
-        path = self._p3_shot_paths.get(item, "")
-        if not path:
-            vals = tv.item(item, "values") or ()
-            msg = vals[2] if len(vals) >= 3 else ""
-            m = re.search(r"((?:[A-Za-z]:)?[^\s]+\.png)\s*$", str(msg))
-            if m:
-                path = m.group(1)
+        seq = self._p3_seq_by_main_item.get(sel[0])
+        if seq is None:
+            return
+        self._p3_selected_seq = seq
+        self._p3_follow_latest = seq == self._p3_latest_seq
+        self._render_p3_sub_grid(seq)
+        self._render_p3_shot_grid(seq)
+
+    def _capture_p3_shot_dir_from_path(self, path: str) -> None:
+        try:
+            p = Path(path)
+            if p.parent.is_dir():
+                self._p3_last_shot_dir = p.parent
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _on_p3_shot_log_double_click(self, _evt=None) -> None:
+        """스크린샷 그리드 행 더블클릭 → PNG 열기."""
+        sel = self.p3_shot_log.selection()
+        if not sel or self._p3_selected_seq is None:
+            return
+        idx = self.p3_shot_log.index(sel[0])
+        path = self._p3_shot_path_by_seq.get((self._p3_selected_seq, idx), "")
         if not path or not os.path.isfile(path):
             return
         try:
@@ -1978,7 +2269,7 @@ class BoardApp(tk.Tk):
             empty_hint=(
                 "P3 스크린샷 폴더가 없습니다.\n"
                 "작업시작 후 필터 일치 행에서 단계 샷이 생성됩니다.\n"
-                "(3)저장상품수 갱신 전·후 샷 포함)"
+                "(5)저장상품수 갱신 전·후 샷 포함)"
             ),
         )
 
@@ -2042,13 +2333,6 @@ class BoardApp(tk.Tk):
             ),
             fg="#15803d",
         )
-        self._append_p3_log("실행", f"엑셀={path}")
-        self._append_p3_log("실행", f"더망고URL={mango}")
-        self._append_p3_log(
-            "실행",
-            "P2와 동일 — 망고 Chrome 창 표시 후 검색필터 URL 이동 (로그인대기 없음)",
-        )
-
         try:
             creationflags = 0
             if os.name == "nt":
@@ -2090,6 +2374,7 @@ class BoardApp(tk.Tk):
         self.p3_status.configure(text="작업중단 요청 중…", fg="#b45309")
 
     def _watch_p3_proc(self, proc: subprocess.Popen, path: str) -> None:
+        """update_filters.py stdout 감시 — P2와 동일 ##MAIN##/##SUB## 프로토콜만 그리드에 반영."""
         assert proc.stdout is not None
         buf = b""
         try:
@@ -2100,56 +2385,17 @@ class BoardApp(tk.Tk):
                 buf += chunk
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
-                    text = ""
-                    for enc in ("utf-8", "cp949", "mbcs"):
-                        try:
-                            text = line.decode(enc).rstrip("\r")
-                            break
-                        except UnicodeDecodeError:
-                            continue
-                    if not text:
-                        continue
-                    # ##P3SHOT##<path>##<label>
-                    if text.startswith("##P3SHOT##"):
-                        parts = text.split("##")
-                        # ['', 'P3SHOT', path, label...]
-                        path = parts[2].strip() if len(parts) > 2 else ""
-                        label = "##".join(parts[3:]).strip() if len(parts) > 3 else ""
-                        msg = f"[샷] {label} -> {path}" if label else f"[샷] {path}"
-                        self.after(
-                            0,
-                            lambda m=msg, p=path: self._append_p3_log(
-                                "샷", m, shot_path=p
-                            ),
-                        )
-                        continue
-                    # [step] message
-                    step, msg = "로그", text
-                    if text.startswith("[") and "]" in text:
-                        end = text.index("]")
-                        step = text[1:end].strip() or "로그"
-                        msg = text[end + 1 :].strip()
-                    shot_path = ""
-                    if step == "샷" or "[샷]" in msg:
-                        m = re.search(
-                            r"((?:[A-Za-z]:)?[^\s]+\.png)\s*$",
-                            msg,
-                        )
-                        if m:
-                            shot_path = m.group(1)
-                    self.after(
-                        0,
-                        lambda s=step, m=msg, p=shot_path: self._append_p3_log(
-                            s, m, shot_path=p
-                        ),
-                    )
+                    text = self._decode_log_bytes(line).rstrip("\r").rstrip()
+                    if text:
+                        self.after(0, lambda t=text: self._handle_p3_line(t))
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip("\r").rstrip()
+                if text:
+                    self.after(0, lambda t=text: self._handle_p3_line(t))
         except Exception as e:  # noqa: BLE001
-            self.after(
-                0,
-                lambda: self.p3_status.configure(
-                    text=f"로그 수신 오류: {e}", fg="#b91c1c"
-                ),
-            )
+            # except 블록을 벗어나면 e 가 사라지므로 메시지를 먼저 만들어 넘긴다
+            msg = f"로그 수신 오류: {e}"
+            self.after(0, lambda m=msg: self.p3_status.configure(text=m, fg="#b91c1c"))
         code = proc.wait()
         self.after(0, lambda: self._on_p3_finished(path, code))
 
@@ -2164,13 +2410,11 @@ class BoardApp(tk.Tk):
                 text=f"완료 · {Path(path).name}",
                 fg="#15803d",
             )
-            self._append_p3_log("완료", "보드 직접실행 종료")
         else:
             self.p3_status.configure(
                 text=f"종료 (exit={code}) · {Path(path).name}",
                 fg="#b91c1c",
             )
-            self._append_p3_log("오류", f"종료 코드 {code}")
 
     def _pick_search_dir(self) -> None:
         d = filedialog.askdirectory(initialdir=self.var_dir.get() or str(Path.home()))

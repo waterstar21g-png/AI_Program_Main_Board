@@ -11,8 +11,11 @@ sys.path.insert(0, str(ROOT))
 from log_protocol import (  # noqa: E402
     META_FIELDS,
     format_meta_line,
+    main_tag_p3,
     parse_line,
+    step_label_p3,
     step_tag,
+    step_tag_p3,
     strip_timestamp,
     sub_time_range,
 )
@@ -63,6 +66,34 @@ def test_step_tag_mapping():
     assert step_tag(12) == "done"
     assert step_tag(3) == "normal"
     assert step_tag(7) == "normal"
+
+
+def test_step_tag_p3_mapping():
+    """P3(update_filters.py) — 1~7단계 + 오류(90)/완료(91)/중단(92)."""
+    assert step_tag_p3(1) == "login"
+    assert step_tag_p3(5) == "save"
+    assert step_tag_p3(6) == "save"
+    assert step_tag_p3(90) == "err"
+    assert step_tag_p3(91) == "done"
+    assert step_tag_p3(92) == "stop"
+    assert step_tag_p3(2) == "normal"
+    assert step_tag_p3(7) == "normal"
+
+
+def test_step_label_p3_mapping():
+    assert step_label_p3(90) == "오류"
+    assert step_label_p3(91) == "완료"
+    assert step_label_p3(92) == "중단"
+    assert step_label_p3(3) == 3
+
+
+def test_main_tag_p3_marks_failures_red():
+    """같은 단계번호라도 실패 문구가 있으면 적색(err)."""
+    assert main_tag_p3(5, "5) 저장하기 클릭 완료") == "save"
+    assert main_tag_p3(5, "5) '저장하기' 버튼 클릭 실패 · KEY=...") == "err"
+    assert main_tag_p3(5, "5) '수집조건수정' 클릭 후 not found · 중단") == "err"
+    assert main_tag_p3(2, "2) KEY확인 · 필터일치") == "normal"
+    assert main_tag_p3(6, "6) 확인 클릭 완료") == "save"
 
 
 def test_parse_meta_line():
@@ -136,6 +167,9 @@ if __name__ == "__main__":
         ("sub_time_range", test_sub_time_range),
         ("parse_unrecognized_none", test_parse_unrecognized_line_returns_none),
         ("step_tag_map", test_step_tag_mapping),
+        ("step_tag_p3_map", test_step_tag_p3_mapping),
+        ("step_label_p3_map", test_step_label_p3_mapping),
+        ("main_tag_p3_fail_red", test_main_tag_p3_marks_failures_red),
         ("full_pipeline", test_full_pipeline_timestamp_then_parse),
     ]
     for name, fn in tests:

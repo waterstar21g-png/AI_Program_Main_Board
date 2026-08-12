@@ -57,6 +57,17 @@ STEP_TAG: dict[int, str] = {
     12: "done",
 }
 
+# P3(update_filters.py) 1~7단계 + 오류/완료/중단(90/91/92) → 색상태그
+# (P2와 동일 MAIN/SUB 그리드 프로토콜을 공유하지만 단계 의미가 달라 별도 매핑)
+STEP_TAG_P3: dict[int, str] = {
+    1: "login",
+    5: "save",
+    6: "save",
+    90: "err",
+    91: "done",
+    92: "stop",
+}
+
 
 def strip_timestamp(text: str) -> tuple[str, str]:
     """"[HH:MM:SS] 또는 [HH:MM:SS~HH:MM:SS] 나머지" → (시각, 나머지).
@@ -108,3 +119,33 @@ def parse_line(text: str) -> tuple | None:
 
 def step_tag(n: int) -> str:
     return STEP_TAG.get(n, "normal")
+
+
+def step_tag_p3(n: int) -> str:
+    return STEP_TAG_P3.get(n, "normal")
+
+
+# P3 MAIN 그리드 "단계" 열 표시용 — 90/91/92 숫자 코드를 한글 라벨로 (1~7은 숫자 그대로)
+STEP_LABEL_P3: dict[int, str] = {90: "오류", 91: "완료", 92: "중단"}
+
+
+def step_label_p3(n: int) -> str | int:
+    return STEP_LABEL_P3.get(n, n)
+
+
+# 단계번호로는 성공/실패가 구분되지 않으므로(예: 5)저장 성공·5)저장 실패 모두 n=5),
+# 실패 문구가 있으면 MAIN 행을 적색으로 표시한다 — 오류 단계를 한눈에 찾기 위함.
+P3_FAIL_HINTS: tuple[str, ...] = (
+    "실패",
+    "중단",
+    "오류",
+    "not found",
+    "미검출",
+    "시간초과",
+)
+
+
+def main_tag_p3(n: int, msg: str) -> str:
+    if any(hint in (msg or "") for hint in P3_FAIL_HINTS):
+        return "err"
+    return step_tag_p3(n)
