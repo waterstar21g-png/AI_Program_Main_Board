@@ -126,6 +126,7 @@ $remote = Get-RemoteVersionHttp
 Write-Log "before=$before remote(http)=$remote"
 
 $gitOk = $false
+$fetchCode = -1
 $hasGit = [bool](Get-Command git -ErrorAction SilentlyContinue)
 $isRepo = Test-Path -LiteralPath (Join-Path $Root ".git")
 
@@ -134,7 +135,7 @@ if ($hasGit -and $isRepo) {
   $fetchCode = Invoke-GitHost "git fetch origin main --prune"
   Write-Log "git fetch exit=$fetchCode"
   if ($fetchCode -ne 0) {
-    Write-Log "WARN fetch failed — will prefer ZIP if VERSION still old"
+    Write-Log "WARN fetch failed — will force ZIP fallback"
   }
 
   $branch = ""
@@ -165,12 +166,7 @@ Write-Log "after git local=$afterGit gitOk=$gitOk"
 
 # Prefer ZIP when git did not truly refresh to remote VERSION
 $needZip = $false
-$fetchFailed = $false
-if ($hasGit -and $isRepo) {
-  # re-read last fetch code from log path is awkward; track via variable set above
-  if (-not (Get-Variable -Name fetchCode -ErrorAction SilentlyContinue)) { $fetchCode = -1 }
-  if ($fetchCode -ne 0) { $fetchFailed = $true }
-}
+$fetchFailed = ($hasGit -and $isRepo -and ($fetchCode -ne 0))
 
 if (-not $gitOk) {
   Write-Log "need ZIP: git path failed"

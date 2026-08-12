@@ -1,2 +1,2 @@
-버전 2.0.91 (Python B안)
-업데이트: 강제갱신 실패 수정(HTTP검증·fetch실패시 ZIP·로그·ASCII아이콘)
+버전 2.0.92 (Python B안)
+업데이트: 바탕화면 아이콘 생성 실패 수정(PS ASCII·VBS폴백·다중Desktop)
