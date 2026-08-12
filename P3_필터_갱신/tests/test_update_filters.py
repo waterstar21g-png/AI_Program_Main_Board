@@ -474,7 +474,9 @@ def test_find_edit_button_with_log_logs_text_and_screenshots(tmp_path: Path):
     assert any("버튼명 찾기 후" in m and "수집조건수정" in m for m in texts)
     shots = list(shot_dir.glob("*.png"))
     assert len(shots) >= 4
-    assert _is_major_log("주요", "6) 텍스트 찾기 전 · 텍스트=전체저장")
+    # 버튼 찾기 과정은 5) 수집조건수정 단계의 세부내용(SUB) — MAIN엔 7단계만
+    assert all("5) " in m for m in texts if "찾기" in m)
+    assert not _is_major_log("주요", "5) 텍스트 찾기 전 · 텍스트=전체저장")
     assert not _is_major_log("화면", "망고 Chrome 창 표시")
 
 
@@ -508,8 +510,9 @@ def test_run_update_uses_canonical_7step_log_messages():
     """run_update 본문이 사용자 지정 1)~7) 단계 문구·중요정보를 사용해야 함."""
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
     assert "1) 망고 수집 URL 링크로 진입" in src
-    assert "2) KEY매칭 성공 · 필터=" in src
-    assert "4) 상품노출수(카드수) 추출 — 건너뛰고 수행" in src
+    assert "2) 망고행: " in src  # 2단계 = 망고 행 정보 그대로
+    assert "2) 엑셀 KEY매칭 성공 · 필터=" in src
+    assert "4) 상품노출수(카드수) 추출 — 주석처리(URL 화면 열지 않음)" in src
     assert "'저장하기' 클릭 완료" in src
     assert "6) '수정되었습니다' 확인 클릭 완료" in src
     assert "7) 갱신성공 → 다음 행 반복" in src
@@ -525,28 +528,103 @@ def test_run_update_uses_canonical_7step_log_messages():
 
 
 def test_major_log_filter_keeps_steps_drops_noise():
-    """1)~7) 로 시작하는 단계 로그 + 오류/중단/완료/샷만 유지, 나머지는 억제."""
+    """자동판정은 오류/중단/완료 요약만 MAIN — 1)~7) 단계는 호출부 major=True.
+
+    ★메시지 첫머리의 "N)" 로 자동판정하면 스크린샷 라벨
+    ("6)확인 클릭 실패 -> ....png")까지 MAIN 에 섞인다(요건: MAIN은 7단계만).
+    """
     from update_filters import _is_major_log
 
-    assert _is_major_log("로직", "5) LABEL '수집조건수정' 버튼 찾아 실제 클릭")
     assert _is_major_log("오류", "행1 실패")
+    assert _is_major_log("중단", "사용자 중단 요청")
+    assert _is_major_log("완료", "갱신 1 · 실패 0")
     assert not _is_major_log("준비", "스크린샷 폴더: /tmp/x")
     assert not _is_major_log("화면", "필터일치 목록행 표시 · filter=x")
-    # reveal_browser_page 등은 major=False 로 명시 호출되어 _is_major_log 판단 자체를 건너뜀
-    # (여기서는 순수 함수 동작만 검증: 숫자로 시작하지 않으면 항상 억제됨)
+    # 스크린샷 세부로그는 단계번호로 시작해도 MAIN 이 아니다
+    assert not _is_major_log("샷", "6)확인 클릭 실패 -> /tmp/x/r106_06_confirm_fail.png")
+    assert not _is_major_log("로직", "5) LABEL '수집조건수정' 버튼 찾아 실제 클릭")
 
 
-def test_store_count_call_disabled_but_function_kept():
-    """4) 상품노출수(카드수) 추출 — URL클릭→browse_store_count_cards 로 활성화됨."""
+def test_step_logs_go_to_main_and_details_group_by_step(capsys):
+    """MAIN=1~7단계만 · 단계 진행 중 세부내용은 그 단계 SUB로 묶인다."""
     import update_filters as uf
 
-    assert uf.ENABLE_STORE_COUNT_CALL is True
+    uf._SEQ_STATE.update({"seq": 0, "cur_seq": 0, "cur_n": 0})
+    uf._PENDING_SUB.clear()
+
+    uf._log(None, "준비", "엑셀 x.xlsx · URL 12건")
+    uf._log(None, "로직", "1) 망고 수집 URL 링크로 진입: https://tmg", major=True)
+    uf._log(None, "로직", "2) KEY확인 · 필터=니트", major=True)
+    # 5단계 동작 중 세부내용 — 5단계 MAIN 이 아직 안 나왔다
+    uf._log(None, "화면", "5) 검색필터 수정 팝업 표시 · url=https://tmg/modify", major=False)
+    uf._log(None, "샷", "5)검색필터 수정 화면 -> /tmp/s/r1_05.png", major=False)
+    uf._log(None, "로직", "5) 저장상품수=73 입력 → 저장하기 클릭 완료", major=True)
+    uf._log(None, "오류", "행106 · 6) '확인' 버튼 클릭 실패 · KEY=https://zara")
+    uf._log(None, "완료", "갱신 0 · 건너뜀 0 · 실패 1 / 더망고 12행")
+
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if "##" in ln]
+    mains = [ln.split("##") for ln in lines if "##MAIN##" in ln]
+    steps = [int(p[3]) for p in mains]
+    # MAIN 은 7단계 범위만 (실패한 6단계도 그 단계 행으로 남는다)
+    assert [s for s in steps if 1 <= s <= 7] == [1, 2, 5, 6]
+    # 단계를 특정할 수 없는 완료 요약은 90/91/92 코드 (보드가 SUB로 표시)
+    assert 91 in steps
+
+    def subs_of(seq: int) -> list[str]:
+        out = []
+        for ln in lines:
+            if f"##SUB##{seq}##" in ln:
+                out.append(ln.split(f"##SUB##{seq}##", 1)[1])
+        return out
+
+    seq_by_step = {int(p[3]): int(p[2]) for p in mains}
+    # 준비 로그는 첫 단계(1)의 세부내용으로 들어간다
+    assert any("엑셀 x.xlsx" in m for m in subs_of(seq_by_step[1]))
+    # 5단계 진행 중 세부내용·스크린샷은 5단계에 묶인다 (앞 단계 2에 섞이지 않음)
+    five = subs_of(seq_by_step[5])
+    assert any("검색필터 수정 팝업 표시" in m for m in five)
+    assert any("r1_05.png" in m for m in five)
+    assert subs_of(seq_by_step[2]) == []
+
+
+def test_store_count_call_commented_out_never_opens_row_url():
+    """★요건: 망고 행 「URL 검색」 주소로 상품수 읽기·화면열기 전부 주석처리."""
+    import update_filters as uf
+
+    assert uf.ENABLE_STORE_COUNT_CALL is False
+    # 함수 자체는 추후 완성본을 위해 남겨 두지만 호출부는 없어야 한다
     assert callable(uf.browse_store_count_cards)
     assert callable(uf.click_demango_row_url)
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
     assert "def browse_store_count_cards" in src
-    assert "상품수 카드 갯수=" in src
-    assert "if ENABLE_STORE_COUNT_CALL:" in src
+    assert "if ENABLE_STORE_COUNT_CALL:" not in src
+    live = [
+        ln
+        for ln in src.splitlines()
+        if not ln.lstrip().startswith("#")
+        and ("click_demango_row_url(" in ln or "browse_store_count_cards(" in ln)
+    ]
+    # 남아 있는 것은 def 정의 줄뿐 — 실제 호출은 모두 주석
+    assert all(ln.lstrip().startswith("def ") for ln in live), live
+
+
+def test_first_five_rows_delay_three_seconds_then_fastest():
+    """★요건: 처음 5개 처리행만 동작마다 3초 대기 · 6번째부터 지연 없음."""
+    import update_filters as uf
+
+    assert uf.SLOW_DEMO_ROWS == 5
+    assert uf.SLOW_DEMO_DELAY_SEC == 3.0
+    assert uf.step_delay_sec(1) == 3.0
+    assert uf.step_delay_sec(5) == 3.0
+    assert uf.step_delay_sec(6) == 0.0
+    assert uf.step_delay_sec(99) == 0.0
+    assert uf.step_delay_sec(0) == 0.0
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    # 3개 동작(수집조건수정·저장하기·확인) 뒤에 각각 대기
+    assert src.count("_demo_pause(") >= 4  # 정의 1 + 호출 3
+    assert "what=\"'수집조건수정' 클릭\"" in src
+    assert "what=\"'저장하기' 클릭\"" in src
+    assert "what=\"'확인' 클릭\"" in src
 
 
 def test_find_edit_marks_right_of_url():
@@ -772,7 +850,7 @@ def test_screenshot_step_and_save_count_grid(tmp_path: Path):
 
 
 def test_set_save_count_always_before_after_shots(tmp_path: Path):
-    """3)저장상품수 갱신 전·후 스크린샷이 항상 생성된다."""
+    """5)저장상품수 갱신 전·후 스크린샷이 항상 생성된다."""
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as p:
@@ -781,14 +859,43 @@ def test_set_save_count_always_before_after_shots(tmp_path: Path):
         page.set_content(MODIFY_HTML)
         shot_dir = tmp_path / "shots"
         assert set_save_count(page, 63, shot_dir=shot_dir, row_no=10)
-        before = shot_dir / "r010_03_save_count_before.png"
-        after = shot_dir / "r010_03_save_count_after.png"
+        before = shot_dir / "r010_05_save_count_before.png"
+        after = shot_dir / "r010_05_save_count_after.png"
         assert before.is_file() and before.stat().st_size > 0
         assert after.is_file() and after.stat().st_size > 0
         assert (shot_dir / "r010_save_count_before.png").is_file()
         assert (shot_dir / "r010_save_count_after.png").is_file()
         assert page.locator("td:has-text('검색결과 상위') input").input_value() == "63"
         browser.close()
+
+
+def test_set_save_count_reports_before_after_counts():
+    """★요건: 상품수 갱신 전·후 값을 5단계 로그에 표출하도록 out 으로 돌려준다."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(MODIFY_HTML)
+        io: dict = {}
+        assert set_save_count(page, 73, out=io)
+        assert io["before"] == "3"  # 화면 기본값
+        assert io["after"] == "73"
+        browser.close()
+
+
+def test_step2_shows_mango_row_text_as_is():
+    """★요건: 2단계는 망고 행 정보를 그대로 표출 (행 원문 text 사용)."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert '2) 망고행: {d_row_text' in src
+    assert 'd_row_text = " ".join((drow.get("text") or "").split())' in src
+
+
+def test_step5_shows_save_count_before_after():
+    """★요건: 상품수 갱신전·갱신후는 5단계 '저장하기' 로그에 표출."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "5) '저장하기' 클릭 완료 · 상품수 갱신전=" in src
+    assert "갱신후={after_cnt}" in src
 
 
 def test_confirm_click_finds_button_in_different_browser_context():

@@ -1,15 +1,21 @@
 """
 P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품수 갱신.
 
-로직 순서 (1~7단계 — 실행 로그도 이 단계만 표시):
+로직 순서 (1~7단계 — 실행 로그 MAIN 도 이 7단계만 표시):
 1) 망고 수집 URL 링크로 진입 (입력 항목 정보로 제공)
-2) 망고에서 행 "URL" 클릭 → 이를 KEY로 엑셀자료 조회
+2) 망고 행의 "URL 검색" 주소를 KEY로 엑셀자료 조회 (★비교만 — 그 주소로 화면을 열지 않음)
 3) 망고 필터와 엑셀 필터가 불일치하면 다음 행으로 진행 (매칭 안 되는 행은 로그에 남기지 않음)
-4) 상품노출수(카드수) 추출 — ★현재는 건너뛰고 수행 (추후 완성본에서 추가)
+4) 상품노출수(카드수) 추출 — ★전부 주석처리. "URL 검색" 주소로는 어떤 화면도 불러오지
+   않으며, 상품수는 엑셀 값만 사용한다 (추후 완성본에서 주석 해제)
 5) LABEL "수집조건수정" 버튼 클릭 → 팝업의 "저장상품수"(검색결과 상위 [ ]개) 필드에
    엑셀 상품수 기준 값 입력 → 하단 LABEL "저장하기" 버튼 클릭 (★'저장'이 아닌 '저장하기')
 6) 팝업되는 "수정되었습니다" 메세지 하단 LABEL "확인" 버튼 클릭
 7) 2~6단계를 다음 행에 대해 반복
+
+처리 속도 (요건):
+- 처음 5개 처리행: 5)수집조건수정 클릭 · 5)저장하기 클릭 · 6)확인 클릭 뒤 각각 3초 대기
+  → 실제 망고 화면 변화를 그대로 확인
+- 6번째 처리행부터: 지연 없이 가장 빠른 속도
 
 로그 원칙:
 - 위 1)~7) 단계 로그만 남김 (그 외 화면전환/준비 등 세부 로그는 억제)
@@ -57,8 +63,11 @@ ProgressFn = Callable[[str, str], None]
 STOP_FLAG_PATH = Path(__file__).resolve().parent / ".filter_stop"
 P3_RUN_LOG_DIR = Path(__file__).resolve().parent / "run-logs"
 P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
-# 4) 망고 행 URL 클릭 → 상품노출수(카드수) 추출 (browse_store_count_cards)
-ENABLE_STORE_COUNT_CALL = True
+# ★요건: 망고 행 「URL 검색」 주소로는 어떤 화면도 열지 않는다(절대 금지) — False 고정.
+#   4) 상품노출수(카드수) 추출 호출부는 전부 주석처리되어 있고, 「URL 검색」 주소는
+#   엑셀자료 비교(KEY)에만 쓴다. 함수(click_demango_row_url·browse_store_count_cards)는
+#   추후 완성본을 위해 남겨 두지만 호출하지 않는다.
+ENABLE_STORE_COUNT_CALL = False
 
 # ★요건: 보드 「더망고 URL」초기값 (검색필터·저장조건 화면)
 DEFAULT_MANGO_URL = (
@@ -136,21 +145,26 @@ P3_MAJOR_LOG_ONLY = True
 
 
 def _is_major_log(step: str, message: str) -> bool:
-    """1)~7) 로 시작하는 단계 로그 + 오류/중단/완료 메타 로그만 MAIN(True)."""
-    s = (step or "").strip()
-    m = (message or "").strip()
-    if s in ("오류", "중단", "완료"):
-        return True
-    # 1)~7) 단계 로그만 MAIN — 그 외(화면/준비/경고/확인/동작/샷 등)는 SUB
-    return bool(re.match(r"^\d+\)", m))
+    """오류/중단/완료 요약만 자동으로 MAIN 취급.
+
+    ★1)~7) 단계 로그는 전부 호출부에서 major=True 를 명시한다. 메시지 첫머리의
+    "N)" 로 자동판정하면 스크린샷 라벨("6)확인 클릭 실패 -> ....png")처럼 단계번호로
+    시작하는 세부 로그까지 MAIN 에 섞여 버린다(요건: MAIN은 7단계만).
+    """
+    return (step or "").strip() in ("오류", "중단", "완료")
 
 
 # ★P2와 동일 프로토콜(board/log_protocol.py) — MAIN(1~7단계)/SUB(세부정보)/SUBSHOT(샷)
 # 발생(seq)마다 MAIN 1행 + 그 seq 에 딸린 SUB·SUBSHOT 여러 행으로 보드에 표시된다.
-_SEQ_STATE = {"seq": 0, "cur_seq": 0}
+_SEQ_STATE = {"seq": 0, "cur_seq": 0, "cur_n": 0}
 
 # main 그리드 표시용 — 1)~7) 은 그대로, 오류/완료/중단은 숫자 밖 코드로 구분
 _META_STEP_N = {"오류": 90, "완료": 91, "중단": 92}
+
+# 단계 MAIN 로그는 그 단계의 동작을 끝낸 뒤에 남기므로, 동작 중 쌓인 세부내용은
+# 아직 그 단계의 seq 를 모른다. 다른 단계의 세부내용이 앞 단계 SUB로 섞이지 않게
+# 여기에 담아 두고, 해당 단계 MAIN 이 나올 때 그 seq 로 흘려보낸다.
+_PENDING_SUB: list[tuple[str, str]] = []
 
 
 def _next_seq() -> int:
@@ -164,6 +178,31 @@ def _current_seq() -> int:
     return _SEQ_STATE["cur_seq"]
 
 
+def _step_no_of(message: str) -> int:
+    """"N) ..." 형태면 N, 그 외(단계 표기 없음)는 0."""
+    m = re.match(r"^(\d+)\)", message or "")
+    return int(m.group(1)) if m else 0
+
+
+def _step_no_in(message: str) -> int:
+    """메시지 안(앞부분)의 단계 표기 N) 을 찾는다 — 없으면 0.
+
+    실패 로그는 "행106 · 6) '확인' 버튼 클릭 실패 …" 처럼 행번호가 앞에 붙으므로
+    첫머리 매칭만으로는 몇 단계에서 실패했는지 알 수 없다.
+    """
+    m = re.search(r"(?:^|[·\s])(\d)\)", message or "")
+    if not m:
+        return 0
+    n = int(m.group(1))
+    return n if 1 <= n <= 7 else 0
+
+
+def _flush_pending_sub(seq: int) -> None:
+    while _PENDING_SUB:
+        ts, msg = _PENDING_SUB.pop(0)
+        print(f"[{ts}] ##SUB##{seq}##{msg}", flush=True)
+
+
 def _log(
     progress: ProgressFn | None,
     step: str,
@@ -173,8 +212,10 @@ def _log(
 ) -> None:
     """실행로그 — P2와 동일 MAIN/SUB 프로토콜로 표준출력에 남긴다.
 
-    - MAIN(##MAIN##seq##n##msg): 1)~7) 단계 + 오류/중단/완료 → 보드 MAIN 그리드
-    - SUB(##SUB##seq##msg): 그 외 세부정보 → 보드 SUB 그리드(선택한 MAIN 행에 연결)
+    - MAIN(##MAIN##seq##n##msg): 1)~7) 단계 → 보드 MAIN 그리드 (7단계만)
+    - SUB(##SUB##seq##msg): 그 단계의 세부내용 → 보드 SUB/스크린샷 그리드
+    - 오류/중단/완료 요약은 MAIN 행을 새로 만들지 않고(보드가 SUB로 표시) 진행 중
+      단계의 문맥을 유지한다.
     """
     s = (step or "").strip()
     m = (message or "").strip()
@@ -185,14 +226,31 @@ def _log(
     )
     ts = time.strftime("%H:%M:%S")
     if is_main:
-        num = re.match(r"^(\d+)\)", m)
-        n = int(num.group(1)) if num else _META_STEP_N.get(s, 0)
+        n = _step_no_of(m)
+        if not n and s == "오류":
+            # 실패한 단계를 MAIN 에서 바로 찾을 수 있게 그 단계 행으로 남긴다
+            n = _step_no_in(m)
+        if not n:
+            n = _META_STEP_N.get(s, 0)
         seq = _next_seq()
-        _SEQ_STATE["cur_seq"] = seq
-        print(f"[{ts}] ##MAIN##{seq}##{n}##{m}", flush=True)
+        if 1 <= n <= 7:
+            _SEQ_STATE["cur_seq"] = seq
+            _SEQ_STATE["cur_n"] = n
+            print(f"[{ts}] ##MAIN##{seq}##{n}##{m}", flush=True)
+            _flush_pending_sub(seq)
+        else:
+            # 단계를 특정할 수 없는 오류/완료/중단 요약 — 진행 중 단계에 남은
+            # 세부내용을 먼저 흘려보낸 뒤 요약을 남긴다(보드는 SUB에 표시)
+            if _SEQ_STATE["cur_seq"]:
+                _flush_pending_sub(int(_SEQ_STATE["cur_seq"]))
+            print(f"[{ts}] ##MAIN##{seq}##{n}##{m}", flush=True)
     else:
-        seq = _current_seq()
-        print(f"[{ts}] ##SUB##{seq}##{m}", flush=True)
+        cur_seq = int(_SEQ_STATE["cur_seq"] or 0)
+        step_no = _step_no_of(m)
+        if not cur_seq or (step_no and step_no != int(_SEQ_STATE["cur_n"] or 0)):
+            _PENDING_SUB.append((ts, m))
+        else:
+            print(f"[{ts}] ##SUB##{cur_seq}##{m}", flush=True)
     if progress:
         progress(s, m)
 
@@ -206,6 +264,40 @@ def _emit_subshot(path, label: str) -> None:
 
 # ★P2와 동일: 실제 Chrome(CDP) 창을 OS 앞으로 가져와 동작을 보여 줌
 STEP_VIEW_DWELL_SEC = 0.3  # ★테스트 속도 우선 — 짧게 유지(화면 표시는 유지)
+
+# ★요건: 처음 5개 처리행은 5)수집조건수정 클릭 / 5)저장하기 클릭 / 6)확인 클릭 뒤에
+#   각각 3초씩 멈춰 실제 망고 화면 변화를 눈으로 확인할 수 있게 하고,
+#   6번째 처리행부터는 지연 없이 가장 빠른 속도로 처리한다.
+SLOW_DEMO_ROWS = 5
+SLOW_DEMO_DELAY_SEC = 3.0
+
+
+def step_delay_sec(processed_no: int) -> float:
+    """처리 순번(1-based) → 각 동작 뒤 지연(초). 6번째 처리행부터 0(최고속)."""
+    if 1 <= int(processed_no or 0) <= SLOW_DEMO_ROWS:
+        return SLOW_DEMO_DELAY_SEC
+    return 0.0
+
+
+def _demo_pause(
+    progress: ProgressFn | None,
+    processed_no: int,
+    *,
+    step_no: str,
+    what: str,
+) -> None:
+    """처음 5개 처리행에서 동작 뒤 3초 대기 — 화면 변화를 그대로 보여 준다."""
+    delay = step_delay_sec(processed_no)
+    if delay <= 0:
+        return
+    _log(
+        progress,
+        "화면",
+        f"{step_no}) {what} 후 {delay:.0f}초 대기 — 화면 변화 확인"
+        f"(처리 {processed_no}번째 행 · 처음 {SLOW_DEMO_ROWS}행만 지연)",
+        major=False,
+    )
+    time.sleep(delay)
 
 
 def describe_page_state(page) -> str:
@@ -831,7 +923,8 @@ LIST_DEMANGO_ROWS_JS = r"""() => {
       filterName,
       hasEdit,
       editHref,
-      text: t.slice(0, 240),
+      // 2단계에서 망고 행 정보를 그대로 표출하므로 넉넉히 담는다
+      text: t.slice(0, 400),
     });
   }
   return out;
@@ -1561,14 +1654,15 @@ def _log_text_find_phase(
     label: '전체저장' | '수집조건수정'
     """
     if phase == "전":
-        msg = f"6) {kind} 찾기 전 · {kind}={label}"
-        tag = f"06_find_{label}_before"
+        msg = f"5) {kind} 찾기 전 · {kind}={label}"
+        tag = f"05_find_{label}_before"
     else:
         status = "OK" if found else "FAIL"
         extra = f" · {detail}" if detail else ""
-        msg = f"6) {kind} 찾기 후 · {kind}={label} · {status}{extra}"
-        tag = f"06_find_{label}_after"
-    _log(progress, "주요", msg, major=True)
+        msg = f"5) {kind} 찾기 후 · {kind}={label} · {status}{extra}"
+        tag = f"05_find_{label}_after"
+    # 버튼 찾기 과정은 5) 수집조건수정 단계의 세부내용 — MAIN엔 7단계만 남긴다
+    _log(progress, "주요", msg, major=False)
     screenshot_step(
         page,
         shot_dir,
@@ -1940,6 +2034,7 @@ def set_save_count(
     shot_dir: Path | None = None,
     progress: ProgressFn | None = None,
     row_no: int = 0,
+    out: dict | None = None,
 ) -> bool:
     """저장상품수 입력칸: 현재 숫자(스크린샷의 '3')가 있는 칸을 찾아 상품수값으로 대체.
 
@@ -1947,20 +2042,25 @@ def set_save_count(
     1) value가 '3'(또는 숫자)인 input 을 찾음
     2) 그 칸의 값을 상품수(target)로 덮어씀
     ★갱신 전·후 스크린샷은 성공/실패와 무관하게 항상 로그에 남김
+    out: 주면 {"before": 갱신전상품수, "after": 갱신후상품수} 를 채운다
+         (저장하기 단계 로그에 갱신 전·후를 그대로 표출하기 위함)
     """
     target = str(int(value))
+    if out is not None:
+        out.clear()
+        out.update({"before": "", "after": ""})
 
     work, kind = resolve_modify_target(page)
     wait_for_save_count_ready(work, timeout_ms=8_000)
     shot_page = page if kind == "frame" else work
 
-    # ★요건: 3) 저장상품수 갱신 전 스크린샷 (항상)
+    # ★요건: 5) 저장상품수 갱신 전 스크린샷 (항상)
     if shot_dir is not None:
         screenshot_step(
             shot_page,
             shot_dir,
-            step_tag="03_save_count_before",
-            label=f"3)저장상품수 갱신 전 →목표={target}",
+            step_tag="05_save_count_before",
+            label=f"5)저장상품수 갱신 전 →목표={target}",
             row_no=row_no,
             progress=progress,
         )
@@ -1974,10 +2074,12 @@ def set_save_count(
             before_val = (loc.input_value(timeout=500) or "").strip()
         except Exception:
             before_val = ""
+        if out is not None:
+            out["before"] = before_val
         _log(
             progress,
             "로직",
-            f"3) 저장상품수 칸 발견 현재값={before_val or '?'} → 상품수값={target}",
+            f"5) 저장상품수 칸 발견 현재값={before_val or '?'} → 상품수값={target}",
         )
         if shot_dir is not None:
             screenshot_save_count_grid(
@@ -2138,21 +2240,23 @@ def set_save_count(
                     note=f"{before_val or '3'}→{after_val}",
                     progress=progress,
                 )
+        if out is not None:
+            out["after"] = after_val or target
         _log(
             progress,
             "로직",
-            f"3) 저장상품수 대체완료 {before_val or '3'} → {after_val or target}",
+            f"5) 저장상품수 대체완료 {before_val or '3'} → {after_val or target}",
         )
 
-    # ★요건: 3) 저장상품수 갱신 후 스크린샷 (항상 — 성공/실패 공통)
+    # ★요건: 5) 저장상품수 갱신 후 스크린샷 (항상 — 성공/실패 공통)
     if shot_dir is not None:
         status = "성공" if filled else "실패"
         note = f"{before_val or '?'}→{after_val or target}" if filled else "칸미검출/대체실패"
         screenshot_step(
             shot_page,
             shot_dir,
-            step_tag="03_save_count_after",
-            label=f"3)저장상품수 갱신 후 ({status}) {note}",
+            step_tag="05_save_count_after",
+            label=f"5)저장상품수 갱신 후 ({status}) {note}",
             row_no=row_no,
             progress=progress,
         )
@@ -2451,10 +2555,11 @@ def screenshot_step(
     if not ok:
         ok = _capture_png(page, path, timeout_ms=3_000)
     if not ok:
-        _log(progress, "샷", f"[샷 실패] {label}: 캡처 불가(타임아웃/CDP)")
+        _log(progress, "샷", f"[샷 실패] {label}: 캡처 불가(타임아웃/CDP)", major=False)
         return None
 
-    _log(progress, "샷", f"{label} -> {path}")
+    # 스크린샷은 항상 세부내용(SUB) — 보드에서 SUB 하단 스크린샷 그리드에 그려진다
+    _log(progress, "샷", f"{label} -> {path}", major=False)
     print(f"{P3_SHOT_MARK}{path}##{label}", flush=True)
     return path
 
@@ -2515,8 +2620,8 @@ def screenshot_after_edit_click_series(
         path = screenshot_step(
             target,
             shot_dir,
-            step_tag=f"02_after_edit_{i}of{n}",
-            label=f"2)수집조건수정 클릭후 샷 {i}/{n} (+{elapsed}s)",
+            step_tag=f"05_after_edit_{i}of{n}",
+            label=f"5)수집조건수정 클릭후 샷 {i}/{n} (+{elapsed}s)",
             row_no=row_no,
             progress=progress,
         )
@@ -2584,10 +2689,10 @@ def screenshot_save_count_grid(
         ok = _capture_png(page, path, timeout_ms=3_000)
 
     if not ok:
-        _log(progress, "샷", f"[샷 실패] {label}: 캡처 불가")
+        _log(progress, "샷", f"[샷 실패] {label}: 캡처 불가", major=False)
         return None
 
-    _log(progress, "샷", f"{label} -> {path}")
+    _log(progress, "샷", f"{label} -> {path}", major=False)
     print(f"{P3_SHOT_MARK}{path}##{label}", flush=True)
     return path
 
@@ -2956,6 +3061,7 @@ def run_update(
                 )
                 return result
 
+            processed_no = 0  # 실제 처리(매칭)한 행 순번 — 지연 적용 판단용
             for i, drow in enumerate(demango_rows, start=1):
                 if stop_requested():
                     _log(progress, "중단", "사용자 중단 요청")
@@ -2965,6 +3071,8 @@ def run_update(
                 d_filter = (drow.get("filterName") or "").strip()
                 row_idx = int(drow.get("index") or 0)
                 edit_href = (drow.get("editHref") or "").strip()
+                # 망고 행에 보이는 정보 원문(필터명·URL 검색·수집계수·전체저장 …)
+                d_row_text = " ".join((drow.get("text") or "").split())
                 key_short = d_url[:100] if d_url else "(URL없음)"
                 # ★요건1: 더망고 URL을 기준값(KEY)으로 엑셀에서 동일 URL 검색
                 ex = find_excel_by_demango_url(by_url, d_url)
@@ -2980,80 +3088,57 @@ def run_update(
                     result.skipped += 1
                     continue
 
+                # 처음 5개 처리행만 동작마다 3초 대기 (요건) — 건너뛴 행은 세지 않는다
+                processed_no += 1
+                # ★요건: 2단계는 망고 행의 정보를 그대로 표출한다
                 _log(
                     progress,
                     "로직",
-                    f"2) KEY매칭 성공 · 필터={d_filter} · KEY={key_short} · "
-                    f"엑셀행={ex.excel_row} · 수집가능개수={ex.collectible}",
+                    f"2) 망고행: {d_row_text or '(행 텍스트 없음)'}",
                     major=True,
+                )
+                _log(
+                    progress,
+                    "로직",
+                    f"2) 엑셀 KEY매칭 성공 · 필터={d_filter} · KEY={key_short} · "
+                    f"엑셀행={ex.excel_row} · 수집가능개수={ex.collectible}",
                 )
                 note = filter_compare_note(ex.filter_name, d_filter)
                 if note:
-                    _log(progress, "로직", f"2) {note} · KEY={key_short}", major=True)
+                    _log(progress, "로직", f"2) {note} · KEY={key_short}")
 
-                # 4) 망고 행의 URL 클릭 → 상품노출수(카드수) 추출 (TOP→DOWN→푸터→UP 카운트)
-                card_n: int | None = None
-                if ENABLE_STORE_COUNT_CALL:
-                    list_page = page
-                    store = click_demango_row_url(
-                        list_page, row_idx, d_url, progress=progress
-                    )
-                    if store is None:
-                        _log(
-                            progress,
-                            "오류",
-                            f"행{i} · 4) URL 클릭 실패 · 필터={d_filter} · KEY={key_short} · "
-                            f"엑셀행={ex.excel_row} · 사유=스토어/팝업 오픈 실패(행index={row_idx})",
-                        )
-                        _return_to_list(list_page, mango)
-                    else:
-                        try:
-                            card_n, matched = browse_store_count_cards(
-                                store,
-                                excel_count=ex.collectible,
-                                progress=progress,
-                                shot_dir=shot_dir,
-                                row_no=i,
-                            )
-                            _log(
-                                progress,
-                                "로직",
-                                f"4) 상품노출수(카드수)={card_n} · 엑셀수집가능개수={ex.collectible} · "
-                                f"일치={'Y' if matched else 'N'} · 필터={d_filter} · KEY={key_short}",
-                                major=True,
-                            )
-                        except Exception as e:  # noqa: BLE001
-                            _log(
-                                progress,
-                                "경고",
-                                f"행{i} · 4) 카드수 추출 예외 · 필터={d_filter} · KEY={key_short} · "
-                                f"{str(e).split(chr(10))[0][:120]}",
-                            )
-                        page = close_store_return_list(
-                            list_page, store, mango, progress=progress
-                        )
-                        if page is None:
-                            result.failed += 1
-                            _log(
-                                progress,
-                                "오류",
-                                f"행{i} · 필터={d_filter} · KEY={key_short} · "
-                                "더망고 목록 탭 재연결 실패(스토어 닫기 후 핸들 유실)",
-                            )
-                            continue
-                        # URL 클릭으로 목록을 벗어났다 복귀했으므로 행 index 재확정
-                        row_idx2 = resolve_demango_row_index_by_url(
-                            page, d_url, fallback_index=row_idx, progress=progress
-                        )
-                        if row_idx2 is not None:
-                            row_idx = int(row_idx2)
-                else:
-                    _log(
-                        progress,
-                        "로직",
-                        "4) 상품노출수(카드수) 추출 — 건너뛰고 수행 (추후 완성본에서 추가)",
-                        major=True,
-                    )
+                # ★요건: 4) 망고 행 「URL 검색」 주소로 상품수를 읽어오는 부분은 전부
+                #   주석처리한다. 그 주소로는 어떤 화면도 불러오지 않는다(절대 금지).
+                #   「URL 검색」 주소는 엑셀자료 비교(KEY)에만 쓴다.
+                #   (추후 완성본에서 되살릴 때 아래 주석을 해제한다)
+                #
+                # list_page = page
+                # store = click_demango_row_url(
+                #     list_page, row_idx, d_url, progress=progress
+                # )
+                # if store is None:
+                #     _log(progress, "오류", f"행{i} · 4) URL 클릭 실패 · …")
+                #     _return_to_list(list_page, mango)
+                # else:
+                #     card_n, matched = browse_store_count_cards(
+                #         store, excel_count=ex.collectible, progress=progress,
+                #         shot_dir=shot_dir, row_no=i,
+                #     )
+                #     page = close_store_return_list(
+                #         list_page, store, mango, progress=progress
+                #     )
+                #     row_idx2 = resolve_demango_row_index_by_url(
+                #         page, d_url, fallback_index=row_idx, progress=progress
+                #     )
+                #     if row_idx2 is not None:
+                #         row_idx = int(row_idx2)
+                _log(
+                    progress,
+                    "로직",
+                    "4) 상품노출수(카드수) 추출 — 주석처리(URL 화면 열지 않음) · "
+                    f"엑셀 수집가능개수={ex.collectible} 만 사용",
+                    major=True,
+                )
 
                 # 5) LABEL '수집조건수정' 버튼 클릭 → 저장상품수 입력 → '저장하기' 클릭
                 target = map_save_count(ex.collectible)
@@ -3127,7 +3212,12 @@ def run_update(
                     progress,
                     step_no="5",
                     action="검색필터 수정 팝업/화면 표시",
-                    dwell_s=STEP_VIEW_DWELL_SEC,
+                    # 6번째 처리행부터는 화면 표시 대기도 없이 최고속
+                    dwell_s=(
+                        STEP_VIEW_DWELL_SEC
+                        if step_delay_sec(processed_no) > 0
+                        else 0.0
+                    ),
                 )
                 screenshot_step(
                     mod_page if mod_page is not None else page,
@@ -3137,14 +3227,19 @@ def run_update(
                     row_no=i,
                     progress=progress,
                 )
+                _demo_pause(
+                    progress, processed_no, step_no="5", what="'수집조건수정' 클릭"
+                )
 
                 # 5) 「저장상품수」란 「검색결과 상위 [ ]개만 상품만 저장」에 엑셀 상품수 입력
+                count_io: dict = {}
                 if not set_save_count(
                     page,
                     target,
                     shot_dir=shot_dir,
                     progress=progress,
                     row_no=i,
+                    out=count_io,
                 ):
                     result.failed += 1
                     _log(
@@ -3188,12 +3283,19 @@ def run_update(
                     row_no=i,
                     progress=progress,
                 )
+                # ★요건: 상품수 갱신 전·후를 5단계 '저장하기' 로그에 그대로 표출
+                before_cnt = str(count_io.get("before") or "?")
+                after_cnt = str(count_io.get("after") or target)
                 _log(
                     progress,
                     "로직",
-                    f"5) 수집조건수정→저장상품수={target} 입력→'저장하기' 클릭 완료 · "
+                    f"5) '저장하기' 클릭 완료 · 상품수 갱신전={before_cnt} → "
+                    f"갱신후={after_cnt} · 엑셀 수집가능개수={ex.collectible} · "
                     f"필터={d_filter} · KEY={key_short}",
                     major=True,
+                )
+                _demo_pause(
+                    progress, processed_no, step_no="5", what="'저장하기' 클릭"
                 )
 
                 if not wait_modify_page_closed(page, timeout_ms=20_000):
@@ -3249,6 +3351,7 @@ def run_update(
                     f"6) '수정되었습니다' 확인 클릭 완료 · 필터={d_filter} · KEY={key_short}",
                     major=True,
                 )
+                _demo_pause(progress, processed_no, step_no="6", what="'확인' 클릭")
 
                 result.updated += 1
                 _log(
