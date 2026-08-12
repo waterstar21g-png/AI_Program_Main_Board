@@ -242,14 +242,37 @@ def test_click_edit_prefers_button_beside_collect_count(tmp_path: Path):
         browser.close()
 
 
-def test_edit_click_offset_moves_right():
-    """시도마다 URL 오른쪽 오프셋이 증가한다."""
-    from update_filters import edit_click_offset_x
+def test_edit_click_char_steps_and_allsave_point_moves_right():
+    """전체저장 우측에서 시작해 시도마다 한글 1글자씩 오른쪽으로 이동."""
+    from playwright.sync_api import sync_playwright
+    from update_filters import (
+        EDIT_CLICK_MAX_TRIES,
+        _edit_click_point_from_allsave,
+        edit_click_char_steps,
+    )
 
-    xs = [edit_click_offset_x(i) for i in range(1, 6)]
-    assert xs == sorted(xs)
-    assert xs[0] < xs[1] < xs[2] < xs[3] < xs[4]
-    assert xs[1] - xs[0] == xs[2] - xs[1]
+    assert EDIT_CLICK_MAX_TRIES == 10
+    steps = [edit_click_char_steps(i) for i in range(1, 11)]
+    assert steps == list(range(10))
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        page = browser.new_page()
+        page.set_content(DEMANGO_LIST_WITH_DECOY_HTML)
+        rows = list_demango_rows(page)
+        pts = [
+            _edit_click_point_from_allsave(
+                page, int(rows[0]["index"]), rows[0]["url"], attempt=i
+            )
+            for i in range(1, 6)
+        ]
+        assert all(pt is not None for pt in pts)
+        xs = [float(pt["x"]) for pt in pts]
+        assert xs[0] < xs[1] < xs[2] < xs[3] < xs[4]
+        # 1회차는 전체저장 바로 우측(+0글자)
+        assert int(pts[0]["char_steps"]) == 0
+        assert float(pts[0]["x"]) > float(pts[0]["allsave_right"])
+        browser.close()
 
 
 def test_find_edit_marks_right_of_url():
