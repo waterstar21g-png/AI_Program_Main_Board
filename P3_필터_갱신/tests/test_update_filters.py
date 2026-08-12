@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT))
 
 import openpyxl  # noqa: E402
 from update_filters import (  # noqa: E402
+    DEFAULT_MANGO_URL,
     click_edit_on_row,
     click_modified_confirm,
     click_save_button,
@@ -19,10 +20,12 @@ from update_filters import (  # noqa: E402
     filters_equal,
     is_modify_page_open,
     list_demango_rows,
+    load_mango_url_default,
     map_save_count,
     normalize_url,
     page_shows_not_found,
     read_excel_rows,
+    save_mango_url,
     set_save_count,
     screenshot_after_edit_click_series,
     wait_modify_page_closed,
@@ -159,6 +162,18 @@ def test_filters_equal():
     assert not filters_equal("MEN스니커즈", "MEN_스니커즈")  # 엑셀에 공백 없음
     assert filter_compare_note("MEN 스니커즈", "MEN_스니커즈")
     assert filter_compare_note("SAME", "SAME") == ""
+
+
+def test_mango_url_default_and_save(tmp_path: Path, monkeypatch):
+    """망고 URL 기본값 + 변경값 저장/복원."""
+    import update_filters as uf
+
+    path = tmp_path / ".last_mango_url"
+    monkeypatch.setattr(uf, "LAST_MANGO_URL_PATH", path)
+    assert load_mango_url_default() == DEFAULT_MANGO_URL
+    assert DEFAULT_MANGO_URL.startswith("https://tmg1898.cafe24.com/")
+    save_mango_url("https://tmg1898.cafe24.com/mall/admin/shop/filter.php")
+    assert load_mango_url_default().endswith("filter.php")
 
 
 def test_read_excel_and_lookup(tmp_path: Path):

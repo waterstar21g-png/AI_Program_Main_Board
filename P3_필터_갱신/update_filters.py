@@ -59,6 +59,33 @@ P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
 DETAIL_EXCEL_ROWS = 5  # 엑셀 1~5행 매칭 시 세부 로그
 FIRST_COMPARE_LOG_N = 10  # 더망고 처음 10건: 더망고/엑셀 비교 2줄 로그
 
+# ★요건: 보드 「더망고 URL」입력창 기본값(=망고 url). 사용자가 변경 가능.
+DEFAULT_MANGO_URL = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+LAST_MANGO_URL_PATH = Path(__file__).resolve().parent / ".last_mango_url"
+
+
+def load_mango_url_default() -> str:
+    """마지막 사용 URL이 있으면 그 값, 없으면 DEFAULT_MANGO_URL."""
+    try:
+        if LAST_MANGO_URL_PATH.is_file():
+            saved = LAST_MANGO_URL_PATH.read_text(encoding="utf-8").strip()
+            if saved.lower().startswith("http"):
+                return saved
+    except Exception:
+        pass
+    return DEFAULT_MANGO_URL
+
+
+def save_mango_url(url: str) -> None:
+    """사용자가 변경한 더망고 URL을 다음에 기본값으로 쓰도록 저장."""
+    u = (url or "").strip()
+    if not u.lower().startswith("http"):
+        return
+    try:
+        LAST_MANGO_URL_PATH.write_text(u + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
 URL_HEADERS = (
     "검색필터 URL",
     "최종 카테고리 URL주소",
@@ -2788,8 +2815,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("excel", help="엑셀 파일 경로")
     parser.add_argument(
         "--mango-url",
-        required=True,
-        help="더망고 검색필터(저장조건) 화면 URL (보드 입력값)",
+        default=load_mango_url_default(),
+        help="더망고 검색필터(저장조건) 화면 URL (기본=망고 url, 변경 가능)",
     )
     args = parser.parse_args(argv)
     result = run_update(args.excel, args.mango_url)

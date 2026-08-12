@@ -49,6 +49,7 @@ def _load_py_module(mod_name: str, folder: str, filename: str) -> ModuleType:
 p1_crawl = _load_crawl_module("p1_crawl", "P1")
 p1_zara_crawl = _load_crawl_module("p1_zara_de_crawl", "P1_ZARA_DE")
 p1_101_extract = _load_py_module("p1_101_extract", "P1_101", "extract.py")
+p3_update = _load_py_module("p3_update_filters", "P3_필터_갱신", "update_filters.py")
 
 TOP_CELL_MAX_LEN = p1_crawl.TOP_CELL_MAX_LEN
 TOP_GRID_COLS = p1_crawl.TOP_GRID_COLS
@@ -1623,8 +1624,8 @@ class BoardApp(tk.Tk):
             value=(default_roots() or [str(Path.home())])[0]
         )
         self.var_p3_q = tk.StringVar(value="카테고리URL")
-        # ★요건: 더망고 URL 은 화면 입력항목
-        self.var_p3_mango_url = tk.StringVar(value="")
+        # ★요건: 더망고 URL 입력창에 망고 url 기본 세팅 + 변경 가능
+        self.var_p3_mango_url = tk.StringVar(value=p3_update.load_mango_url_default())
 
         r1 = tk.Frame(search, bg="#ffffff")
         r1.pack(fill="x", pady=2)
@@ -1658,7 +1659,7 @@ class BoardApp(tk.Tk):
         )
         tk.Label(
             search,
-            text="검색필터(저장조건) 화면 URL을 붙여넣으세요",
+            text="망고 URL이 기본으로 채워집니다. 필요하면 수정하세요 (변경값 기억)",
             bg="#ffffff",
             fg="#64748b",
             anchor="w",
@@ -2008,6 +2009,12 @@ class BoardApp(tk.Tk):
         if not update_py.is_file():
             messagebox.showerror("오류", f"실행 파일 없음:\n{update_py}")
             return
+
+        # 변경한 망고 URL을 다음 실행 기본값으로 저장
+        try:
+            p3_update.save_mango_url(mango)
+        except Exception:
+            pass
 
         try:
             self._p3_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
