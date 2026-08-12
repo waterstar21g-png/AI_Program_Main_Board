@@ -16,7 +16,8 @@ P3_필터_갱신 — 더망고 검색필터(저장조건) 화면의 저장상품
 
 로그:
 - 더망고 처음 10건: 더망고/엑셀 각각 1줄(검색필터·URL)
-- 엑셀 처음 5행 매칭분 = 단계별 세부 / 그 외 = 핵심만
+- ★망고 연동: P2와 동일 — CDP Chrome · 확장설정 · 수동로그인 대기 · 이후 필터URL 이동
+- ★필터 매칭 시: 팝업/탭을 bring_to_front 로 실제 Chrome에 표시 + 단계샷
 - 불일치 행: 검색필터·URL만
 
 사용법:
@@ -59,6 +60,33 @@ P3_SHOT_MARK = "##P3SHOT##"  # ##P3SHOT##<path>##<label>
 DETAIL_EXCEL_ROWS = 5  # 엑셀 1~5행 매칭 시 세부 로그
 FIRST_COMPARE_LOG_N = 10  # 더망고 처음 10건: 더망고/엑셀 비교 2줄 로그
 
+# ★요건: 보드 「더망고 URL」입력창 기본값(=망고 url). 사용자가 변경 가능.
+DEFAULT_MANGO_URL = "https://tmg1898.cafe24.com/mall/admin/admin.php"
+LAST_MANGO_URL_PATH = Path(__file__).resolve().parent / ".last_mango_url"
+
+
+def load_mango_url_default() -> str:
+    """마지막 사용 URL이 있으면 그 값, 없으면 DEFAULT_MANGO_URL."""
+    try:
+        if LAST_MANGO_URL_PATH.is_file():
+            saved = LAST_MANGO_URL_PATH.read_text(encoding="utf-8").strip()
+            if saved.lower().startswith("http"):
+                return saved
+    except Exception:
+        pass
+    return DEFAULT_MANGO_URL
+
+
+def save_mango_url(url: str) -> None:
+    """사용자가 변경한 더망고 URL을 다음에 기본값으로 쓰도록 저장."""
+    u = (url or "").strip()
+    if not u.lower().startswith("http"):
+        return
+    try:
+        LAST_MANGO_URL_PATH.write_text(u + "\n", encoding="utf-8")
+    except Exception:
+        pass
+
 URL_HEADERS = (
     "검색필터 URL",
     "최종 카테고리 URL주소",
@@ -100,6 +128,157 @@ def _log(progress: ProgressFn | None, step: str, message: str) -> None:
     print(f"[{step}] {message}", flush=True)
     if progress:
         progress(step, message)
+
+
+# ★P2 망고 연동과 동일: 실제 Chrome(CDP) 창·팝업을 앞으로 가져와 표시
+STEP_VIEW_DWELL_SEC = 0.8
+
+
+def describe_page_state(page) -> str:
+    """화면 요약 한 줄 — URL · 제목 · 탭수."""
+    url = ""
+    title = ""
+    tabs = 0
+    try:
+        url = (page.url or "").strip()
+    except Exception:
+        url = "(url읽기실패)"
+    try:
+        title = (page.title() or "").strip()
+    except Exception:
+        title = ""
+    try:
+        tabs = len(list(page.context.pages))
+    except Exception:
+        tabs = 0
+    parts = [f"url={url[:140]}"]
+    if title:
+        parts.append(f"title={title[:80]}")
+    if tabs:
+        parts.append(f"tabs={tabs}")
+    return " · ".join(parts)
+
+
+def reveal_browser_page(
+    page,
+    progress: ProgressFn | None,
+    *,
+    step_no: str,
+    action: str,
+    dwell_s: float | None = None,
+) -> None:
+    """P2와 동일 — 실제 Chrome 탭/팝업을 bring_to_front 로 보여 준다."""
+    if page is None:
+        return
+    dwell = STEP_VIEW_DWELL_SEC if dwell_s is None else max(0.0, float(dwell_s))
+    try:
+        if hasattr(page, "is_closed") and page.is_closed():
+            _log(progress, "화면", f"{step_no}) {action} — 창이 이미 닫힘")
+            return
+    except Exception:
+        pass
+    try:
+        page.bring_to_front()
+    except Exception:
+        pass
+    state = ""
+    try:
+        state = describe_page_state(page)
+    except Exception:
+        state = ""
+    msg = f"{step_no}) {action}"
+    if state:
+        msg += f" · {state}"
+    _log(progress, "화면", msg)
+    if dwell > 0:
+        time.sleep(dwell)
+
+
+def ensure_mango_ready_like_p2(p2, page, *, progress: ProgressFn | None = None):
+    """P2 main() 망고 연동 절차를 그대로 재현 (대량수집 메뉴 진입은 제외).
+
+    P2 순서:
+      1) connect_browser  (호출측)
+      2) ensure_mango_extension_settings
+      3) refresh_if_closed
+      4) MAIN_URL 이동 → 로그인 게이트면 wait_for_user_login
+      5) (P3) 이후 검색필터 URL로 이동 — 호출측 navigate_mango_url
+    """
+    _log(progress, "준비", "P2와 동일 — 더망고 솔루션 확장 URL/KEY 설정")
+    try:
+        p2.ensure_mango_extension_settings(page.context, shot_ctx=None)
+    except Exception as e:  # noqa: BLE001
+        # 확장이 없어도 로그인·목록 작업은 가능 — 경고 후 계속
+        _log(
+            progress,
+            "경고",
+            f"확장 설정 건너뜀/실패: {str(e).split(chr(10))[0][:160]}",
+        )
+
+    page = p2.refresh_if_closed(page)
+    admin_host = getattr(p2, "ADMIN_HOST", "tmg1898.cafe24.com")
+    main_url = getattr(p2, "MAIN_URL", DEFAULT_MANGO_URL)
+    login_url = getattr(p2, "LOGIN_URL", main_url)
+
+    try:
+        cur = page.url or ""
+    except Exception:
+        cur = ""
+    if admin_host not in cur or cur in ("about:blank", "", "chrome://newtab/"):
+        _log(progress, "준비", f"P2와 동일 — 메인화면 이동: {main_url}")
+        p2.safe_goto(page, main_url)
+        page = p2.refresh_if_closed(page)
+
+    need_login = False
+    try:
+        cur = page.url or ""
+        need_login = "admin_login" in cur or "m_login" in cur
+    except Exception:
+        need_login = False
+    if not need_login:
+        try:
+            if page.locator('input[name="login_id"]').count() > 0:
+                need_login = True
+        except Exception:
+            pass
+
+    if need_login or admin_host not in (page.url or ""):
+        try:
+            if "admin_login" not in (page.url or ""):
+                _log(progress, "준비", f"P2와 동일 — 로그인창 이동: {login_url}")
+                p2.safe_goto(page, login_url)
+                page = p2.refresh_if_closed(page)
+        except Exception:
+            pass
+        _log(
+            progress,
+            "준비",
+            "P2와 동일 — 더망고 로그인창에서 직접 로그인하세요 (자동 입력 없음)",
+        )
+        reveal_browser_page(
+            page, progress, step_no="0", action="로그인창 표시", dwell_s=0.5
+        )
+        page = p2.wait_for_user_login(page)
+        page = p2.refresh_if_closed(page)
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        except Exception:
+            pass
+        page = p2.refresh_if_closed(page)
+        try:
+            if "admin_login" in (page.url or "") or admin_host not in (page.url or ""):
+                p2.safe_goto(page, main_url)
+                page = p2.refresh_if_closed(page)
+        except Exception:
+            pass
+        _log(progress, "준비", "P2와 동일 — 로그인 완료")
+    else:
+        _log(progress, "준비", "P2와 동일 — 이미 로그인된 세션 재사용")
+
+    reveal_browser_page(
+        page, progress, step_no="0", action="망고 세션 준비 완료", dwell_s=0.4
+    )
+    return page
 
 
 def clear_stop_flag() -> None:
@@ -302,10 +481,17 @@ def _detail(excel_row: int | None) -> bool:
 
 
 class Logger:
-    def __init__(self, progress: ProgressFn | None, excel_row: int | None = None):
+    def __init__(
+        self,
+        progress: ProgressFn | None,
+        excel_row: int | None = None,
+        *,
+        force_verbose: bool = False,
+    ):
         self.progress = progress
         self.excel_row = excel_row
-        self.verbose = _detail(excel_row)
+        # ★필터 매칭 행은 전 단계 상세(화면상태·동작)를 그대로 출력
+        self.verbose = bool(force_verbose) or _detail(excel_row)
 
     def step(self, step: str, detail: str, summary: str | None = None) -> None:
         if self.verbose:
@@ -314,13 +500,34 @@ class Logger:
             _log(self.progress, step, summary if summary is not None else detail)
 
 
-def navigate_mango_url(page, mango_url: str, *, progress: ProgressFn | None) -> None:
+def navigate_mango_url(
+    page,
+    mango_url: str,
+    *,
+    progress: ProgressFn | None,
+    p2=None,
+) -> None:
+    """검색필터(저장조건) URL로 이동 — P2 safe_goto 사용(리다이렉트 경쟁 회피)."""
     url = (mango_url or "").strip()
     if not url:
         raise ValueError("더망고 URL이 비어 있습니다.")
     _log(progress, "로직", f"0) 더망고 URL(검색필터·저장조건) 이동: {url}")
-    page.goto(url, wait_until="domcontentloaded", timeout=90_000)
-    time.sleep(0.8)
+    if p2 is not None and hasattr(p2, "safe_goto"):
+        p2.safe_goto(page, url)
+        if hasattr(p2, "refresh_if_closed"):
+            page = p2.refresh_if_closed(page)
+        if hasattr(p2, "handle_possible_login_page"):
+            try:
+                p2.handle_possible_login_page(page)
+                page = p2.refresh_if_closed(page)
+            except Exception:
+                pass
+    else:
+        page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+    time.sleep(0.5)
+    reveal_browser_page(
+        page, progress, step_no="0", action="검색필터(저장조건) 화면 표시", dwell_s=0.5
+    )
     # 화면 문구 확인 (없어도 진행 — URL을 사용자가 지정)
     try:
         body = page.locator("body").inner_text(timeout=3000) or ""
@@ -948,7 +1155,14 @@ def click_demango_row_url(
         store.wait_for_load_state("domcontentloaded", timeout=30_000)
     except Exception:
         pass
-    time.sleep(0.4)
+    # ★P2와 동일: 실제 Chrome 팝업/탭을 앞으로
+    reveal_browser_page(
+        store,
+        progress,
+        step_no="1",
+        action="URL클릭 → 스토어/팝업 창 표시",
+        dwell_s=STEP_VIEW_DWELL_SEC,
+    )
     return store
 
 
@@ -957,28 +1171,92 @@ def browse_store_count_cards(
     *,
     excel_count: int,
     progress: ProgressFn | None = None,
+    shot_dir: Path | None = None,
+    row_no: int = 0,
 ) -> tuple[int, bool]:
     """2)~5) 첫팝업 닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교.
 
     ★팝업 닫기 시 다른 탭(더망고)을 닫지 않음.
+    ★P2와 동일: 실제 Chrome 창·팝업을 bring_to_front 후 동작.
     """
     p1 = _p1_browse()
     # 스크롤 중 P1 이 dismiss_popups 로 타 탭을 닫지 못하게 교체
     orig_dismiss = p1.dismiss_popups
     p1.dismiss_popups = dismiss_store_layers_only  # type: ignore[assignment]
     try:
-        _log(progress, "로직", "2) 첫 팝업창 닫기 (스토어 레이어만 · 더망고탭 유지)")
+        # 2) 스토어 팝업/레이어를 Chrome 앞으로 보여 준 뒤 닫기 (P2: 실제 창 표시)
+        reveal_browser_page(
+            store_page,
+            progress,
+            step_no="2",
+            action="스토어 첫 화면/팝업 노출",
+            dwell_s=1.0,
+        )
+        screenshot_step(
+            store_page,
+            shot_dir,
+            step_tag="02_before_dismiss",
+            label="2)팝업닫기 전(브라우저표시)",
+            row_no=row_no,
+            progress=progress,
+        )
+        _log(progress, "동작", "2) 첫 팝업창 닫기 (스토어 레이어만 · 더망고탭 유지)")
         closed = dismiss_store_layers_only(store_page)
         time.sleep(0.8)
         closed += dismiss_store_layers_only(store_page)
-        _log(progress, "로직", f"2) 팝업 닫기 완료 · closed={closed}")
+        _log(progress, "동작", f"2) 팝업 닫기 완료 · closed={closed}")
+        reveal_browser_page(
+            store_page,
+            progress,
+            step_no="2",
+            action=f"팝업닫기 후 본문 표시 · closed={closed}",
+        )
+        screenshot_step(
+            store_page,
+            shot_dir,
+            step_tag="02_after_dismiss",
+            label=f"2)팝업닫기 후 closed={closed}",
+            row_no=row_no,
+            progress=progress,
+        )
 
-        _log(progress, "로직", "3) 스크롤 푸터 영역까지 내리기")
+        _log(progress, "동작", "3) 스크롤 푸터 영역까지 내리기")
+        reveal_browser_page(
+            store_page, progress, step_no="3", action="푸터 스크롤 시작", dwell_s=0.4
+        )
         p1.scroll_down_to_footer(store_page, progress=progress)
+        reveal_browser_page(
+            store_page, progress, step_no="3", action="푸터까지 스크롤 완료"
+        )
+        screenshot_step(
+            store_page,
+            shot_dir,
+            step_tag="03_footer",
+            label="3)푸터까지 스크롤",
+            row_no=row_no,
+            progress=progress,
+        )
 
-        _log(progress, "로직", "4) 하단→상단 스크롤 · 상품수 카드 갯수 집계")
+        _log(progress, "동작", "4) 하단→상단 스크롤 · 상품수 카드 갯수 집계")
+        reveal_browser_page(
+            store_page, progress, step_no="4", action="상단 스크롤·카드집계 시작", dwell_s=0.4
+        )
         card_n = int(p1.scroll_up_count_card_images(store_page, progress=progress) or 0)
-        _log(progress, "로직", f"4) 상품수 카드 갯수={card_n}")
+        _log(progress, "동작", f"4) 상품수 카드 갯수={card_n}")
+        reveal_browser_page(
+            store_page,
+            progress,
+            step_no="4",
+            action=f"카드갯수={card_n} 화면",
+        )
+        screenshot_step(
+            store_page,
+            shot_dir,
+            step_tag="04_card_count",
+            label=f"4)카드갯수={card_n}",
+            row_no=row_no,
+            progress=progress,
+        )
     finally:
         p1.dismiss_popups = orig_dismiss  # type: ignore[assignment]
 
@@ -986,8 +1264,22 @@ def browse_store_count_cards(
     matched = card_n == excel_n
     _log(
         progress,
-        "로직",
+        "동작",
         f"5) 비교 · 카드상품수={card_n} · 엑셀상품수={excel_n} · 일치={'Y' if matched else 'N'}",
+    )
+    reveal_browser_page(
+        store_page,
+        progress,
+        step_no="5",
+        action=f"비교결과 카드={card_n} 엑셀={excel_n} {'Y' if matched else 'N'}",
+    )
+    screenshot_step(
+        store_page,
+        shot_dir,
+        step_tag="05_compare",
+        label=f"5)비교 카드={card_n} 엑셀={excel_n} {'Y' if matched else 'N'}",
+        row_no=row_no,
+        progress=progress,
     )
     return card_n, matched
 
@@ -1374,6 +1666,14 @@ def click_edit_on_row(
                 "로직",
                 f"6) 팝업창 열림 · url={(popup.url or '')[:120]}",
             )
+            # ★P2와 동일: 팝업 창을 앞으로
+            reveal_browser_page(
+                popup,
+                progress,
+                step_no="6",
+                action="수집조건수정 팝업 표시",
+                dwell_s=STEP_VIEW_DWELL_SEC,
+            )
 
         deadline = time.time() + gap
         while time.time() < deadline:
@@ -1382,6 +1682,10 @@ def click_edit_on_row(
                     if p not in before_pages:
                         try:
                             p.wait_for_load_state("domcontentloaded", timeout=2_000)
+                        except Exception:
+                            pass
+                        try:
+                            p.bring_to_front()
                         except Exception:
                             pass
             except Exception:
@@ -2422,6 +2726,11 @@ def run_update(
         return result
     by_url = excel_by_url(rows)
     _log(progress, "준비", f"엑셀 {path.name} · URL {len(rows)}건 · 더망고URL 지정됨")
+    _log(
+        progress,
+        "준비",
+        "P2와 동일 망고 연동: CDP Chrome · 확장설정 · 로그인대기 · 필터URL 이동",
+    )
 
     try:
         from playwright.sync_api import sync_playwright
@@ -2437,9 +2746,14 @@ def run_update(
 
     try:
         with sync_playwright() as p:
+            # ★P2 main()과 동일 순서
             browser, page = p2.connect_browser(p)
-            navigate_mango_url(page, mango, progress=progress)
-            time.sleep(0.5)
+            try:
+                page.set_default_timeout(120_000)
+            except Exception:
+                pass
+            page = ensure_mango_ready_like_p2(p2, page, progress=progress)
+            navigate_mango_url(page, mango, progress=progress, p2=p2)
             shot_dir = new_shot_dir()
             _log(progress, "준비", f"스크린샷 폴더: {shot_dir}")
 
@@ -2499,7 +2813,8 @@ def run_update(
                         )
                     continue
 
-                lg = Logger(progress, ex.excel_row)
+                # ★필터 매칭 시 전 단계 상세 + 브라우저에 동작(팝업 포함) 실제 표시
+                lg = Logger(progress, ex.excel_row, force_verbose=True)
                 lg.step(
                     "행",
                     f"{i}/{result.total_demango} 더망고URL기준 매칭 · 엑셀행={ex.excel_row}",
@@ -2516,7 +2831,12 @@ def run_update(
                 if note:
                     lg.step("로직", f"1) {note}", note)
 
-                # ★필터 일치 시 모든 단계 스크린샷
+                reveal_browser_page(
+                    page,
+                    progress,
+                    step_no="1",
+                    action=f"필터일치 목록행 표시 · filter={d_filter}",
+                )
                 screenshot_step(
                     page,
                     shot_dir,
@@ -2535,9 +2855,16 @@ def run_update(
                     pass
 
                 list_page = page
+                reveal_browser_page(
+                    list_page,
+                    progress,
+                    step_no="1",
+                    action="더망고 목록 창 앞으로",
+                    dwell_s=0.5,
+                )
 
-                # 1) URL 클릭
-                lg.step("로직", "1) URL 클릭", "1) URL클릭")
+                # 1) URL 클릭 → 스토어/팝업을 브라우저에 표시
+                lg.step("로직", "1) URL 클릭 (브라우저·팝업 실제 표시)", "1) URL클릭")
                 store = click_demango_row_url(
                     list_page, row_idx, d_url, progress=progress
                 )
@@ -2554,13 +2881,23 @@ def run_update(
                     )
                     _return_to_list(list_page, mango)
                     continue
+                screenshot_step(
+                    store,
+                    shot_dir,
+                    step_tag="01_store_opened",
+                    label="1)URL클릭 후 스토어/팝업",
+                    row_no=i,
+                    progress=progress,
+                )
 
-                # 2)~5) 팝업닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교
+                # 2)~5) 팝업닫기 → 푸터↓ → 상단↑ 카드수 → 엑셀 비교 (창 표시)
                 try:
                     browse_store_count_cards(
                         store,
                         excel_count=ex.collectible,
                         progress=progress,
+                        shot_dir=shot_dir,
+                        row_no=i,
                     )
                 except Exception as e:  # noqa: BLE001
                     _log(
@@ -2577,7 +2914,13 @@ def run_update(
                     result.failed += 1
                     _log(progress, "오류", f"행{i} 더망고 목록 탭 재연결 실패")
                     continue
-                time.sleep(0.3)
+                reveal_browser_page(
+                    page,
+                    progress,
+                    step_no="6",
+                    action="더망고 목록 복귀·창 표시",
+                    dwell_s=STEP_VIEW_DWELL_SEC,
+                )
 
                 # 복귀 후 URL로 행 index 재확정 (stale index 방지)
                 row_idx2 = resolve_demango_row_index_by_url(
@@ -2645,8 +2988,19 @@ def run_update(
                     )
                     _return_to_list(page, mango)
                     continue
+                try:
+                    mod_page, _kind = resolve_modify_target(page)
+                except Exception:
+                    mod_page = page
+                reveal_browser_page(
+                    mod_page if mod_page is not None else page,
+                    progress,
+                    step_no="6",
+                    action="검색필터 수정 팝업/화면 표시",
+                    dwell_s=STEP_VIEW_DWELL_SEC,
+                )
                 screenshot_step(
-                    page,
+                    mod_page if mod_page is not None else page,
                     shot_dir,
                     step_tag="06_modify_opened",
                     label="6)검색필터 수정 화면",
@@ -2788,8 +3142,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("excel", help="엑셀 파일 경로")
     parser.add_argument(
         "--mango-url",
-        required=True,
-        help="더망고 검색필터(저장조건) 화면 URL (보드 입력값)",
+        default=load_mango_url_default(),
+        help="더망고 검색필터(저장조건) 화면 URL (기본=망고 url, 변경 가능)",
     )
     args = parser.parse_args(argv)
     result = run_update(args.excel, args.mango_url)
