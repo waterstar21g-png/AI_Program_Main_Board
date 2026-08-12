@@ -48,9 +48,10 @@ if %ERR% NEQ 0 (
   exit /b 1
 )
 
-echo [OK] Icons ready.
-echo   Desktop: AI_Program_Main_Board
-echo   Desktop: AI_Board_Update  (or Korean update name)
-echo   Tip: if not visible, open this folder and drag the .lnk to Desktop.
+echo [OK] Icons ready (Desktop + Taskbar).
+echo   1) AI_Program_Main_Board   = main board
+echo   2) AI_Board_Update / Korean update name = version update shortcut
+echo   Both are copied to the Taskbar pin folder.
+echo   Tip: if taskbar icon missing, right-click desktop icon -^> Pin to taskbar.
 echo.
 pause
