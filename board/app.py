@@ -2393,12 +2393,9 @@ class BoardApp(tk.Tk):
                 if text:
                     self.after(0, lambda t=text: self._handle_p3_line(t))
         except Exception as e:  # noqa: BLE001
-            self.after(
-                0,
-                lambda: self.p3_status.configure(
-                    text=f"로그 수신 오류: {e}", fg="#b91c1c"
-                ),
-            )
+            # except 블록을 벗어나면 e 가 사라지므로 메시지를 먼저 만들어 넘긴다
+            msg = f"로그 수신 오류: {e}"
+            self.after(0, lambda m=msg: self.p3_status.configure(text=m, fg="#b91c1c"))
         code = proc.wait()
         self.after(0, lambda: self._on_p3_finished(path, code))
 
