@@ -659,24 +659,17 @@ def test_store_count_call_commented_out_never_opens_row_url():
     assert all(ln.lstrip().startswith("def ") for ln in live), live
 
 
-def test_first_five_rows_delay_three_seconds_then_fastest():
-    """★요건: 처음 5개 처리행만 동작마다 3초 대기 · 6번째부터 지연 없음."""
+def test_no_delay_runs_at_machine_speed():
+    """★요건: 순서만 지키고 중간 대기 없이 컴퓨터 속도로 진행 (지연 0)."""
     import update_filters as uf
 
-    assert uf.SLOW_DEMO_ROWS == 5
-    assert uf.SLOW_DEMO_DELAY_SEC == 3.0
-    assert uf.step_delay_sec(1) == 3.0
-    assert uf.step_delay_sec(5) == 3.0
-    assert uf.step_delay_sec(6) == 0.0
-    assert uf.step_delay_sec(99) == 0.0
-    assert uf.step_delay_sec(0) == 0.0
+    assert uf.SLOW_DEMO_ROWS == 0
+    assert uf.SLOW_DEMO_DELAY_SEC == 0.0
+    assert uf.STEP_VIEW_DWELL_SEC == 0.0
+    for n in (1, 5, 6, 99):
+        assert uf.step_delay_sec(n) == 0.0
     src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
-    # 3개 동작(수집조건수정·저장하기·확인) 뒤에 각각 대기
-    assert src.count("_demo_pause(") >= 4  # 정의 1 + 호출 3
-    assert "what=\"'수집조건수정' 클릭\"" in src
-    assert "what=\"'저장하기' 클릭\"" in src
-    assert "what=\"'확인' 클릭\"" in src
-
+    assert "_demo_pause" not in src  # 대기 로직 자체가 없음
 
 def test_find_edit_marks_right_of_url():
     """수집조건수정이 URL 오른쪽에 있으면 rightOfUrl=Y."""
@@ -914,8 +907,6 @@ def test_set_save_count_always_before_after_shots(tmp_path: Path):
         after = shot_dir / "r010_05_save_count_after.png"
         assert before.is_file() and before.stat().st_size > 0
         assert after.is_file() and after.stat().st_size > 0
-        assert (shot_dir / "r010_save_count_before.png").is_file()
-        assert (shot_dir / "r010_save_count_after.png").is_file()
         assert page.locator("td:has-text('검색결과 상위') input").input_value() == "63"
         browser.close()
 
@@ -1068,6 +1059,14 @@ def test_run_update_is_excel_driven_in_order():
     assert "find_demango_row_for_excel(" in src
     # 망고 목록을 훑는 방향(옛 로직)은 없어야 한다
     assert "for i, drow in enumerate(demango_rows" not in src
+
+
+def test_save_count_single_write_only():
+    """★요건: 저장상품수는 처음 한 번만 입력 (재입력 방식 없음)."""
+    src = (ROOT / "update_filters.py").read_text(encoding="utf-8")
+    assert "def verify_save_count" not in src
+    assert "→ 재입력" not in src
+    assert "★단발 입력" in src
 
 
 def test_step2_shows_mango_row_text_as_is():

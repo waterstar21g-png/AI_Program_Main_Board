@@ -278,13 +278,13 @@ def _emit_subshot(path, label: str) -> None:
 
 
 # ★P2와 동일: 실제 Chrome(CDP) 창을 OS 앞으로 가져와 동작을 보여 줌
-STEP_VIEW_DWELL_SEC = 0.3  # ★테스트 속도 우선 — 짧게 유지(화면 표시는 유지)
+STEP_VIEW_DWELL_SEC = 0.0  # ★컴퓨터 속도 — 화면 표시만 하고 대기 없음
 
-# ★요건: 처음 5개 처리행은 5)수집조건수정 클릭 / 5)저장하기 클릭 / 6)확인 클릭 뒤에
-#   각각 3초씩 멈춰 실제 망고 화면 변화를 눈으로 확인할 수 있게 하고,
-#   6번째 처리행부터는 지연 없이 가장 빠른 속도로 처리한다.
-SLOW_DEMO_ROWS = 5
-SLOW_DEMO_DELAY_SEC = 3.0
+# ★요건: 수집조건수정 → 저장상품수 입력 → 저장하기 → 확인 순서만 지키고,
+#   중간 대기 없이 컴퓨터 속도로 진행한다.
+# ★요건: 지연 없이 컴퓨터 속도로 진행 (0 = 대기 없음)
+SLOW_DEMO_ROWS = 0
+SLOW_DEMO_DELAY_SEC = 0.0
 
 
 def step_delay_sec(processed_no: int) -> float:
@@ -292,27 +292,6 @@ def step_delay_sec(processed_no: int) -> float:
     if 1 <= int(processed_no or 0) <= SLOW_DEMO_ROWS:
         return SLOW_DEMO_DELAY_SEC
     return 0.0
-
-
-def _demo_pause(
-    progress: ProgressFn | None,
-    processed_no: int,
-    *,
-    step_no: str,
-    what: str,
-) -> None:
-    """처음 5개 처리행에서 동작 뒤 3초 대기 — 화면 변화를 그대로 보여 준다."""
-    delay = step_delay_sec(processed_no)
-    if delay <= 0:
-        return
-    _log(
-        progress,
-        "화면",
-        f"{step_no}) {what} 후 {delay:.0f}초 대기 — 화면 변화 확인"
-        f"(처리 {processed_no}번째 행 · 처음 {SLOW_DEMO_ROWS}행만 지연)",
-        major=False,
-    )
-    time.sleep(delay)
 
 
 def describe_page_state(page) -> str:
@@ -2296,14 +2275,12 @@ def set_save_count(
     row_no: int = 0,
     out: dict | None = None,
 ) -> bool:
-    """저장상품수 입력칸: 현재 숫자(스크린샷의 '3')가 있는 칸을 찾아 상품수값으로 대체.
+    """저장상품수 입력칸에 상품수값을 **한 번만** 넣는다.
 
     UI: 저장상품수 | 검색결과 상위 [ 3 ] 개 상품만 저장
-    1) value가 '3'(또는 숫자)인 input 을 찾음
-    2) 그 칸의 값을 상품수(target)로 덮어씀
-    ★갱신 전·후 스크린샷은 성공/실패와 무관하게 항상 로그에 남김
-    out: 주면 {"before": 갱신전상품수, "after": 갱신후상품수} 를 채운다
-         (저장하기 단계 로그에 갱신 전·후를 그대로 표출하기 위함)
+    ★요건: 처음 입력 후 또 한번 입력하는 방식은 쓰지 않는다 (단발 입력).
+    갱신 전·후 스크린샷은 성공/실패와 무관하게 항상 남긴다.
+    out: 주면 {"before": 갱신전상품수, "after": 갱신후상품수} 를 채운다.
     """
     target = str(int(value))
     if out is not None:
@@ -2314,7 +2291,6 @@ def set_save_count(
     wait_for_save_count_ready(work, timeout_ms=8_000)
     shot_page = page if kind == "frame" else work
 
-    # ★요건: 5) 저장상품수 갱신 전 스크린샷 (항상)
     if shot_dir is not None:
         screenshot_step(
             shot_page,
@@ -2325,88 +2301,39 @@ def set_save_count(
             progress=progress,
         )
 
-    # ★요건: 숫자 "3" 이 들어있는 칸 우선 탐색
     loc = find_save_count_locator(work, prefer_value="3")
-
-    before_val = ""
-    if loc is not None:
-        try:
-            before_val = (loc.input_value(timeout=500) or "").strip()
-        except Exception:
-            before_val = ""
-        if out is not None:
-            out["before"] = before_val
-        _log(
-            progress,
-            "로직",
-            f"5) 저장상품수 칸 발견 현재값={before_val or '?'} → 상품수값={target}",
-        )
+    if loc is None:
+        _log(progress, "오류", f"5) 저장상품수 입력칸 미검출 · 목표={target}")
         if shot_dir is not None:
-            screenshot_save_count_grid(
+            screenshot_step(
                 shot_page,
-                loc,
                 shot_dir,
-                tag="before",
+                step_tag="05_save_count_after",
+                label=f"5)저장상품수 갱신 후 (실패) 칸미검출 목표={target}",
                 row_no=row_no,
-                note=f"현재값={before_val or '?'}",
                 progress=progress,
             )
+        return False
 
-    def _replace_value(el) -> bool:
-        """기존 숫자(3 등)를 지우고 상품수값으로 대체 입력."""
+    before_val = ""
+    try:
+        before_val = (loc.input_value(timeout=500) or "").strip()
+    except Exception:  # noqa: BLE001
+        before_val = ""
+    if out is not None:
+        out["before"] = before_val
+
+    # ★단발 입력 — 값 대체 후 blur 로 확정 (Escape 로 원복되는 문제 없음)
+    filled = False
+    try:
+        loc.fill(target, timeout=3_000)
+        filled = True
+    except Exception:  # noqa: BLE001
         try:
-            el.scroll_into_view_if_needed(timeout=1500)
-        except Exception:
-            pass
-        try:
-            el.click(timeout=1500, force=True)
-        except Exception:
-            try:
-                el.focus()
-            except Exception:
-                pass
-        # 전체 선택 후 삭제 → 새 값 입력 (자동완성 대비 Escape)
-        for key in ("Control+a", "Meta+a"):
-            try:
-                el.press(key)
-                break
-            except Exception:
-                continue
-        try:
-            el.press("Backspace")
-        except Exception:
-            pass
-        try:
-            el.fill("")
-        except Exception:
-            pass
-        try:
-            el.type(target, delay=30)
-        except Exception:
-            try:
-                el.fill(target)
-            except Exception:
-                return False
-        # ★Escape 로 자동완성을 닫으면 방금 입력한 값까지 원복되는 경우가 있어
-        #   (갱신전=3 → 갱신후=3 사고) blur 로 확정한다.
-        try:
-            el.evaluate("(el) => { el.blur(); }")
-        except Exception:
-            pass
-        time.sleep(0.15)
-        try:
-            got = (el.input_value(timeout=800) or "").strip()
-            if got == target:
-                return True
-        except Exception:
-            pass
-        # JS 강제 대체
-        try:
-            ok = bool(
-                el.evaluate(
+            filled = bool(
+                loc.evaluate(
                     """(el, want) => {
                       el.focus();
-                      el.value = '';
                       el.value = String(want);
                       el.dispatchEvent(new Event('input', {bubbles:true}));
                       el.dispatchEvent(new Event('change', {bubbles:true}));
@@ -2416,108 +2343,37 @@ def set_save_count(
                     target,
                 )
             )
-            return ok
-        except Exception:
-            return False
-
-    filled = False
-    if loc is not None and _replace_value(loc):
-        filled = True
-    else:
-        # JS: value==='3' 인 칸을 우선 찾아 상품수값으로 대체
-        try:
-            filled = bool(
-                work.evaluate(
-                    """(n) => {
-                      const want = String(n);
-                      const isNumInput = (inp) => {
-                        if (!inp) return false;
-                        const ty = (inp.getAttribute('type') || 'text').toLowerCase();
-                        if (!(ty === 'text' || ty === 'number' || ty === '')) return false;
-                        if (inp.disabled || inp.readOnly) return false;
-                        return true;
-                      };
-                      const setVal = (inp) => {
-                        inp.focus();
-                        try { inp.select(); } catch (e) {}
-                        inp.value = '';
-                        inp.value = want;
-                        inp.dispatchEvent(new Event('input', { bubbles: true }));
-                        inp.dispatchEvent(new Event('change', { bubbles: true }));
-                        try { inp.blur(); } catch (e) {}
-                        return (inp.value || '').trim() === want;
-                      };
-                      const inSaveRow = (inp) => {
-                        const tr = inp.closest('tr');
-                        const scope = tr || inp.closest('td,div,li') || inp.parentElement;
-                        const t = ((scope && scope.innerText) || '').replace(/\\s+/g, '');
-                        return t.includes('저장상품수')
-                          || (t.includes('검색결과') && t.includes('상위'))
-                          || t.includes('개상품만저장')
-                          || (t.includes('상위') && t.includes('개'));
-                      };
-                      const all = Array.from(document.querySelectorAll(
-                        'input[type="text"], input[type="number"], input:not([type])'
-                      )).filter(isNumInput);
-
-                      // 1) 정확히 value==='3' 이고 저장상품수 문맥
-                      let pick = all.find(i => (i.value || '').trim() === '3' && inSaveRow(i));
-                      // 2) value==='3' (문맥 느슨)
-                      if (!pick) pick = all.find(i => (i.value || '').trim() === '3');
-                      // 3) 저장상품수 행의 숫자 value
-                      if (!pick) pick = all.find(i => inSaveRow(i) && /^\\d+$/.test((i.value || '').trim()));
-                      // 4) 저장상품수 행 첫 숫자 input
-                      if (!pick) pick = all.find(i => inSaveRow(i));
-                      if (pick) return setVal(pick);
-                      return false;
-                    }""",
-                    int(value),
-                )
-            )
-        except Exception:
+        except Exception:  # noqa: BLE001
             filled = False
-        if filled:
-            loc = find_save_count_locator(work, prefer_value=target)
+    if filled:
+        try:
+            loc.evaluate("(el) => { el.blur(); }")
+        except Exception:  # noqa: BLE001
+            pass
 
     after_val = ""
-    if filled:
-        after_val = target
-        if loc is not None:
-            try:
-                after_val = (loc.input_value(timeout=500) or "").strip() or target
-            except Exception:
-                after_val = target
-            if shot_dir is not None:
-                screenshot_save_count_grid(
-                    shot_page,
-                    loc,
-                    shot_dir,
-                    tag="after",
-                    row_no=row_no,
-                    note=f"{before_val or '3'}→{after_val}",
-                    progress=progress,
-                )
-        if out is not None:
-            out["after"] = after_val or target
-        _log(
-            progress,
-            "로직",
-            f"5) 저장상품수 대체완료 {before_val or '3'} → {after_val or target}",
-        )
+    try:
+        after_val = (loc.input_value(timeout=500) or "").strip()
+    except Exception:  # noqa: BLE001
+        after_val = target if filled else ""
+    if out is not None:
+        out["after"] = after_val or (target if filled else "")
 
-    # ★요건: 5) 저장상품수 갱신 후 스크린샷 (항상 — 성공/실패 공통)
+    _log(
+        progress,
+        "로직",
+        f"5) 저장상품수 입력 {before_val or '?'} → {after_val or target} (목표={target})",
+    )
     if shot_dir is not None:
         status = "성공" if filled else "실패"
-        note = f"{before_val or '?'}→{after_val or target}" if filled else "칸미검출/대체실패"
         screenshot_step(
             shot_page,
             shot_dir,
             step_tag="05_save_count_after",
-            label=f"5)저장상품수 갱신 후 ({status}) {note}",
+            label=f"5)저장상품수 갱신 후 ({status}) {before_val or '?'}→{after_val or target}",
             row_no=row_no,
             progress=progress,
         )
-
     return filled
 
 
@@ -3466,7 +3322,7 @@ def run_update(
                         shot_dir=shot_dir,
                         row_no=i,
                         max_tries=EDIT_CLICK_MAX_TRIES,
-                        try_interval_s=0.6,  # ★테스트 속도 우선
+                        try_interval_s=0.3,  # ★컴퓨터 속도
                     ):
                         result.failed += 1
                         _log(
@@ -3518,12 +3374,7 @@ def run_update(
                         progress,
                         step_no="5",
                         action="검색필터 수정 팝업/화면 표시",
-                        # 6번째 처리행부터는 화면 표시 대기도 없이 최고속
-                        dwell_s=(
-                            STEP_VIEW_DWELL_SEC
-                            if step_delay_sec(processed_no) > 0
-                            else 0.0
-                        ),
+                        dwell_s=0.0,
                     )
                     screenshot_step(
                         mod_page if mod_page is not None else page,
@@ -3532,9 +3383,6 @@ def run_update(
                         label="5)검색필터 수정 화면",
                         row_no=i,
                         progress=progress,
-                    )
-                    _demo_pause(
-                        progress, processed_no, step_no="5", what="'수집조건수정' 클릭"
                     )
 
                     # 5) 「저장상품수」란 「검색결과 상위 [ ]개만 상품만 저장」에 엑셀 상품수 입력
@@ -3600,9 +3448,6 @@ def run_update(
                         f"필터={d_filter} · KEY={key_short}",
                         major=True,
                     )
-                    _demo_pause(
-                        progress, processed_no, step_no="5", what="'저장하기' 클릭"
-                    )
 
                     if not wait_modify_page_closed(page, timeout_ms=20_000):
                         _log(
@@ -3657,7 +3502,6 @@ def run_update(
                         f"6) '수정되었습니다' 확인 클릭 완료 · 필터={d_filter} · KEY={key_short}",
                         major=True,
                     )
-                    _demo_pause(progress, processed_no, step_no="6", what="'확인' 클릭")
 
                     result.updated += 1
                     _log(
@@ -3682,7 +3526,6 @@ def run_update(
                         f"저장상품수={target}",
                         major=True,
                     )
-                    time.sleep(0.1)  # ★테스트 속도 우선
 
                     if stop_requested():
                         break
