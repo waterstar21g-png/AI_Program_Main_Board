@@ -57,7 +57,8 @@ TOP_GRID_COLS = p1_crawl.TOP_GRID_COLS
 TOP_GRID_ROWS = p1_crawl.TOP_GRID_ROWS
 crawl_site = p1_crawl.crawl_site
 save_excel = p1_crawl.save_excel
-# ★요건(2026-08-19): P1_102 — P1 복제본(상위 카테고리 SALE 기본 포함)
+# ★요건(2026-08-19): P1_102 — P1 복제본(상위·중위 카테고리 입력 → 하위 카테고리 추출,
+# A-RT/ABC마트 · 무신사(musinsa.com) 지원)
 crawl_site_102 = p1_102_crawl.crawl_site
 save_excel_102 = p1_102_crawl.save_excel
 zara_crawl_site = p1_zara_crawl.crawl_site
@@ -614,7 +615,7 @@ class BoardApp(tk.Tk):
     def _build_p1_102(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="P1_102 — P1 복제본 · 상위·중위 카테고리 → 하위 카테고리를 최종명으로 → 엑셀",
+            text="P1_102 — 상위·중위 카테고리 → 하위 카테고리 추출 → 엑셀 (ABC마트·무신사)",
             bg="#f1f5f9",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",

@@ -28,6 +28,18 @@ P1_102_Category_Url_Extract — P1 복제본 + 일부 수정
 2. 최종카테고리명 재정의 —
    사업자명 + '-' + 사이트명 + 상위카테고리명 + '-' + 중위 카테고리명 + '-' + 하위 카테고리명
    (사용자 원문 그대로: 사이트명과 상위카테고리명 사이에는 구분자를 넣지 않는다.)
+
+★요건(2026-08-19, 추가4): 무신사(musinsa.com) 지원 —
+사이트 URL이 musinsa.com 이면 A-RT(ABC마트) 대신 무신사 카테고리 메뉴
+(https://www.musinsa.com/menu/category) 를 사용한다.
+    - 상위 카테고리명 = 성별 탭("전체"/"남성"/"여성")
+    - 중위 카테고리명 = 카테고리 메뉴 좌측 목록(뷰티·신발·상의·아우터·바지 등,
+      화면에 표시되는 것만 인식 — data-section-name="catemenu_left")
+    - 하위 카테고리명 = 상위·중위 선택 시 우측에 나타나는 버튼들(같은 화면에서
+      data-section-name="catemenu_right" 로 한 번에 노출) 중 "신상품 보기"·
+      "전체 보기"(전체보기) 는 제외하고 나머지 버튼 레이블 전부
+    - 각 하위 카테고리 버튼의 URL(상품수집필터 URL)을 사이트 리다이렉트로 확정하여
+      "최종 카테고리 URL주소" 칸에 쓰고, "최종카테고리명"은 위 조합식 그대로 적용한다.
 """
 
 from __future__ import annotations
@@ -87,6 +99,22 @@ TOP_CELL_MAX_LEN = 15
 # 하위 호환(보드 P1 탭과 동일한 상수명으로도 노출)
 TOP_GRID_ROWS = MID_GRID_ROWS
 TOP_GRID_COLS = MID_GRID_COLS
+
+# ★요건: 무신사(musinsa.com) 지원 — 카테고리 메뉴 화면(스크린샷)에 실제 표시되는
+# 상위(성별 탭)·중위(좌측 목록)·하위(우측 버튼)만 인식한다.
+MUSINSA_MENU_URL = "https://www.musinsa.com/menu/category"
+MUSINSA_GENDER_LABEL: dict[str, str] = {"A": "전체", "M": "남성", "F": "여성"}
+MUSINSA_GENDER_CODE: dict[str, str] = {
+    "전체": "A", "ALL": "A", "A": "A",
+    "남성": "M", "MEN": "M", "MALE": "M", "M": "M",
+    "여성": "F", "WOMEN": "F", "FEMALE": "F", "F": "F",
+}
+# ★요건(매우 중요): 하위 카테고리명 버튼에서 "신상품 보기"·"전체 보기"는 제외
+MUSINSA_EXCLUDED_LOW_LABELS = {"신상품 보기", "전체 보기", "전체보기"}
+# 신발·스포츠/레저·키즈·어스 등은 하위 버튼이 "품목별"/"인기 라인업"/"종목별"/"연령별"/
+# "테마별" 등 여러 그룹으로 나뉘어 나타난다 — 실제 품목 하위 카테고리인 "품목별" 그룹만 인식
+# ("인기 라인업" 등은 브랜드/테마 모음이라 하위 카테고리명이 아니므로 제외).
+MUSINSA_SUBGROUP_ALLOWED = {"품목별"}
 
 
 @dataclass
@@ -378,6 +406,11 @@ def is_art_platform(html: str, url: str) -> bool:
     )
 
 
+def is_musinsa_platform(url: str) -> bool:
+    """★요건: 사이트 URL이 musinsa.com 이면 무신사 카테고리 메뉴 방식을 사용한다."""
+    return "musinsa.com" in (url or "").lower()
+
+
 def _session() -> requests.Session:
     s = requests.Session()
     s.headers.update(
@@ -659,6 +692,194 @@ def parse_art_gnb_low_as_final(html: str, base_url: str) -> list[Leaf]:
     return _dedupe(leaves)
 
 
+def fetch_musinsa_menu_html(gender_code: str) -> str:
+    """무신사 카테고리 메뉴 화면을 렌더링해 HTML을 가져온다.
+
+    ★요건: 메뉴 화면은 클라이언트 렌더링이라 성별 탭(전체/남성/여성)을 실제로
+    클릭해야 좌측(중위)·우측(하위) 목록이 성별에 맞게 바뀐다 — Playwright 필요.
+    """
+    try:
+        from playwright.sync_api import sync_playwright
+    except Exception as e:  # noqa: BLE001
+        raise RuntimeError(f"Playwright 미설치/로드 실패: {e}") from e
+
+    label = MUSINSA_GENDER_LABEL.get(gender_code, "전체")
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(
+            locale="ko-KR", user_agent=DEFAULT_UA, viewport={"width": 1440, "height": 900}
+        )
+        page = context.new_page()
+        page.goto(MUSINSA_MENU_URL, wait_until="domcontentloaded", timeout=60_000)
+        page.wait_for_timeout(1500)
+        if label != "전체":
+            sel = f'[data-section-name="gender_tab"][data-button-name="{label}"]'
+            page.locator(sel).first.click(timeout=10_000)
+            page.wait_for_timeout(1200)
+        html = page.content()
+        browser.close()
+    return html
+
+
+def parse_musinsa_menu_tree(html: str, top_label: str) -> tuple[set[str], list[Leaf]]:
+    """무신사 카테고리 메뉴 HTML → (인식된 중위 후보 집합, 하위 카테고리 Leaf 목록).
+
+    ★요건(매우 중요): 카테고리 메뉴 화면(스크린샷)에 실제로 표시되는 버튼만
+    상위·중위 카테고리명으로 인식한다.
+        - 중위 후보: data-section-name="catemenu_left" 의 1depth_cate 항목만
+        - 하위 후보: data-section-name="catemenu_right" 의 2depth_cate(또는 하위그룹이
+          있는 경우 3depth_cate 중 "품목별" 그룹) 항목만
+          ("신상품 보기"/"전체 보기" 버튼과 "인기 라인업" 등 비품목 그룹은 제외)
+    """
+    soup = BeautifulSoup(html or "", "html.parser")
+
+    mid_names: set[str] = set()
+    for el in soup.select('[data-section-name="catemenu_left"][data-button-id="1depth_cate"]'):
+        name = clean_text(el.get("data-category-name") or el.get_text())
+        if name:
+            mid_names.add(name)
+
+    leaves: list[Leaf] = []
+    selector = (
+        '[data-section-name="catemenu_right"][data-button-id="2depth_cate"],'
+        '[data-section-name="catemenu_right"][data-button-id="3depth_cate"]'
+    )
+    for a in soup.select(selector):
+        label = clean_text(a.get_text())
+        if not label or label in MUSINSA_EXCLUDED_LOW_LABELS:
+            continue
+        cat_name = a.get("data-category-name") or ""
+        parts = [clean_text(p) for p in cat_name.split("|")]
+        if not parts or not parts[0]:
+            continue
+        mid = parts[0]
+        if len(parts) >= 3:
+            # ★요건: "품목별" 그룹만 하위 카테고리로 인식 (인기 라인업/종목별/연령별/테마별 등 제외)
+            if parts[1] not in MUSINSA_SUBGROUP_ALLOWED:
+                continue
+            low_label = parts[-1]
+        else:
+            low_label = parts[1] if len(parts) > 1 else label
+        if not mid or mid not in mid_names or not low_label or low_label in MUSINSA_EXCLUDED_LOW_LABELS:
+            continue
+        href = a.get("href") or ""
+        if not href or "/category/" not in href:
+            continue
+        leaves.append(
+            Leaf(top=top_label, mid=mid, low="", final=low_label, category_url=href, ctgr_no=None)
+        )
+    return mid_names, _dedupe(leaves)
+
+
+def resolve_musinsa_category_url(
+    href: str, gender_code: str, session: requests.Session | None = None
+) -> str:
+    """★요건: 하위 카테고리 버튼 클릭 시 실제 이동하는 URL(상품수집필터 URL)을 확정한다.
+
+    무신사는 ``/category/{code}[?기존파라미터]&gf={M|F|A}`` 요청을 실제 상품목록 URL
+    (``/category/{code}/goods?...&gf=...``) 로 서버 리다이렉트(307) 하므로, 요청을
+    보내 최종 이동 URL을 그대로 사용한다. 버튼의 기존 쿼리(예: separatorId)는 그대로 보존한다.
+    """
+    sess = session or _session()
+    sep = "&" if "?" in (href or "") else "?"
+    base = f"{href}{sep}gf={gender_code}"
+    try:
+        res = sess.get(base, timeout=30, allow_redirects=True)
+        if res.url:
+            return res.url
+    except Exception:
+        pass
+    return base
+
+
+def _crawl_musinsa(
+    site_name: str,
+    site_url: str,
+    pairs: list[CategoryPair],
+    applied: list[str],
+    biz_name: str,
+) -> CrawlResult:
+    """무신사(musinsa.com) 카테고리 메뉴 방식 수집."""
+    gender_cache: dict[str, tuple[set[str], list[Leaf]]] = {}
+    warnings: list[str] = []
+    matched: list[tuple[Leaf, CategoryPair]] = []
+    seen: set[str] = set()
+
+    for pair in pairs:
+        gender_code = MUSINSA_GENDER_CODE.get(pair.match_top.strip().upper())
+        if not gender_code:
+            warnings.append(
+                f"인식할 수 없는 상위 카테고리(성별): {pair.match_top} "
+                "(전체/남성/여성 중 하나로 입력하세요)"
+            )
+            continue
+        if gender_code not in gender_cache:
+            try:
+                html = fetch_musinsa_menu_html(gender_code)
+                gender_cache[gender_code] = parse_musinsa_menu_tree(html, pair.match_top)
+            except Exception as e:  # noqa: BLE001
+                warnings.append(f"무신사 카테고리 메뉴 수집 실패({pair.match_top}): {e}")
+                gender_cache[gender_code] = (set(), [])
+                continue
+        mid_names, leaves = gender_cache[gender_code]
+        mid_key = pair.match_mid.strip().upper()
+        if not any(m.upper() == mid_key for m in mid_names):
+            warnings.append(
+                f"중위 카테고리를 찾지 못했습니다: {pair.match_top} > {pair.match_mid} "
+                "(카테고리 메뉴 화면에 표시되는 이름만 인식합니다)"
+            )
+            continue
+        for leaf in leaves:
+            if leaf.mid.strip().upper() != mid_key:
+                continue
+            key = "|".join([pair.match_top, leaf.mid, leaf.final, leaf.ctgr_no or leaf.category_url])
+            if key in seen:
+                continue
+            seen.add(key)
+            matched.append((leaf, pair))
+
+    if not matched:
+        return CrawlResult(
+            ok=False,
+            site_name=site_name,
+            site_url=site_url,
+            applied_tops=applied,
+            errors=[f"입력한 상위·중위 카테고리({', '.join(applied)})에 해당하는 메뉴를 찾지 못했습니다."],
+            warnings=warnings,
+        )
+
+    sess = _session()
+    rows: list[HierarchyRow] = []
+    for leaf, pair in matched:
+        gender_code = MUSINSA_GENDER_CODE.get(pair.match_top.strip().upper(), "A")
+        final_url = resolve_musinsa_category_url(leaf.category_url, gender_code, session=sess)
+        rows.append(
+            HierarchyRow(
+                site_name=site_name,
+                top=pair.excel_top,
+                mid=pair.excel_mid,
+                low=leaf.final,
+                # ★요건: 최종카테고리명 = 사업자명-사이트명상위카테고리명-중위카테고리명-하위카테고리명
+                final=build_final_category_name(
+                    biz_name, site_name, pair.excel_top, pair.excel_mid, leaf.final
+                ),
+                top_final_label=top_final_label(pair.excel_top, leaf.final),
+                final_category_url=final_url,
+            )
+        )
+
+    return CrawlResult(
+        ok=True,
+        site_name=site_name,
+        site_url=site_url,
+        platform="무신사(MUSINSA)",
+        applied_tops=applied,
+        rows=rows,
+        total=len(rows),
+        warnings=warnings,
+    )
+
+
 def filter_by_top_mid(
     leaves: list[Leaf], pairs: list[CategoryPair]
 ) -> list[tuple[Leaf, CategoryPair]]:
@@ -717,6 +938,10 @@ def crawl_site(
                 f"(상위 카테고리 {TOP_GROUP_COUNT}개 × 중위 카테고리 최대 {MID_PER_TOP}개)"
             ],
         )
+
+    # ★요건: 사이트 URL이 musinsa.com 이면 무신사 카테고리 메뉴 방식으로 수집
+    if is_musinsa_platform(url):
+        return _crawl_musinsa(name, url, pairs, applied, biz)
 
     try:
         html = fetch_html(url)
