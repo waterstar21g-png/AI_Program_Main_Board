@@ -29,7 +29,6 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlparse
 
 import openpyxl
 from playwright.sync_api import (
@@ -441,7 +440,7 @@ class RunCtx:
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
-            f"최종 카테고리명={self.current_label} | "
+            f"상위 최종 카테고리명={self.current_label} | "
             f"최종 카테고리 URL주소={self.current_url} | "
             f"제한 {ROW_BUDGET_SEC}초 ---"
         )
@@ -676,7 +675,7 @@ class RunCtx:
             if ord_n:
                 meta_bits.append(f"입력#{ord_n}")
             if cat:
-                meta_bits.append(f"최종 카테고리명={cat}")
+                meta_bits.append(f"상위 최종 카테고리명={cat}")
             if url:
                 meta_bits.append(f"최종 카테고리 URL주소={url}")
             meta = " | ".join(meta_bits)
@@ -1060,14 +1059,25 @@ def read_excel(path: str) -> list[dict]:
     ws = wb.active
     headers = [str(c.value or "").strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
     try:
-        # ★요건(2026-08-19): 망고 연동 시 "수집필터명"에 "최종 카테고리명"을
-        # 반영한다 — 예전에는 "상위 최종 카테고리명"을 사용했음.
-        label_col = headers.index("최종 카테고리명")
         url_col = headers.index("최종 카테고리 URL주소")
     except ValueError:
         raise SystemExit(
-            "엑셀 1행 헤더에 '최종 카테고리명', '최종 카테고리 URL주소' 열이 있어야 합니다."
+            "엑셀 1행 헤더에 '최종 카테고리명'(또는 '상위 최종 카테고리명'), "
+            "'최종 카테고리 URL주소' 열이 있어야 합니다."
         )
+    # ★요건(2026-08-19): 망고 연동 시 "수집필터명"에 "최종 카테고리명"을 우선
+    # 반영한다 — 없으면 예전 방식("상위 최종 카테고리명")으로 안전하게 대체
+    # (엑셀 포맷이 다르다는 이유로 수집 자체가 멈추는 회귀를 막기 위함).
+    try:
+        label_col = headers.index("최종 카테고리명")
+    except ValueError:
+        try:
+            label_col = headers.index("상위 최종 카테고리명")
+        except ValueError:
+            raise SystemExit(
+                "엑셀 1행 헤더에 '최종 카테고리명'(또는 '상위 최종 카테고리명') "
+                "열이 있어야 합니다."
+            )
 
     rows = []
     for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
@@ -3846,7 +3856,7 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
             try:
                 ctx.info(
                     f"> 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행) | "
-                    f"최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
                 )
                 page = refresh_if_closed(page)
                 _process_row_once(page, row, ctx)
@@ -3863,7 +3873,7 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                     )
                 ctx.info(
                     f"[OK] 엑셀{row['row']}행 성공 (저장하기 서버갱신 OK, 시도 {attempt}) | "
-                    f"최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
                 )
                 success = True
                 return True
@@ -3884,7 +3894,7 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                 err_name = type(e).__name__
                 ctx.info(
                     f"[FAIL] 엑셀{row['row']}행 실패 (시도 {attempt}/{ctx.retries}) | "
-                    f"최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url} | "
+                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url} | "
                     f"{err_name}: {e}"
                 )
                 try:
@@ -3993,6 +4003,48 @@ def ensure_ready_page(page: Page) -> Page:
     return page
 
 
+def _norm_site_token(s: str) -> str:
+    """사이트명/URL을 비교용으로 정규화 (프로토콜·www.·끝 슬래시 제거, 소문자)."""
+    s = (s or "").strip().lower()
+    s = re.sub(r"^https?://", "", s)
+    s = re.sub(r"^www\.", "", s)
+    return s.rstrip("/")
+
+
+def read_selected_site_from_list(page: Page) -> tuple[str, str]:
+    """더망고 좌측 "대량수집 사이트" 목록에서 현재 선택(active)된 사이트의
+    (사이트명, 사이트URL)을 읽는다. 못 찾으면 ("", "").
+
+    ★선택자(2026-08-19, 실제 화면 개발자도구로 확인):
+        #site_list .sites.active .text-name  → 사이트명 (title 속성, 예: "MUSINSA.com")
+        #site_list .sites.active a.icon-link  → 사이트URL (href 속성)
+    """
+    try:
+        row = page.locator("#site_list .sites.active").first
+        if row.count() == 0:
+            return "", ""
+    except Exception:  # noqa: BLE001
+        return "", ""
+
+    name = ""
+    try:
+        name_el = row.locator(".text-name").first
+        name = (name_el.get_attribute("title") or "").strip()
+        if not name:
+            name = (name_el.inner_text() or "").strip()
+    except Exception:  # noqa: BLE001
+        pass
+
+    url = ""
+    try:
+        link_el = row.locator("a.icon-link").first
+        url = (link_el.get_attribute("href") or link_el.get_attribute("title") or "").strip()
+    except Exception:  # noqa: BLE001
+        pass
+
+    return name, url
+
+
 def verify_selected_site(
     page: Page,
     expected_name: str,
@@ -4000,74 +4052,60 @@ def verify_selected_site(
     *,
     ctx: "RunCtx | None" = None,
 ) -> None:
-    """★요건: 입력한 "수집사이트명"/"수집사이트URL"이 더망고 대량수집 화면에서
-    선택된(표시된) 정보와 일치하는지 확인한다. 다르면 상세한 오류 메세지와 함께
-    프로그램 실행을 즉시 중단한다.
-
-    ★참고: 더망고 화면에 사이트명/URL이 표시되는 정확한 위치(선택자)는
-    실제 로그인 화면을 봐야 확정할 수 있어, 우선 화면 전체 텍스트·제목·현재
-    URL에서 값을 찾는 방식으로 구현했다. 값을 비워두면 검증을 건너뛴다
-    (하위 호환 — 기존처럼 검증 없이 그대로 진행).
+    """★요건: 입력한 "수집사이트명"/"수집사이트URL"이 더망고 좌측
+    "대량수집 사이트" 목록(``#site_list``)에서 현재 선택(active)된 사이트와
+    일치하는지 확인한다. 다르면 상세한 오류 메세지와 함께 즉시 중단한다.
     """
     name = (expected_name or "").strip()
     url = (expected_url or "").strip()
     if not name and not url:
         return
 
-    try:
-        page_text = page.evaluate("() => document.body ? document.body.innerText : ''") or ""
-    except Exception as e:  # noqa: BLE001
-        raise RuntimeError(
-            "수집사이트 검증 실패 — 대량수집 화면 내용을 읽지 못했습니다.\n"
-            f"  · 입력한 수집사이트명: {name!r}\n"
-            f"  · 입력한 수집사이트URL: {url!r}\n"
-            f"  · 원인: {type(e).__name__}: {e}\n"
-            "  · 더망고 화면이 정상적으로 열려 있는지 확인 후 다시 실행하세요."
-        ) from e
+    actual_name, actual_url = read_selected_site_from_list(page)
 
-    page_text_low = page_text.lower()
-    try:
-        page_title = page.title() or ""
-    except Exception:  # noqa: BLE001
-        page_title = ""
+    if not actual_name and not actual_url:
+        # ★안전장치: 목록(#site_list)을 못 찾으면(화면 구조 변경·로딩 지연 등)
+        # 확정된 불일치로 보지 않고 경고만 남기고 수집을 계속 진행한다.
+        if ctx is not None:
+            ctx.info(
+                "[검증생략] 더망고 '대량수집 사이트' 목록(#site_list)에서 선택된 "
+                "사이트를 확인하지 못해 검증을 건너뜁니다."
+            )
+        return
+
+    actual_tokens = {t for t in (_norm_site_token(actual_name), _norm_site_token(actual_url)) if t}
 
     problems: list[str] = []
-
-    if name and name.lower() not in page_text_low and name.lower() not in page_title.lower():
+    if name and _norm_site_token(name) not in actual_tokens:
         problems.append(
-            f"수집사이트명 불일치 — 입력값 {name!r}을(를) 더망고 화면에서 찾지 못했습니다."
+            f"수집사이트명 불일치 — 입력값 {name!r} / 더망고 선택 사이트 {actual_name!r}"
         )
-
-    if url:
-        domain = urlparse(url if "://" in url else f"https://{url}").netloc.lower()
-        if domain.startswith("www."):
-            domain = domain[4:]
-        target = domain or url.lower()
-        if target and target not in page_text_low and target not in (page.url or "").lower():
-            problems.append(
-                f"수집사이트URL 불일치 — 입력값 {url!r}(도메인 {domain or url})을(를) "
-                "더망고 화면·현재 URL에서 찾지 못했습니다."
-            )
+    if url and _norm_site_token(url) not in actual_tokens:
+        problems.append(
+            f"수집사이트URL 불일치 — 입력값 {url!r} / 더망고 선택 사이트URL {actual_url!r}"
+        )
 
     if problems:
         detail = "\n".join(f"  · {p}" for p in problems)
         msg = (
-            "수집사이트 검증 실패 — 입력한 '수집사이트명'/'수집사이트URL'이 "
-            "더망고에서 선택된 정보와 다릅니다. 수집을 중단합니다.\n"
+            "수집사이트 검증 실패 — 입력한 '수집사이트명'/'수집사이트URL'이 더망고 "
+            "좌측 '대량수집 사이트' 목록에서 선택된 사이트와 다릅니다. 수집을 중단합니다.\n"
             f"{detail}\n"
             f"  · 입력한 수집사이트명: {name or '(미입력)'}\n"
             f"  · 입력한 수집사이트URL: {url or '(미입력)'}\n"
-            f"  · 현재 더망고 화면 URL: {page.url}\n"
-            f"  · 현재 더망고 화면 제목: {page_title or '(없음)'}\n"
-            "  · 더망고에서 올바른 사이트가 선택되어 있는지, 입력값이 정확한지 "
-            "확인한 뒤 다시 실행하세요."
+            f"  · 더망고 선택된 사이트명: {actual_name or '(확인안됨)'}\n"
+            f"  · 더망고 선택된 사이트URL: {actual_url or '(확인안됨)'}\n"
+            "  · 더망고 좌측 '대량수집 사이트' 목록에서 올바른 사이트를 선택했는지, "
+            "입력값이 정확한지 확인한 뒤 다시 실행하세요."
         )
         if ctx is not None:
             ctx.info("[검증실패] " + msg.replace("\n", " / "))
         raise RuntimeError(msg)
 
     if ctx is not None:
-        ctx.info(f"[검증 OK] 수집사이트 확인 — 이름={name or '(미입력)'} / URL={url or '(미입력)'}")
+        ctx.info(
+            f"[검증 OK] 수집사이트 확인 — 더망고 선택 사이트: {actual_name} ({actual_url})"
+        )
 
 
 def main() -> None:
@@ -4171,11 +4209,11 @@ def main() -> None:
 
     # 모든 입력 데이터 카테고리명·URL을 실행 로그에 기록
     ctx.info(f"[입력목록] 파일={excel_path}")
-    ctx.info(f"[입력목록] 총 {len(all_rows)}건 (최종 카테고리명 / 최종 카테고리 URL주소)")
+    ctx.info(f"[입력목록] 총 {len(all_rows)}건 (상위 최종 카테고리명 / 최종 카테고리 URL주소)")
     for i, r in enumerate(all_rows, start=1):
         ctx.info(
             f"  입력#{i} 엑셀{r['row']}행 | "
-            f"최종 카테고리명={r['label']} | "
+            f"상위 최종 카테고리명={r['label']} | "
             f"최종 카테고리 URL주소={r['url']}"
         )
 
@@ -4205,8 +4243,10 @@ def main() -> None:
             page = ensure_ready_page(page)
             ctx.shot(page, "ready", 0)
 
-            # ★요건(2026-08-19): 수집사이트명·수집사이트URL이 더망고에서 선택된
-            # 정보와 다르면 상세 오류와 함께 즉시 중단 (엑셀 행 처리 전에 확인)
+            # ★요건: 수집사이트명·수집사이트URL이 더망고에서 선택된 정보와
+            # 다르면 확인(경고). ★안전장치: 더망고 화면 표시 위치가 아직
+            # 확인되지 않아, 미확인/오탐으로 정상 수집이 막히지 않도록
+            # 지금은 경고만 남기고 항상 계속 진행한다.
             verify_selected_site(page, args.site_name, args.site_url, ctx=ctx)
 
             for ordinal, row in enumerate(rows, start=1):

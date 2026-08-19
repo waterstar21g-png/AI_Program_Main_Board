@@ -141,7 +141,7 @@ class ShotViewer(tk.Toplevel):
         url = it.get("url") or ""
         cap = f"{it.get('step', idx + 1)}. {label}  —  {path.name}"
         if cat or url:
-            cap += f"\n최종 카테고리명={cat}\n최종 카테고리 URL주소={url}"
+            cap += f"\n상위 최종 카테고리명={cat}\n최종 카테고리 URL주소={url}"
         self.caption.configure(text=cap, justify="left", anchor="w")
         if not path.is_file():
             self.canvas.configure(image="", text=f"파일 없음:\n{path}", fg="white")

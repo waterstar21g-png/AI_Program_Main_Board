@@ -13,6 +13,7 @@ from library import read_category_url_rows  # noqa: E402
 
 
 def test_read_category_url_rows(tmp_path: Path):
+    """★요건: 카테고리URL목록 화면에는 "최종카테고리명"을 표시한다."""
     fp = tmp_path / "sample.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -33,9 +34,24 @@ def test_read_category_url_rows(tmp_path: Path):
     assert all(r["label"] != "목차" for r in rows)
 
 
+def test_read_category_url_rows_falls_back_to_old_header(tmp_path: Path):
+    """하위 호환: "최종카테고리명"이 없는 옛 엑셀은 "상위 최종카테고리명"으로 표시."""
+    fp = tmp_path / "old_format.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["상위 최종 카테고리명", "최종 카테고리 URL주소"])
+    ws.append(["MEN 스니커즈", "https://example.com/a"])
+    wb.save(fp)
+
+    rows = read_category_url_rows(str(fp))
+    assert len(rows) == 1
+    assert rows[0]["label"] == "MEN 스니커즈"
+
+
 if __name__ == "__main__":
     import tempfile
 
     with tempfile.TemporaryDirectory() as d:
         test_read_category_url_rows(Path(d))
+        test_read_category_url_rows_falls_back_to_old_header(Path(d))
     print("PASS read_category_url_rows")
