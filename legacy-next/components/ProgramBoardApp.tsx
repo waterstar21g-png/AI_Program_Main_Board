@@ -5,6 +5,7 @@ import { APP_NAME } from '@/lib/app-name';
 import { APP_VERSION } from '@/lib/app-version';
 import { DEFAULT_PROGRAM_ID, PROGRAMS } from '@/lib/programs/registry';
 import { BoardCommandPanel } from '@/components/BoardCommandPanel';
+import { GmailShortcutsBar } from '@/components/GmailShortcutsBar';
 
 export function ProgramBoardApp() {
   const [activeId, setActiveId] = useState(DEFAULT_PROGRAM_ID);
@@ -15,6 +16,7 @@ export function ProgramBoardApp() {
     <div className="program-board">
       <header className="program-board__header">
         <h1 className="program-board__title">{APP_NAME}</h1>
+        <GmailShortcutsBar />
       </header>
 
       <div className="program-board__body">

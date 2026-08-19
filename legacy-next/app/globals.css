@@ -132,6 +132,171 @@ img { max-width: 100%; height: auto; display: block; }
   letter-spacing: 0.01em;
 }
 
+/* ── Gmail 바로가기 (홈 화면) ── */
+.gmail-shortcuts {
+  margin-top: 0.65rem;
+  padding: 0.55rem 0.65rem 0.6rem;
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 0.55rem;
+  text-align: left;
+}
+
+.gmail-shortcuts__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+}
+
+.gmail-shortcuts__title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.gmail-shortcuts__edit-btn {
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  border-radius: 0.35rem;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.gmail-shortcuts__edit-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.gmail-shortcuts__grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.4rem;
+}
+
+.gmail-shortcuts__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.45rem 0.25rem 0.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 0.45rem;
+  background: rgba(255, 255, 255, 0.92);
+  color: #0f172a;
+  cursor: pointer;
+  font: inherit;
+  min-width: 0;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.gmail-shortcuts__item:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.18);
+}
+
+.gmail-shortcuts__item.is-active {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.35);
+}
+
+.gmail-shortcuts__icon {
+  width: 2rem;
+  height: 2rem;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #fff;
+  background: linear-gradient(135deg, #ea4335 0%, #fbbc04 45%, #34a853 75%, #4285f4 100%);
+}
+
+.gmail-shortcuts__label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.gmail-shortcuts__email {
+  font-size: 0.58rem;
+  color: #64748b;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gmail-shortcuts__email.is-empty {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.gmail-shortcuts__panel {
+  margin-top: 0.55rem;
+  padding: 0.55rem;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.45rem;
+  color: #0f172a;
+}
+
+.gmail-shortcuts__hint {
+  margin: 0 0 0.45rem;
+  font-size: 0.68rem;
+  color: #475569;
+  line-height: 1.4;
+}
+
+.gmail-shortcuts__fieldset {
+  border: 1px solid #e2e8f0;
+  border-radius: 0.4rem;
+  padding: 0.45rem 0.55rem 0.55rem;
+  margin: 0 0 0.45rem;
+}
+
+.gmail-shortcuts__fieldset legend {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 0 0.25rem;
+}
+
+.gmail-shortcuts__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.gmail-shortcuts__field:last-child {
+  margin-bottom: 0;
+}
+
+.gmail-shortcuts__field .input {
+  font-size: 0.72rem;
+  min-height: 1.75rem;
+  padding: 0.3rem 0.45rem;
+}
+
+.gmail-shortcuts__panel-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.gmail-shortcuts__toast {
+  margin: 0.4rem 0 0;
+  font-size: 0.68rem;
+  color: #bbf7d0;
+  text-align: center;
+}
+
 .program-board__body {
   flex: 1;
   display: grid;
@@ -752,5 +917,10 @@ img { max-width: 100%; height: auto; display: block; }
   .program-board__main-inner .program-unit .form-grid--compact { grid-template-columns: 1fr; }
   .category-app .form-grid { grid-template-columns: 1fr; }
   .product-data-collect-app .form-grid { grid-template-columns: 1fr; }
+  .gmail-shortcuts__grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+@media (max-width: 480px) {
+  .gmail-shortcuts__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
