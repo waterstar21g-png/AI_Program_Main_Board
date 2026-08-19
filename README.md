@@ -1,6 +1,7 @@
-# AI_Program_Main_Board **v2.1.45** (Python B안)
+# AI_Program_Main_Board **v2.2.0** (Python B안 + 비즈보드)
 
-**최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
+**최종 UI:** Python 심플 보드 (npm / Next.js **없음**)  
+**독립 모바일:** `비즈보드/` PWA (휴대폰 홈 아이콘 · 20+ URL · ID/PW 자동로그인)
 
 | 프로그램 | 역할 |
 |----------|------|
@@ -8,12 +9,23 @@
 | **P1_101** | 엑셀 URL → 팝업닫기 → 3초대기 → 상품수 UPDATE |
 | **P1_ZARA_DE** | 독일자라(ZARA DE) 카테고리 URL 리스트 추출 → 엑셀 |
 | **P2** | 더망고 대량수집 (구 **P3**, P1/P1_ZARA_DE 엑셀 입력) |
+| **비즈보드** | 독립 PWA — 휴대폰 홈 아이콘 · 20+ 바로가기 · 사전 ID/PW 로그인 |
 
 로컬 경로(고정):
 
 ```
 D:\My_Project\AI_Program_Main_Board
 ```
+
+## 비즈보드 (독립)
+
+```powershell
+python 비즈보드\serve.py
+# → http://127.0.0.1:8787/
+```
+
+휴대폰: 브라우저로 접속 → **홈 화면에 추가** → 아이콘 클릭 → 바로가기 보드.  
+ID/PW는 보드 내 **설정**에서 사이트별로 사전 저장(기기 로컬만).
 
 ## 로컬에 받기 (최초 1회)
 

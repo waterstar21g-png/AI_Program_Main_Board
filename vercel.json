@@ -1,8 +1,30 @@
 {
+  "version": 2,
   "github": {
     "silent": true
   },
   "git": {
     "deploymentEnabled": false
-  }
+  },
+  "rewrites": [
+    { "source": "/", "destination": "/비즈보드/index.html" },
+    { "source": "/index.html", "destination": "/비즈보드/index.html" },
+    { "source": "/auth.html", "destination": "/비즈보드/auth.html" },
+    { "source": "/settings.html", "destination": "/비즈보드/settings.html" },
+    { "source": "/manifest.webmanifest", "destination": "/비즈보드/manifest.webmanifest" },
+    { "source": "/sw.js", "destination": "/비즈보드/sw.js" },
+    { "source": "/css/(.*)", "destination": "/비즈보드/css/$1" },
+    { "source": "/js/(.*)", "destination": "/비즈보드/js/$1" },
+    { "source": "/icons/(.*)", "destination": "/비즈보드/icons/$1" }
+  ],
+  "headers": [
+    {
+      "source": "/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/비즈보드/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    }
+  ]
 }

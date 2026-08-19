@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#124e5c" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="비즈보드" />
+    <meta
+      name="description"
+      content="비즈보드 — 휴대폰 홈 아이콘 · 20+ 바로가기 · ID/PW 자동로그인"
+    />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/icon-180.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"
+    />
+    <link rel="stylesheet" href="./css/board.css" />
+    <title>비즈보드</title>
+  </head>
+  <body>
+    <div class="app">
+      <header class="brand">
+        <h1 class="brand__name">비즈<span>보드</span></h1>
+        <p class="brand__lead">
+          바로가기 URL을 눌러 사전 정의한 ID/PW로 로그인합니다.
+        </p>
+        <div class="brand__meta">
+          <span id="siteCount">0</span>개 링크
+          <span aria-hidden="true">·</span>
+          <span id="versionLabel">v1.0.0</span>
+        </div>
+      </header>
+
+      <nav class="nav" aria-label="메뉴">
+        <a class="btn btn-ghost" href="./settings.html">ID/PW 설정</a>
+      </nav>
+
+      <aside class="banner" id="installBanner" hidden>
+        <strong>휴대폰 홈에 아이콘 추가</strong>
+        <p>
+          iPhone: 공유 → 홈 화면에 추가 · Android Chrome: 메뉴 → 앱 설치 /
+          홈 화면에 추가
+        </p>
+        <div class="banner__row">
+          <button type="button" class="btn" id="dismissInstall">확인</button>
+        </div>
+      </aside>
+
+      <main id="grid" aria-label="바로가기 목록"></main>
+
+      <p class="foot">독립 실행 PWA · 로컬에 ID/PW 저장</p>
+    </div>
+
+    <script src="./js/sites.js"></script>
+    <script src="./js/storage.js"></script>
+    <script src="./js/board.js"></script>
+  </body>
+</html>
