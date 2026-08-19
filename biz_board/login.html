@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0B3D2E" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <link rel="icon" href="./icons/icon-192.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>로그인 · 비즈보드</title>
+  </head>
+  <body>
+    <main class="login-wrap">
+      <p style="margin: 0 0 0.75rem">
+        <a href="./index.html" style="color: var(--gold); text-decoration: none; font-weight: 700"
+          >← 비즈보드</a
+        >
+      </p>
+      <section class="login-card">
+        <h1 id="svcName">로그인</h1>
+        <p class="hint" id="status">사전 정의된 ID/PW로 로그인 절차를 준비합니다…</p>
+
+        <ul class="steps">
+          <li data-step="1">
+            <span class="step-num">1</span>
+            <div>
+              <strong>ID 준비</strong>
+              <div class="group">저장된 아이디를 클립보드에 복사</div>
+            </div>
+          </li>
+          <li data-step="2">
+            <span class="step-num">2</span>
+            <div>
+              <strong>로그인 URL 열기</strong>
+              <div class="group">해당 서비스 로그인 페이지 실행</div>
+            </div>
+          </li>
+          <li data-step="3">
+            <span class="step-num">3</span>
+            <div>
+              <strong>PW 준비</strong>
+              <div class="group">저장된 비밀번호를 클립보드에 복사</div>
+            </div>
+          </li>
+          <li data-step="4">
+            <span class="step-num">4</span>
+            <div>
+              <strong>로그인 완료</strong>
+              <div class="group">사이트에 ID·PW 붙여넣고 로그인</div>
+            </div>
+          </li>
+        </ul>
+
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="retry">로그인 다시 실행</button>
+          <button type="button" class="btn btn-ghost" id="copyId">ID 복사</button>
+          <button type="button" class="btn btn-ghost" id="copyPw">PW 복사</button>
+          <button type="button" class="btn btn-ghost" id="openLogin">로그인 URL</button>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast"></div>
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+    <script>
+      BizBoard.bootLogin();
+    </script>
+  </body>
+</html>

@@ -10,6 +10,8 @@
 | 3 | P1_ZARA_DE | `P1_ZARA_DE/` | 독일자라(ZARA DE) 카테고리 URL 추출 |
 | 4 | P2 | `P2/` | 더망고 대량수집 (**구 P3**) |
 | 5 | P3_필터_갱신 | `P3_필터_갱신/` | 더망고 검색필터 저장상품수 갱신 |
+| 6 | 비즈보드 | `biz_board/` | **독립** PWA — 휴대폰 홈 아이콘·20+ 바로가기·ID/PW 로그인 |
 
 보드 UI: `board/app.py`  
+비즈보드(독립): `biz_board/run.bat` 또는 `/biz_board/`  
 이전 Next.js 보드: `legacy-next/` (보관용)

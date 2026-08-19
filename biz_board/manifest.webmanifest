@@ -1,0 +1,32 @@
+{
+  "name": "비즈보드",
+  "short_name": "비즈보드",
+  "description": "휴대폰 홈 아이콘에서 바로가기 URL을 열고 사전 정의 ID/PW로 로그인합니다.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#061810",
+  "theme_color": "#0B3D2E",
+  "lang": "ko",
+  "icons": [
+    {
+      "src": "./icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

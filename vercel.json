@@ -1,8 +1,21 @@
 {
+  "version": 2,
   "github": {
     "silent": true
   },
-  "git": {
-    "deploymentEnabled": false
-  }
+  "cleanUrls": true,
+  "rewrites": [
+    { "source": "/", "destination": "/biz_board/index.html" },
+    { "source": "/login", "destination": "/biz_board/login.html" }
+  ],
+  "headers": [
+    {
+      "source": "/biz_board/sw.js",
+      "headers": [{ "key": "Cache-Control", "value": "no-cache" }]
+    },
+    {
+      "source": "/biz_board/manifest.webmanifest",
+      "headers": [{ "key": "Content-Type", "value": "application/manifest+json" }]
+    }
+  ]
 }

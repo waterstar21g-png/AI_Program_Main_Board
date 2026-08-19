@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0B3D2E" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="비즈보드" />
+    <meta
+      name="description"
+      content="비즈보드 — 휴대폰 홈 아이콘에서 바로가기 URL을 열고 사전 정의 ID/PW로 로그인합니다."
+    />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <link rel="icon" href="./icons/icon-192.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;600;700&family=Syne:wght@700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>비즈보드</title>
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <h1 class="brand">비즈<span>보드</span></h1>
+        <p class="tagline">
+          홈 화면 아이콘 한 번으로 20개 이상 바로가기 URL을 열고,
+          사전 정의한 ID·PW로 로그인 절차를 수행합니다.
+        </p>
+        <div class="toolbar">
+          <button type="button" class="btn btn-primary" id="openSettings">ID/PW 설정</button>
+          <button type="button" class="btn btn-ghost" id="addShortcut">바로가기 추가</button>
+        </div>
+        <div class="meta-row">
+          <span id="count">0개 바로가기</span>
+          <span id="versionLabel">v1.0.0</span>
+        </div>
+      </header>
+
+      <section class="grid" id="grid" aria-label="바로가기 목록"></section>
+    </main>
+
+    <div class="install-banner" id="installBanner" role="dialog" aria-live="polite">
+      <p><strong>휴대폰 홈에 아이콘 추가</strong><br />비즈보드를 홈 화면에 설치하세요.</p>
+      <button type="button" class="btn btn-primary" id="installBtn">설치</button>
+      <button type="button" class="btn btn-ghost" id="dismissInstall">닫기</button>
+    </div>
+
+    <div class="sheet" id="settings" aria-hidden="true">
+      <div class="sheet-panel" role="dialog" aria-label="ID/PW 설정">
+        <div class="sheet-head">
+          <h2>ID / PW 설정</h2>
+          <button type="button" class="btn btn-ghost" id="closeSettings">닫기</button>
+        </div>
+        <p class="hint" style="margin-top: 0">
+          값은 이 휴대폰/브라우저에만 저장됩니다. 바로가기를 누르면 저장된 계정으로 로그인 절차가 실행됩니다.
+        </p>
+        <div class="cred-list" id="credList"></div>
+        <div class="actions">
+          <button type="button" class="btn btn-primary" id="saveSettings">저장</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="toast" id="toast"></div>
+
+    <script src="./config.js"></script>
+    <script src="./app.js"></script>
+    <script>
+      BizBoard.bootBoard();
+    </script>
+  </body>
+</html>
