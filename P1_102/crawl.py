@@ -1,22 +1,45 @@
 """
 P1_102_Category_Url_Extract — P1 복제본 + 일부 수정
-(A-RT(ABC마트 계열) GNB → 계층 카테고리 URL 엑셀, 상위 카테고리 SALE 기본 포함)
+(A-RT(ABC마트 계열) GNB → 계층 카테고리 URL 엑셀)
 
-★요건(2026-08-19): "P1_102를 추가하고 P1을 복제한 후 일부분을 수정해"
-- P1과 동일한 A-RT 크롤링 로직을 그대로 사용하되,
-  기본 상위 카테고리에 SALE(세일)을 추가하고, 저장 엑셀 파일명에 "_102" 표식을
-  붙여 P1 출력과 구분되도록 했다.
+★요건(2026-08-19): "P1_102 프로그램 기능"
+1. 기능: 수집사이트 추출 — P1과 유사하나 일부가 다름.
+2. 입력: 홈페이지 주소 / 상위 카테고리명 1,2,... / 중위 카테고리명
+   (상위 카테고리명 1의 하위목록 1-1,1-2,... · 상위 카테고리명 2의 하위목록 2-1,2-2,...)
+3. 위 입력을 바탕으로,
+   1) 하위 카테고리를 추출하되, 최종 카테고리명 = "하위 카테고리명" 으로 함
+      (P1은 하위 카테고리 밑에 더 깊은 카테고리가 있으면 그 이름을 최종 카테고리명으로
+       쓰지만, P1_102는 항상 "하위 카테고리명" 자체를 최종 카테고리명으로 고정한다.)
+   2) 결과물(엑셀 헤더·형식)은 P1과 동일한 OUTPUT.
+
+★요건(2026-08-19, 추가1): 보드 입력 화면 — 4개 행 구성
+    상위 카테고리 : <입력칸> 1개
+    중위 카테고리 : <입력그리드> 20개
+    상위 카테고리 : <입력칸> 1개
+    중위 카테고리 : <입력그리드> 20개
+→ 상위 카테고리 그룹 2개(TOP_GROUP_COUNT), 그룹별 중위 카테고리 최대 20개(MID_PER_TOP).
+
+★요건(2026-08-19, 추가2): "INPUT으로 입력된 값은 프로그램 종료후 재실행시도
+초기값으로 그대로 보여줘" → 입력값(사업자명·사이트명·URL·저장폴더·상위/중위 카테고리명)을
+``.last_input.json``에 저장해두고, 보드 재실행 시 이 값을 그대로 초기값으로 표시한다.
+
+★요건(2026-08-19, 추가3):
+1. 입력항목명에 추가 — 사이트명 옆에 "사업자명" 입력칸 추가.
+2. 최종카테고리명 재정의 —
+   사업자명 + '-' + 사이트명 + 상위카테고리명 + '-' + 중위 카테고리명 + '-' + 하위 카테고리명
+   (사용자 원문 그대로: 사이트명과 상위카테고리명 사이에는 구분자를 넣지 않는다.)
 """
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Literal
-from urllib.parse import parse_qs, urljoin, urlparse, urlunparse, urlencode
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -28,12 +51,19 @@ DEFAULT_UA = (
 )
 
 DEFAULT_SITE = "ABC마트"
+# ★요건: 사이트명 옆에 사업자명 입력칸 추가 — 기본값은 빈칸(미지정)
+DEFAULT_BIZ_NAME = ""
 DEFAULT_URL = "https://abcmart.a-rt.com/?track=W0009"
-# ★요건: 기본 저장 폴더 · 상위 카테고리 프리필
 DEFAULT_OUTDIR = r"D:\My_Project\AI_Program_Main_Board"
-# ★요건: P1_102 — P1 기본값에 SALE(세일) 추가
-DEFAULT_TOPS: list[str] = ["MEN:남성", "WOMEN:여성", "KIDS:키즈", "SALE:세일"]
+# ★요건: 상위 카테고리 그룹 2개, 그룹별 중위 카테고리 입력 — 기본 프리필 없음
+DEFAULT_TOP_NAMES: list[str] = ["", ""]
+DEFAULT_MID_NAMES: list[list[str]] = [[], []]
 
+# ★요건: 입력값(사이트명·URL·저장폴더·상위/중위 카테고리명)을 저장해두고
+# 보드 재실행 시 초기값으로 그대로 표시한다.
+LAST_INPUT_PATH = Path(__file__).resolve().parent / ".last_input.json"
+
+# P1과 동일한 엑셀 출력 형식(★요건: "결과물은 P1과 동일한 OUTPUT")
 EXCEL_HEADERS = [
     "상위 카테고리명",
     "중위 카테고리명",
@@ -47,11 +77,16 @@ EXCEL_HEADERS = [
     "리뷰수",
 ]
 
-# 보드 입력 그리드: 3행 × 10칸 = 최대 30개, 칸당 한글 15자
-TOP_GRID_ROWS = 3
-TOP_GRID_COLS = 10
-MAX_TOP = TOP_GRID_ROWS * TOP_GRID_COLS
+# ★요건: 보드 입력 화면 4개 행 — (상위 카테고리 1개 + 중위 카테고리 20개) × 2그룹
+TOP_GROUP_COUNT = 2
+MID_PER_TOP = 20
+# 중위 카테고리 20개를 보드에 표시할 때의 그리드 형태(행×열 = 20)
+MID_GRID_ROWS = 2
+MID_GRID_COLS = 10
 TOP_CELL_MAX_LEN = 15
+# 하위 호환(보드 P1 탭과 동일한 상수명으로도 노출)
+TOP_GRID_ROWS = MID_GRID_ROWS
+TOP_GRID_COLS = MID_GRID_COLS
 
 
 @dataclass
@@ -92,6 +127,19 @@ class CategoryStats:
 
 
 @dataclass
+class CategoryPair:
+    """입력 1행 = 상위·중위 카테고리명 (사이트 매칭명 + 엑셀 출력명)."""
+
+    match_top: str
+    match_mid: str
+    excel_top: str
+    excel_mid: str
+
+    def label(self) -> str:
+        return f"{self.match_top} > {self.match_mid}"
+
+
+@dataclass
 class CrawlResult:
     ok: bool
     site_name: str
@@ -111,8 +159,90 @@ def normalize_url(raw: str) -> str:
     return s if s.startswith("http") else f"https://{s}"
 
 
+def _default_last_input() -> dict:
+    return {
+        "site": DEFAULT_SITE,
+        "biz": DEFAULT_BIZ_NAME,
+        "url": DEFAULT_URL,
+        "outdir": DEFAULT_OUTDIR,
+        "top_names": list(DEFAULT_TOP_NAMES),
+        "mid_names": [list(m) for m in DEFAULT_MID_NAMES],
+    }
+
+
+def load_last_input(path: Path | str | None = None) -> dict:
+    """마지막 입력값 로드 — 파일이 없거나 손상되면 기본값.
+
+    ★요건: "INPUT으로 입력된 값은 프로그램 종료후 재실행시도 초기값으로
+    그대로 보여줘" — 반환값을 보드 입력 필드의 초기값으로 사용한다.
+    """
+    p = Path(path) if path is not None else LAST_INPUT_PATH
+    out = _default_last_input()
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return out
+    if not isinstance(data, dict):
+        return out
+    site = data.get("site")
+    if isinstance(site, str) and site.strip():
+        out["site"] = site
+    biz = data.get("biz")
+    if isinstance(biz, str):
+        out["biz"] = biz
+    url = data.get("url")
+    if isinstance(url, str) and url.strip():
+        out["url"] = url
+    outdir = data.get("outdir")
+    if isinstance(outdir, str) and outdir.strip():
+        out["outdir"] = outdir
+    top_names = data.get("top_names")
+    if isinstance(top_names, list):
+        names = [str(x) if x is not None else "" for x in top_names][:TOP_GROUP_COUNT]
+        names.extend([""] * (TOP_GROUP_COUNT - len(names)))
+        out["top_names"] = names
+    mid_names = data.get("mid_names")
+    if isinstance(mid_names, list):
+        groups: list[list[str]] = []
+        for i in range(TOP_GROUP_COUNT):
+            raw_group = mid_names[i] if i < len(mid_names) and isinstance(mid_names[i], list) else []
+            names = [str(x) if x is not None else "" for x in raw_group][:MID_PER_TOP]
+            names.extend([""] * (MID_PER_TOP - len(names)))
+            groups.append(names)
+        out["mid_names"] = groups
+    return out
+
+
+def save_last_input(
+    site: str,
+    url: str,
+    outdir: str,
+    top_names: list[str],
+    mid_names_by_group: list[list[str]],
+    *,
+    biz: str = "",
+    path: Path | str | None = None,
+) -> None:
+    """현재 입력값을 저장 (보드 재실행 시 초기값 복원용). 실패해도 조용히 무시."""
+    p = Path(path) if path is not None else LAST_INPUT_PATH
+    payload = {
+        "site": site or "",
+        "biz": biz or "",
+        "url": url or "",
+        "outdir": outdir or "",
+        "top_names": [str(x or "") for x in top_names][:TOP_GROUP_COUNT],
+        "mid_names": [
+            [str(x or "") for x in group][:MID_PER_TOP] for group in mid_names_by_group[:TOP_GROUP_COUNT]
+        ],
+    }
+    try:
+        p.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+
 def parse_top_cell(raw: str) -> tuple[str, str] | None:
-    """상위 카테고리 칸 1개 해석.
+    """상위·중위 카테고리 칸 1개 해석 (P1과 동일 규칙).
 
     - ``카테고리명1`` → 사이트 매칭·엑셀 모두 동일
     - ``카테고리명1:카테고리명2`` → 사이트는 명1로 매칭, 엑셀 출력은 명2로 치환
@@ -134,41 +264,43 @@ def parse_top_cell(raw: str) -> tuple[str, str] | None:
     return s, s
 
 
-def parse_tops(
-    raw: list[str], max_n: int = MAX_TOP
-) -> tuple[list[str], dict[str, str]]:
-    """입력 칸 목록 → (사이트 매칭용 상위명 목록, 대문자키→엑셀명 맵)."""
-    seen: set[str] = set()
-    match_names: list[str] = []
-    rename: dict[str, str] = {}
-    for r in raw:
-        parsed = parse_top_cell(r)
-        if parsed is None:
+def parse_category_groups(
+    top_names: list[str],
+    mid_names_by_group: list[list[str]],
+    max_groups: int = TOP_GROUP_COUNT,
+    max_mid: int = MID_PER_TOP,
+) -> list[CategoryPair]:
+    """보드 입력 화면(4개 행) → CategoryPair 목록.
+
+    ★요건:
+        상위 카테고리 : <입력칸> 1개
+        중위 카테고리 : <입력그리드> 20개
+        상위 카테고리 : <입력칸> 1개
+        중위 카테고리 : <입력그리드> 20개
+
+    즉 상위 카테고리 그룹(``top_names``) 최대 ``max_groups``개, 그룹별
+    중위 카테고리(``mid_names_by_group[i]``) 최대 ``max_mid``개를 입력받아
+    (상위, 중위) 쌍 목록으로 펼친다. 중복(상위,중위) 쌍은 제거한다.
+    """
+    seen: set[tuple[str, str]] = set()
+    out: list[CategoryPair] = []
+    n = min(max_groups, len(top_names), len(mid_names_by_group))
+    for i in range(n):
+        top_parsed = parse_top_cell(top_names[i])
+        if top_parsed is None:
             continue
-        match, excel = parsed
-        key = match.upper()
-        if key in seen:
-            continue
-        seen.add(key)
-        match_names.append(match)
-        rename[key] = excel
-        if len(match_names) >= max_n:
-            break
-    return match_names, rename
-
-
-def sanitize_tops(raw: list[str], max_n: int = MAX_TOP) -> list[str]:
-    """하위 호환 — 사이트 매칭용 상위명만 반환."""
-    names, _rename = parse_tops(raw, max_n=max_n)
-    return names
-
-
-def excel_top_name(site_top: str, rename: dict[str, str]) -> str:
-    """사이트 상위명 → 엑셀에 쓸 상위명(별칭 있으면 치환)."""
-    key = (site_top or "").strip().upper()
-    if key in rename:
-        return rename[key]
-    return (site_top or "").strip()
+        match_top, excel_top = top_parsed
+        for mid_raw in mid_names_by_group[i][:max_mid]:
+            mid_parsed = parse_top_cell(mid_raw)
+            if mid_parsed is None:
+                continue
+            match_mid, excel_mid = mid_parsed
+            key = (match_top.upper(), match_mid.upper())
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(CategoryPair(match_top, match_mid, excel_top, excel_mid))
+    return out
 
 
 def top_final_label(top: str, final: str) -> str:
@@ -178,6 +310,22 @@ def top_final_label(top: str, final: str) -> str:
     if not f:
         return t
     return f"{t} {f}"
+
+
+def build_final_category_name(
+    biz_name: str, site_name: str, top: str, mid: str, low: str
+) -> str:
+    """★요건: 최종카테고리명 재정의.
+
+    사업자명 + '-' + 사이트명 + 상위카테고리명 + '-' + 중위 카테고리명 + '-' + 하위 카테고리명
+    (사용자 원문 그대로 — 사이트명과 상위카테고리명 사이에는 구분자를 넣지 않는다.)
+    """
+    biz = (biz_name or "").strip()
+    site = (site_name or "").strip()
+    t = (top or "").strip()
+    m = (mid or "").strip()
+    low_v = (low or "").strip()
+    return f"{biz}-{site}{t}-{m}-{low_v}"
 
 
 def _qs(href: str, key: str) -> str | None:
@@ -267,7 +415,7 @@ def _parse_int_count(raw: str | int | float | None) -> int:
 
 
 def parse_total_count_from_html(html: str) -> int:
-    """A-RT 상품목록 HTML의 totalCount / result-cnt 파싱."""
+    """A-RT 상품목록 HTML의 totalCount / result-cnt 파싱 (P1과 동일)."""
     soup = BeautifulSoup(html or "", "html.parser")
     inp = soup.select_one('input[name="totalCount"]')
     if inp and inp.get("value") is not None:
@@ -293,9 +441,8 @@ def parse_total_count_from_html(html: str) -> int:
 
 
 def parse_review_count_from_html(html: str) -> int:
-    """목록/상세 HTML에서 리뷰수 합·표기 추출 (없으면 0)."""
+    """목록/상세 HTML에서 리뷰수 합·표기 추출 (없으면 0, P1과 동일)."""
     text = html or ""
-    # 목록에 리뷰 배지가 있으면 합산
     nums = [
         _parse_int_count(x)
         for x in re.findall(r"리뷰\s*\(?\s*([\d,]+)\s*\)?", text)
@@ -315,14 +462,7 @@ def fetch_art_category_stats(
     brand_no: str | None = None,
     session: requests.Session | None = None,
 ) -> CategoryStats:
-    """카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수.
-
-    A-RT `/display/category/product/list` 의 totalCount 를 사용한다.
-    - 총상품수 = totalCount
-    - 검색수 = 동일 검색결과 수(totalCount)
-    - 상품수집가능개수 = 수집 가능한 상품 수(동일 totalCount, 판매중 기준)
-    - 리뷰수 = 목록 HTML에 있으면 합산, 없으면 0
-    """
+    """카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수 (P1과 동일)."""
     sess = session or _session()
     origin = f"{urlparse(category_url).scheme}://{urlparse(category_url).netloc}"
     ctgr = ctgr_no or parse_ctgr_no(category_url)
@@ -357,7 +497,6 @@ def fetch_art_category_stats(
                 stats.review_count = review
                 return stats
 
-        # 브랜드 URL 등 — 페이지 HTML의 result-cnt / totalCount 폴백
         html = fetch_html(category_url, session=sess)
         total = parse_total_count_from_html(html)
         review = parse_review_count_from_html(html)
@@ -368,7 +507,6 @@ def fetch_art_category_stats(
             stats.review_count = review
             return stats
 
-        # brandNo 만 있을 때 카테고리 list 는 불가 — 0 유지
         _ = brand
     except Exception:
         return stats
@@ -381,7 +519,7 @@ def enrich_rows_with_product_stats(
     *,
     session: requests.Session | None = None,
 ) -> list[str]:
-    """각 행의 카테고리 URL로 상품수·검색수·리뷰수를 채워 넣는다."""
+    """각 행의 카테고리 URL로 상품수·검색수·리뷰수를 채워 넣는다 (P1과 동일)."""
     sess = session or _session()
     warnings: list[str] = []
     fail = 0
@@ -402,7 +540,6 @@ def enrich_rows_with_product_stats(
             and (leaf.ctgr_no or leaf.brand_no)
         ):
             fail += 1
-        # 과도한 요청 완화
         if i % 20 == 0:
             time.sleep(0.05)
     if fail:
@@ -432,7 +569,14 @@ def _dedupe(leaves: list[Leaf]) -> list[Leaf]:
     return out
 
 
-def parse_art_gnb(html: str, base_url: str) -> list[Leaf]:
+def parse_art_gnb_low_as_final(html: str, base_url: str) -> list[Leaf]:
+    """A-RT GNB → 계층 Leaf 목록.
+
+    ★요건(P1과 다른 부분): 하위 카테고리(depth3, "하위 카테고리명") 아래에 더
+    깊은 depth4 메뉴가 있어도 그 안으로 더 내려가지 않고, 하위 카테고리명
+    자체를 최종 카테고리명으로 확정한다. (P1은 depth4가 있으면 그 이름을
+    최종 카테고리명으로 쓰고 depth3명은 "하위 카테고리명"으로만 남긴다.)
+    """
     soup = BeautifulSoup(html, "lxml")
     origin = f"{urlparse(base_url).scheme}://{urlparse(base_url).netloc}"
     leaves: list[Leaf] = []
@@ -498,64 +642,87 @@ def parse_art_gnb(html: str, base_url: str) -> list[Leaf]:
                         break
                 low = clean_text(low_link.get_text() if low_link else "")
                 low_href = low_link.get("href") if low_link else ""
-                d4_links = d3li.select(".sub-depth4 > li.item > a.depth4-title")
-                if d4_links:
-                    for d4a in d4_links:
-                        href = d4a.get("href") or ""
-                        leaves.append(
-                            Leaf(
-                                top=top,
-                                mid=mid,
-                                low=low,
-                                final=clean_text(d4a.get_text()),
-                                category_url=build_art_browse_url(origin, href, "category"),
-                                ctgr_no=parse_ctgr_no(href),
-                            )
-                        )
-                elif low:
-                    leaves.append(
-                        Leaf(
-                            top=top,
-                            mid=mid,
-                            low="",
-                            final=low,
-                            category_url=build_art_browse_url(origin, low_href or "", "category"),
-                            ctgr_no=parse_ctgr_no(low_href),
-                        )
+                if not low:
+                    continue
+                # ★요건: depth4 존재 여부와 무관하게 하위 카테고리명을 최종 카테고리명으로 확정
+                leaves.append(
+                    Leaf(
+                        top=top,
+                        mid=mid,
+                        low="",
+                        final=low,
+                        category_url=build_art_browse_url(origin, low_href or "", "category"),
+                        ctgr_no=parse_ctgr_no(low_href),
                     )
+                )
 
     return _dedupe(leaves)
 
 
-def filter_by_top(leaves: list[Leaf], tops: list[str]) -> list[Leaf]:
-    allowed = {t.strip().upper() for t in tops if t.strip()}
-    if not allowed:
+def filter_by_top_mid(
+    leaves: list[Leaf], pairs: list[CategoryPair]
+) -> list[tuple[Leaf, CategoryPair]]:
+    """입력된 (상위, 중위) 쌍과 일치하는 하위 카테고리(leaf) 전부."""
+    if not pairs:
         return []
-    return [leaf for leaf in leaves if leaf.top.strip().upper() in allowed]
+    out: list[tuple[Leaf, CategoryPair]] = []
+    seen: set[str] = set()
+    for pair in pairs:
+        top_key = pair.match_top.strip().upper()
+        mid_key = pair.match_mid.strip().upper()
+        for leaf in leaves:
+            if leaf.top.strip().upper() != top_key:
+                continue
+            if leaf.mid.strip().upper() != mid_key:
+                continue
+            key = "|".join(
+                [leaf.top, leaf.mid, leaf.final, leaf.ctgr_no or leaf.brand_no or leaf.category_url]
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((leaf, pair))
+    return out
 
 
-def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> CrawlResult:
+def crawl_site(
+    site_name: str,
+    site_url: str,
+    top_names: list[str],
+    mid_names_by_group: list[list[str]],
+    biz_name: str = "",
+) -> CrawlResult:
+    """
+    top_names: 상위 카테고리명 그룹별 1개씩 (최대 TOP_GROUP_COUNT개)
+    mid_names_by_group: 그룹별 중위 카테고리명 목록 (그룹당 최대 MID_PER_TOP개)
+    biz_name: 사업자명 — ★요건: 최종카테고리명 조합에 사용
+    """
     name = (site_name or "").strip() or "사이트"
+    biz = (biz_name or "").strip()
     try:
         url = normalize_url(site_url)
     except ValueError as e:
         return CrawlResult(ok=False, site_name=name, site_url=site_url or "", errors=[str(e)])
 
-    tops, rename = parse_tops(top_categories)
-    if not tops:
+    pairs = parse_category_groups(top_names, mid_names_by_group)
+    applied = [p.label() for p in pairs]
+    if not pairs:
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
             applied_tops=[],
-            errors=[f"상위 카테고리를 1개 이상 입력하세요. (최대 {MAX_TOP}개)"],
+            errors=[
+                "상위 카테고리별 중위 카테고리를 1개 이상 입력하세요. "
+                f"(상위 카테고리 {TOP_GROUP_COUNT}개 × 중위 카테고리 최대 {MID_PER_TOP}개)"
+            ],
         )
 
     try:
         html = fetch_html(url)
     except Exception as e:
         return CrawlResult(
-            ok=False, site_name=name, site_url=url, applied_tops=tops, errors=[str(e)]
+            ok=False, site_name=name, site_url=url, applied_tops=applied, errors=[str(e)]
         )
 
     if not is_art_platform(html, url):
@@ -563,62 +730,62 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
             ok=False,
             site_name=name,
             site_url=url,
-            applied_tops=tops,
+            applied_tops=applied,
             errors=["지원하지 않는 사이트 형식입니다. 현재 A-RT 계열(ABC마트 등)만 지원합니다."],
         )
 
-    all_leaves = parse_art_gnb(html, url)
+    all_leaves = parse_art_gnb_low_as_final(html, url)
     if not all_leaves:
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
-            applied_tops=tops,
+            applied_tops=applied,
             errors=["카테고리 메뉴(GNB)를 찾지 못했습니다."],
         )
 
-    leaves = filter_by_top(all_leaves, tops)
-    if not leaves:
+    matched = filter_by_top_mid(all_leaves, pairs)
+    if not matched:
         return CrawlResult(
             ok=False,
             site_name=name,
             site_url=url,
-            applied_tops=tops,
-            errors=[f"지정한 상위 카테고리({', '.join(tops)})에 해당하는 메뉴를 찾지 못했습니다."],
+            applied_tops=applied,
+            errors=[f"입력한 상위·중위 카테고리({', '.join(applied)})에 해당하는 메뉴를 찾지 못했습니다."],
         )
 
     warnings: list[str] = []
-    if len(leaves) < len(all_leaves):
-        warnings.append(
-            f"상위 필터: 전체 {len(all_leaves)}건 중 {len(leaves)}건 ({', '.join(tops)})"
-        )
-    aliased = [f"{m}→{rename[m.upper()]}" for m in tops if rename.get(m.upper(), m) != m]
+    aliased = [
+        f"{pair.match_top}:{pair.match_mid}→{pair.excel_top}:{pair.excel_mid}"
+        for pair in pairs
+        if pair.excel_top != pair.match_top or pair.excel_mid != pair.match_mid
+    ]
     if aliased:
-        warnings.append("엑셀 상위명 치환: " + ", ".join(aliased))
+        warnings.append("엑셀 상위·중위명 치환: " + ", ".join(aliased))
 
     rows = [
         HierarchyRow(
             site_name=name,
-            top=excel_top_name(leaf.top, rename),
-            mid=leaf.mid,
-            low=leaf.low,
-            final=leaf.final,
-            top_final_label=top_final_label(
-                excel_top_name(leaf.top, rename), leaf.final
-            ),
+            top=pair.excel_top,
+            mid=pair.excel_mid,
+            low=leaf.final,
+            # ★요건: 최종카테고리명 재정의 — 사업자명-사이트명상위카테고리명-중위카테고리명-하위카테고리명
+            final=build_final_category_name(biz, name, pair.excel_top, pair.excel_mid, leaf.final),
+            top_final_label=top_final_label(pair.excel_top, leaf.final),
             final_category_url=leaf.category_url,
         )
-        for leaf in leaves
+        for leaf, pair in matched
     ]
-    # ★요건: 카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수 입력
+    leaves_for_stats = [leaf for leaf, _pair in matched]
+    # ★요건: 카테고리 URL별 총상품수·상품수집가능개수·검색수·리뷰수 입력 (P1과 동일)
     sess = _session()
-    warnings.extend(enrich_rows_with_product_stats(rows, leaves, session=sess))
+    warnings.extend(enrich_rows_with_product_stats(rows, leaves_for_stats, session=sess))
     return CrawlResult(
         ok=True,
         site_name=name,
         site_url=url,
         platform="A-RT (ABC마트 계열)",
-        applied_tops=tops,
+        applied_tops=applied,
         rows=rows,
         total=len(rows),
         warnings=warnings,
@@ -626,12 +793,12 @@ def crawl_site(site_name: str, site_url: str, top_categories: list[str]) -> Craw
 
 
 def save_excel(rows: list[HierarchyRow], site_name: str, out_dir: Path | str) -> Path:
+    """P1과 동일한 엑셀 형식·파일명 규칙으로 저장한다."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     safe = re.sub(r'[\\/:*?"<>|]', "_", site_name or "사이트")[:40]
     stamp = date.today().strftime("%Y%m%d")
-    # ★요건: P1 출력과 구분되도록 파일명에 "_102" 표식
-    path = out / f"{safe}_카테고리URL_LIST_102_{stamp}.xlsx"
+    path = out / f"{safe}_카테고리URL_LIST_{stamp}.xlsx"
 
     wb = Workbook()
     ws = wb.active
@@ -661,21 +828,44 @@ def main() -> None:
 
     p = argparse.ArgumentParser(description="P1_102 카테고리 URL 추출 (P1 복제본)")
     p.add_argument("--site", default=DEFAULT_SITE)
+    p.add_argument("--biz", default=DEFAULT_BIZ_NAME, help="사업자명 (최종카테고리명 조합에 사용)")
     p.add_argument("--url", default=DEFAULT_URL)
     p.add_argument(
-        "--tops",
-        default=",".join(DEFAULT_TOPS),
-        help="쉼표 구분 상위 카테고리 (명1:명2 = 사이트명1→엑셀명2 치환)",
+        "--pairs",
+        default="",
+        help=(
+            "상위:중위 쌍, 쉼표구분. 예: MEN:상의,MEN:하의,WOMEN:상의 "
+            "(각 칸에 명1:명2 입력 시 사이트매칭명1→엑셀출력명2 치환)"
+        ),
     )
     p.add_argument("--out", default=DEFAULT_OUTDIR, help="엑셀 저장 폴더")
     args = p.parse_args()
-    tops = [t.strip() for t in args.tops.split(",") if t.strip()]
-    result = crawl_site(args.site, args.url, tops)
+
+    top_names: list[str] = []
+    mid_names_by_group: list[list[str]] = []
+    for chunk in args.pairs.split(","):
+        chunk = chunk.strip()
+        if not chunk or ":" not in chunk:
+            continue
+        top_raw, mid_raw = chunk.split(":", 1)
+        top_raw, mid_raw = top_raw.strip(), mid_raw.strip()
+        if top_raw not in top_names:
+            if len(top_names) >= TOP_GROUP_COUNT:
+                continue
+            top_names.append(top_raw)
+            mid_names_by_group.append([])
+        mid_names_by_group[top_names.index(top_raw)].append(mid_raw)
+
+    result = crawl_site(args.site, args.url, top_names, mid_names_by_group, biz_name=args.biz)
     if not result.ok:
         print("실패:", "; ".join(result.errors))
         raise SystemExit(1)
     path = save_excel(result.rows, result.site_name, args.out)
     print(f"완료 {result.total}행 → {path}")
+    try:
+        save_last_input(args.site, args.url, args.out, top_names, mid_names_by_group, biz=args.biz)
+    except Exception:
+        pass
 
 
 if __name__ == "__main__":

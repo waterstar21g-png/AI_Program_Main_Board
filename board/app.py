@@ -188,7 +188,7 @@ class BoardApp(tk.Tk):
 
         self.btn_p1_102 = tk.Button(
             side,
-            text="P1_102\n카테고리 URL 추출(SALE포함)",
+            text="P1_102\n상위·중위→하위 카테고리 추출",
             command=lambda: self._show("p1_102"),
             font=("Malgun Gothic", 9, "bold"),
             relief="groove",
@@ -609,77 +609,120 @@ class BoardApp(tk.Tk):
         if messagebox.askyesno("P2로 이동", f"엑셀 저장·카테고리URL목록에 반영했습니다.\n\n{path}\n\nP2 화면으로 갈까요?"):
             self._show("p2")
 
-    # ── P1_102 (P1 복제본 + 일부 수정: 상위 카테고리 SALE 기본 포함) ──
+    # ── P1_102 (P1 복제본 + 일부 수정: 상위·중위 카테고리 입력, 하위 카테고리
+    #    를 최종 카테고리명으로 확정) ──────────────────────
     def _build_p1_102(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="P1_102 — P1 복제본 · 사이트·상위 카테고리(SALE 기본 포함) → 엑셀",
+            text="P1_102 — P1 복제본 · 상위·중위 카테고리 → 하위 카테고리를 최종명으로 → 엑셀",
             bg="#f1f5f9",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",
         ).pack(fill="x", pady=(0, 8))
 
+        # ★요건: 입력값(사이트명·URL·저장폴더·상위/중위 카테고리명)은 종료 후
+        # 재실행해도 마지막 입력값을 그대로 초기값으로 보여준다.
+        last = p1_102_crawl.load_last_input()
+
         form = tk.Frame(parent, bg="#ffffff", padx=10, pady=10, relief="solid", bd=1)
         form.pack(fill="x")
 
-        self.var_site_102 = tk.StringVar(value=p1_102_crawl.DEFAULT_SITE)
-        self.var_url_102 = tk.StringVar(value=p1_102_crawl.DEFAULT_URL)
-        self.var_outdir_102 = tk.StringVar(value=p1_102_crawl.DEFAULT_OUTDIR)
+        self.var_site_102 = tk.StringVar(value=last["site"])
+        self.var_biz_102 = tk.StringVar(value=last.get("biz", ""))
+        self.var_url_102 = tk.StringVar(value=last["url"])
+        self.var_outdir_102 = tk.StringVar(value=last["outdir"])
 
-        self._row(form, "사이트명", self.var_site_102)
+        # ★요건: 사이트명 옆에 "사업자명" 입력칸 추가 (같은 행)
+        site_row = tk.Frame(form, bg="#ffffff")
+        site_row.pack(fill="x", pady=3)
+        tk.Label(site_row, text="사이트명", width=16, anchor="w", bg="#ffffff").pack(side="left")
+        tk.Entry(site_row, textvariable=self.var_site_102, width=20).pack(side="left")
+        tk.Label(site_row, text="사업자명", width=12, anchor="w", bg="#ffffff").pack(
+            side="left", padx=(12, 0)
+        )
+        tk.Entry(site_row, textvariable=self.var_biz_102).pack(side="left", fill="x", expand=True)
+
         self._row(form, "사이트 URL", self.var_url_102)
+        self.var_site_102.trace_add("write", lambda *_a: self._persist_p1_102_input())
+        self.var_biz_102.trace_add("write", lambda *_a: self._persist_p1_102_input())
+        self.var_url_102.trace_add("write", lambda *_a: self._persist_p1_102_input())
 
-        tops_wrap = tk.Frame(form, bg="#ffffff")
-        tops_wrap.pack(fill="x", pady=3)
-        tk.Label(
-            tops_wrap,
-            text="상위 카테고리",
-            width=16,
-            anchor="nw",
-            bg="#ffffff",
-        ).pack(side="left", anchor="n", pady=2)
-        tops_right = tk.Frame(tops_wrap, bg="#ffffff")
-        tops_right.pack(side="left", fill="x", expand=True)
-        tk.Label(
-            tops_right,
-            text=(
-                f"{TOP_GRID_ROWS}행×{TOP_GRID_COLS}칸 · 칸당 {TOP_CELL_MAX_LEN}자 · "
-                "명1:명2 입력 시 엑셀 상위명을 명2로 출력 (P1_102 기본값: SALE 포함)"
-            ),
-            bg="#ffffff",
-            fg="#64748b",
-            anchor="w",
-            font=("Malgun Gothic", 8),
-        ).pack(fill="x", pady=(0, 2))
-        self._p1_102_top_vars: list[tk.StringVar] = []
+        # ★요건: 4개 행 구성 — (상위 카테고리 1개 + 중위 카테고리 20개) × 2그룹
         vcmd_102 = (self.register(self._validate_p1_102_top_cell), "%P")
-        grid = tk.Frame(tops_right, bg="#ffffff")
-        grid.pack(fill="x")
-        # ★요건: P1_102 — MEN:남성, WOMEN:여성, KIDS:키즈, SALE:세일
-        defaults = list(p1_102_crawl.DEFAULT_TOPS)
-        idx = 0
-        for r in range(TOP_GRID_ROWS):
-            row_f = tk.Frame(grid, bg="#ffffff")
-            row_f.pack(fill="x", pady=1)
-            for c in range(TOP_GRID_COLS):
-                var = tk.StringVar(value=defaults[idx] if idx < len(defaults) else "")
-                self._p1_102_top_vars.append(var)
-                tk.Entry(
-                    row_f,
-                    textvariable=var,
-                    width=TOP_CELL_MAX_LEN + 1,
-                    font=("Malgun Gothic", 9),
-                    justify="center",
-                    validate="key",
-                    validatecommand=vcmd_102,
-                ).pack(side="left", padx=1)
-                idx += 1
+        self._p1_102_top_vars: list[tk.StringVar] = []
+        self._p1_102_mid_vars: list[list[tk.StringVar]] = []
+        for g in range(p1_102_crawl.TOP_GROUP_COUNT):
+            top_row = tk.Frame(form, bg="#ffffff")
+            top_row.pack(fill="x", pady=(6 if g == 0 else 10, 2))
+            tk.Label(
+                top_row,
+                text="상위 카테고리",
+                width=16,
+                anchor="w",
+                bg="#ffffff",
+            ).pack(side="left")
+            top_var = tk.StringVar(
+                value=last["top_names"][g] if g < len(last["top_names"]) else ""
+            )
+            self._p1_102_top_vars.append(top_var)
+            tk.Entry(
+                top_row,
+                textvariable=top_var,
+                width=TOP_CELL_MAX_LEN + 4,
+                font=("Malgun Gothic", 9, "bold"),
+                validate="key",
+                validatecommand=vcmd_102,
+            ).pack(side="left")
+            tk.Label(
+                top_row,
+                text=f"(그룹 {g + 1} — 명1:명2 입력 시 엑셀 상위명을 명2로 출력)",
+                bg="#ffffff",
+                fg="#64748b",
+                font=("Malgun Gothic", 8),
+            ).pack(side="left", padx=(8, 0))
+            top_var.trace_add("write", lambda *_a: self._persist_p1_102_input())
+
+            mid_row = tk.Frame(form, bg="#ffffff")
+            mid_row.pack(fill="x", pady=(0, 2))
+            tk.Label(
+                mid_row,
+                text="중위 카테고리",
+                width=16,
+                anchor="nw",
+                bg="#ffffff",
+            ).pack(side="left", anchor="n")
+            mid_grid = tk.Frame(mid_row, bg="#ffffff")
+            mid_grid.pack(side="left", fill="x", expand=True)
+            mid_vars: list[tk.StringVar] = []
+            last_group_mids = last["mid_names"][g] if g < len(last["mid_names"]) else []
+            idx = 0
+            for r in range(p1_102_crawl.MID_GRID_ROWS):
+                row_f = tk.Frame(mid_grid, bg="#ffffff")
+                row_f.pack(fill="x", pady=1)
+                for c in range(p1_102_crawl.MID_GRID_COLS):
+                    var = tk.StringVar(
+                        value=last_group_mids[idx] if idx < len(last_group_mids) else ""
+                    )
+                    mid_vars.append(var)
+                    tk.Entry(
+                        row_f,
+                        textvariable=var,
+                        width=TOP_CELL_MAX_LEN + 1,
+                        font=("Malgun Gothic", 9),
+                        justify="center",
+                        validate="key",
+                        validatecommand=vcmd_102,
+                    ).pack(side="left", padx=1)
+                    var.trace_add("write", lambda *_a: self._persist_p1_102_input())
+                    idx += 1
+            self._p1_102_mid_vars.append(mid_vars)
 
         out_row = tk.Frame(form, bg="#ffffff")
-        out_row.pack(fill="x", pady=3)
+        out_row.pack(fill="x", pady=(10, 3))
         tk.Label(out_row, text="저장 폴더", width=16, anchor="w", bg="#ffffff").pack(side="left")
         tk.Entry(out_row, textvariable=self.var_outdir_102).pack(side="left", fill="x", expand=True)
         tk.Button(out_row, text="…", width=3, command=self._pick_outdir_102).pack(side="left", padx=4)
+        self.var_outdir_102.trace_add("write", lambda *_a: self._persist_p1_102_input())
 
         actions = tk.Frame(parent, bg="#f1f5f9")
         actions.pack(fill="x", pady=10)
@@ -712,17 +755,28 @@ class BoardApp(tk.Tk):
         self.p1_102_preview.pack(fill="both", expand=True)
 
     def _validate_p1_102_top_cell(self, new_value: str) -> bool:
-        """P1_102 상위 카테고리 칸 — 한글 포함 최대 TOP_CELL_MAX_LEN자."""
+        """P1_102 상위·중위 카테고리 칸 — 한글 포함 최대 TOP_CELL_MAX_LEN자."""
         return len(new_value) <= TOP_CELL_MAX_LEN
 
-    def _p1_102_top_values(self) -> list[str]:
-        """P1_102 그리드에서 비어 있지 않은 상위 카테고리 칸 값을 순서대로."""
-        out: list[str] = []
-        for var in getattr(self, "_p1_102_top_vars", []):
-            s = (var.get() or "").strip()
-            if s:
-                out.append(s)
-        return out
+    def _p1_102_top_names(self) -> list[str]:
+        return [var.get() for var in getattr(self, "_p1_102_top_vars", [])]
+
+    def _p1_102_mid_names_by_group(self) -> list[list[str]]:
+        return [[var.get() for var in group] for group in getattr(self, "_p1_102_mid_vars", [])]
+
+    def _persist_p1_102_input(self) -> None:
+        """★요건: 입력값을 즉시 저장 — 보드 재실행 시 마지막 입력값을 그대로 초기값으로."""
+        try:
+            p1_102_crawl.save_last_input(
+                self.var_site_102.get(),
+                self.var_url_102.get(),
+                self.var_outdir_102.get(),
+                self._p1_102_top_names(),
+                self._p1_102_mid_names_by_group(),
+                biz=self.var_biz_102.get(),
+            )
+        except Exception:
+            pass
 
     def _pick_outdir_102(self) -> None:
         d = filedialog.askdirectory(initialdir=self.var_outdir_102.get() or str(Path.home()))
@@ -731,21 +785,32 @@ class BoardApp(tk.Tk):
 
     def _p1_102_defaults(self) -> None:
         self.var_site_102.set(p1_102_crawl.DEFAULT_SITE)
+        self.var_biz_102.set(p1_102_crawl.DEFAULT_BIZ_NAME)
         self.var_url_102.set(p1_102_crawl.DEFAULT_URL)
         self.var_outdir_102.set(p1_102_crawl.DEFAULT_OUTDIR)
-        defaults = list(p1_102_crawl.DEFAULT_TOPS)
-        for i, var in enumerate(getattr(self, "_p1_102_top_vars", [])):
-            var.set(defaults[i] if i < len(defaults) else "")
+        for var in getattr(self, "_p1_102_top_vars", []):
+            var.set("")
+        for group in getattr(self, "_p1_102_mid_vars", []):
+            for var in group:
+                var.set("")
 
     def _run_p1_102(self) -> None:
         self.btn_crawl_102.configure(state="disabled")
         self.btn_save_102.configure(state="disabled")
         self.p1_102_status.configure(text="수집 중…")
         self.p1_102_preview.delete("1.0", "end")
-        tops = self._p1_102_top_values()
+        top_names = self._p1_102_top_names()
+        mid_names_by_group = self._p1_102_mid_names_by_group()
+        biz_name = self.var_biz_102.get()
 
         def work() -> None:
-            result = crawl_site_102(self.var_site_102.get(), self.var_url_102.get(), tops)
+            result = crawl_site_102(
+                self.var_site_102.get(),
+                self.var_url_102.get(),
+                top_names,
+                mid_names_by_group,
+                biz_name=biz_name,
+            )
             self.after(0, lambda: self._p1_102_done(result))
 
         threading.Thread(target=work, daemon=True).start()
