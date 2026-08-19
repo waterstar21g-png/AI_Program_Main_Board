@@ -776,6 +776,15 @@ def _clear_stale_singleton_locks() -> None:
 POPUP_BLOCK_FIX_VERSION = "1"
 _POPUP_FIX_MARKER = "popup_block_fix_v{}.marker"
 
+# ★요건(2026-08-20): "더망고 확장프로그램이 설치되어 있지 않습니다" 배너 —
+# 최신 Chrome(134+는 재시작 시, 137+는 기본적으로)이 --load-extension 으로
+# 불러온 확장을 "개발자 모드 미확인" 상태로 보고 자동으로 비활성화한다.
+# --enable-unsafe-extension-debugging 을 함께 주면 --load-extension 확장이
+# 정식 설치처럼 유지된다(신규 Chrome DevTools Extensions 도메인 요건, 우리가
+# 이미 쓰는 --remote-debugging-port 방식과 그대로 호환됨 — pipe 전환 불필요).
+EXT_DEBUG_FIX_VERSION = "1"
+_EXT_DEBUG_FIX_MARKER = "ext_debug_fix_v{}.marker"
+
 
 def launch_debug_browser() -> None:
     """평소 쓰는 Chrome/Edge를 디버그 포트로 실행 — Playwright Chromium 미사용"""
@@ -807,11 +816,16 @@ def launch_debug_browser() -> None:
         "--disable-popup-blocking",
     ]
     # 더망고 솔루션 확장 로드 (전용 프로필에 설정값이 비어 있는 문제 방지)
+    ext_loaded = False
     if MANGO_EXT_DIR.is_dir() and (MANGO_EXT_DIR / "manifest.json").is_file():
         ext_path = str(MANGO_EXT_DIR.resolve())
         chrome_args.append(f"--load-extension={ext_path}")
         chrome_args.append(f"--disable-extensions-except={ext_path}")
+        # ★요건: 최신 Chrome이 --load-extension 확장을 "미확인" 상태로 보고
+        # 조용히 비활성화하는 문제 방지 — 정식 설치처럼 유지.
+        chrome_args.append("--enable-unsafe-extension-debugging")
         log(f"더망고 솔루션 확장 로드: {ext_path}")
+        ext_loaded = True
     else:
         log(f"[경고] 확장 폴더 없음 — {MANGO_EXT_DIR} (Web Store 설치분만 사용)")
     chrome_args.append(MAIN_URL)
@@ -825,6 +839,8 @@ def launch_debug_browser() -> None:
         if cdp_port_open():
             log("브라우저 연결 확인됨")
             _write_popup_fix_marker()
+            if ext_loaded:
+                _write_ext_debug_fix_marker()
             return
         if i > 0 and i % 6 == 0:
             log(f"  아직 대기 중... ({i * 0.5:.0f}초 경과 — 화면에 Chrome 창이 떴는지 확인해 주세요)")
@@ -848,20 +864,38 @@ def _write_popup_fix_marker() -> None:
         pass
 
 
+def _ext_debug_fix_marker_path() -> Path:
+    return PROFILE_DIR / _EXT_DEBUG_FIX_MARKER.format(EXT_DEBUG_FIX_VERSION)
+
+
+def _write_ext_debug_fix_marker() -> None:
+    """--enable-unsafe-extension-debugging 로 새로 켠 Chrome 표시(재사용 판별용)."""
+    try:
+        _ext_debug_fix_marker_path().write_text("ok\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 def warn_if_reusing_pre_fix_browser() -> None:
     """이미 떠 있던(우리가 방금 새로 켠 게 아닌) Chrome을 재사용하는 중이면 경고.
 
-    --disable-popup-blocking 은 Chrome '실행 시' 적용되는 플래그라,
-    이 프로그램을 업데이트하기 전부터 열려 있던 Chrome을 계속 붙잡고
-    쓰는 중이면 여전히 팝업이 차단될 수 있다.
+    --disable-popup-blocking, --enable-unsafe-extension-debugging 은 모두
+    Chrome '실행 시'에만 적용되는 플래그라, 이 프로그램을 업데이트하기 전부터
+    열려 있던 Chrome을 계속 붙잡고 쓰는 중이면 여전히 문제가 남을 수 있다.
     """
-    if _popup_fix_marker_path().exists():
-        return
-    log(
-        "  [중요] 저장하기 팝업이 계속 안 뜨면 Chrome을 완전히 종료 후 "
-        "다시 실행해 보세요 — 이번 업데이트(팝업차단 해제)는 Chrome을 "
-        "새로 켤 때만 적용됩니다. (기존에 열려 있던 창을 재사용 중일 수 있음)"
-    )
+    if not _popup_fix_marker_path().exists():
+        log(
+            "  [중요] 저장하기 팝업이 계속 안 뜨면 Chrome을 완전히 종료 후 "
+            "다시 실행해 보세요 — 이번 업데이트(팝업차단 해제)는 Chrome을 "
+            "새로 켤 때만 적용됩니다. (기존에 열려 있던 창을 재사용 중일 수 있음)"
+        )
+    if not _ext_debug_fix_marker_path().exists():
+        log(
+            "  [중요] '더망고 확장프로그램이 설치되어 있지 않습니다' 배너가 보이면 "
+            "Chrome을 완전히 종료(작업관리자에서 chrome.exe 프로세스까지 확인)한 뒤 "
+            "다시 실행해 보세요 — 확장 인식 업데이트는 Chrome을 새로 켤 때만 "
+            "적용됩니다. (기존에 열려 있던 창을 재사용 중일 수 있음)"
+        )
 
 
 def pick_working_page(context: BrowserContext) -> Page:
@@ -946,8 +980,11 @@ def ensure_mango_extension_settings(
             raise RuntimeError(
                 "더망고 솔루션 확장프로그램 팝업을 열 수 없습니다.\n"
                 f"  · 대상: {MANGO_EXT_POPUP}\n"
-                "  · Chrome을 모두 닫고 P2를 다시 실행하세요 "
-                "(전용 프로필에 확장이 로드됩니다).\n"
+                "  · Chrome을 모두 닫고(작업관리자에서 chrome.exe 프로세스까지 확인) "
+                "P2를 다시 실행하세요 (전용 프로필에 확장이 로드됩니다).\n"
+                "  · 화면에 '더망고 확장프로그램이 설치되어 있지 않습니다'가 보이면 "
+                "최신 Chrome이 --load-extension 확장을 자동 비활성화한 것입니다 — "
+                "위 안내대로 Chrome을 완전히 재시작하면 해결됩니다.\n"
                 f"  · 원인: {e}"
             ) from e
 

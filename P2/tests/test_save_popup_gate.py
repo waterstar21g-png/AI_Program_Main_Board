@@ -335,6 +335,28 @@ def test_chrome_launch_disables_popup_blocking():
     assert "--disable-popup-blocking" in src
 
 
+def test_chrome_launch_enables_unsafe_extension_debugging():
+    """실제 Chrome 실행 인자에 --enable-unsafe-extension-debugging 이 포함돼야 함.
+
+    회귀: 최신 Chrome은 --load-extension 으로 불러온 확장을 "개발자 모드로
+    확인되지 않음" 상태로 보고 시작 즉시 비활성화한다 — 화면엔 목록에
+    보여도 실제로는 꺼져 있어 더망고 사이트가 "확장프로그램이 설치되어
+    있지 않습니다" 배너를 띄운다. --enable-unsafe-extension-debugging 을
+    --load-extension 과 함께 주면 정식 설치처럼 유지된다.
+    """
+    src = inspect.getsource(C.launch_debug_browser)
+    assert "--enable-unsafe-extension-debugging" in src
+    # 확장 로드 인자(--load-extension) 바로 뒤에 함께 추가돼야 실제로 적용됨
+    assert "--load-extension" in src
+
+
+def test_warn_if_reusing_pre_fix_browser_checks_ext_debug_marker():
+    """기존(업데이트 전) Chrome 재사용 시 확장 배너 관련 안내도 함께 나와야 함."""
+    src = inspect.getsource(C.warn_if_reusing_pre_fix_browser)
+    assert "_ext_debug_fix_marker_path" in src
+    assert "확장프로그램이 설치되어 있지 않습니다" in src
+
+
 def test_no_popup_no_layer_raises_with_popup_block_hint(browser):
     """클릭해도 새 창·레이어가 전혀 안 생기면(진짜 안 열림) 원인 힌트 포함해 실패.
 

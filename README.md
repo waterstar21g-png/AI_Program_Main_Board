@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.1.49** (Python B안)
+# AI_Program_Main_Board **v2.1.50** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
@@ -59,6 +59,14 @@ if (Test-Path .\AI_Program_Main_Board\.git) {
 `update-by-zip.bat`을 더블클릭하세요. GitHub에서 최신 소스를 **ZIP으로
 통째로** 받아 현재 폴더에 덮어쓴 뒤 자동으로 보드를 시작합니다(브라우저로
 "Download ZIP" 받아 직접 덮어쓰는 것과 동일한 효과를 자동화한 것).
+
+### P2 "더망고 확장프로그램이 설치되어 있지 않습니다" 배너 (v2.1.50)
+
+새로 뜨는 Chrome(P2 전용 프로필) 화면 상단에 이 배너가 보이면, 최신 Chrome이
+`--load-extension` 확장을 자동 비활성화한 것입니다. 이번 업데이트로 자동
+해결되지만, **업데이트 전부터 열려 있던 Chrome을 재사용 중이면 여전히 보일 수
+있습니다** — Chrome을 완전히 종료(작업관리자에서 `chrome.exe`까지 확인)한 뒤
+P2를 다시 실행하세요.
 
 ### P2 더망고 로그인 · 1·2행 스크린샷
 
