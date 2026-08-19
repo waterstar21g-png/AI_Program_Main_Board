@@ -1,0 +1,242 @@
+[
+  {
+    "id": "demango",
+    "name": "더망고",
+    "url": "https://tmg1898.cafe24.com/mall/admin/admin_login.php",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='admin_id'], input[name='member_id'], #admin_id",
+    "password_selector": "input[name='admin_pwd'], input[name='member_passwd'], #admin_pwd, input[type='password']",
+    "submit_selector": "button[type='submit'], input[type='submit'], .btn_login, a.btn_login"
+  },
+  {
+    "id": "cafe24",
+    "name": "Cafe24",
+    "url": "https://user.cafe24.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='user_id'], input[type='text']",
+    "password_selector": "input[name='password'], input[type='password']",
+    "submit_selector": "button[type='submit'], input[type='submit']"
+  },
+  {
+    "id": "smartstore",
+    "name": "스마트스토어",
+    "url": "https://sell.smartstore.naver.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text'], input[name='id']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "naver",
+    "name": "네이버",
+    "url": "https://nid.naver.com/nidlogin.login",
+    "user": "",
+    "password": "",
+    "user_selector": "#id, input[name='id']",
+    "password_selector": "#pw, input[name='pw']",
+    "submit_selector": "#log\\.login, button[type='submit']"
+  },
+  {
+    "id": "naver_shopping",
+    "name": "네이버쇼핑",
+    "url": "https://shopping.naver.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "#id, input[name='id']",
+    "password_selector": "#pw, input[name='pw']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "coupang",
+    "name": "쿠팡",
+    "url": "https://login.coupang.com/login/login.pang",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='email'], input[type='text']",
+    "password_selector": "input[name='password'], input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "coupang_wing",
+    "name": "쿠팡윙",
+    "url": "https://wing.coupang.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text'], input[name='username']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "domaekkok",
+    "name": "도매꾹",
+    "url": "https://domeggook.com/main/login.php",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='id'], input[type='text']",
+    "password_selector": "input[name='pw'], input[type='password']",
+    "submit_selector": "button[type='submit'], input[type='submit']"
+  },
+  {
+    "id": "domemae",
+    "name": "도매매",
+    "url": "https://domeme.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='id'], input[type='text']",
+    "password_selector": "input[name='pw'], input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "alibaba1688",
+    "name": "1688",
+    "url": "https://login.1688.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='loginId'], input[type='text']",
+    "password_selector": "input[name='password'], input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "alibaba",
+    "name": "Alibaba",
+    "url": "https://login.alibaba.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='loginId'], input[type='text']",
+    "password_selector": "input[name='password'], input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "taobao",
+    "name": "TaoBao",
+    "url": "https://login.taobao.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='fm-login-id'], input[type='text']",
+    "password_selector": "input[name='fm-login-password'], input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "item_sourcing",
+    "name": "아이템소싱",
+    "url": "https://www.itemscout.io/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text'], input[name='email']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "abc_art",
+    "name": "ABC마트 A-RT",
+    "url": "https://www.a-rt.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='id'], input[type='text']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "zara_de",
+    "name": "ZARA DE",
+    "url": "https://www.zara.com/de/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='email'], input[type='text']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "gmarket",
+    "name": "G마켓",
+    "url": "https://signinssl.gmarket.co.kr/login/login",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='id'], #typeMemberInputId",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit'], #btn_login"
+  },
+  {
+    "id": "auction",
+    "name": "옥션",
+    "url": "https://memberssl.auction.co.kr/Authenticate/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='id'], input[type='text']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "elevenst",
+    "name": "11번가",
+    "url": "https://login.11st.co.kr/auth/front/login.tmall",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='loginName'], input[type='text']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "kakao_biz",
+    "name": "카카오비즈",
+    "url": "https://business.kakao.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text'], input[name='email']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "naver_ads",
+    "name": "네이버광고",
+    "url": "https://searchad.naver.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text'], #id",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "sabangnet",
+    "name": "사방넷",
+    "url": "https://www.sabangnet.co.kr/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[name='id'], input[type='text']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "playauto",
+    "name": "플레이오토",
+    "url": "https://www.playauto.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text'], input[name='email']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "sellmate",
+    "name": "셀메이트",
+    "url": "https://www.sellmate.co.kr/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  },
+  {
+    "id": "esmplus",
+    "name": "ESM+",
+    "url": "https://www.esmplus.com/",
+    "user": "",
+    "password": "",
+    "user_selector": "input[type='text'], input[name='id']",
+    "password_selector": "input[type='password']",
+    "submit_selector": "button[type='submit']"
+  }
+]

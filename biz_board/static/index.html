@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1c17" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="비즈보드" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <link rel="icon" href="/icons/icon-192.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <title>비즈 보드</title>
+</head>
+<body>
+  <div class="atmosphere" aria-hidden="true"></div>
+
+  <header class="hero">
+    <p class="eyebrow">독립 실행 · 홈 화면 아이콘</p>
+    <h1 class="brand">비즈 보드</h1>
+    <p class="tagline">바로가기 20+ · 사전 ID/PW로 로그인</p>
+    <div class="cta-row">
+      <button type="button" id="btnInstall" class="btn primary" hidden>홈 화면에 추가</button>
+      <button type="button" id="btnSettings" class="btn ghost">ID/PW 설정</button>
+      <button type="button" id="btnHowto" class="btn ghost">설치 안내</button>
+    </div>
+    <p class="meta" id="metaLine">불러오는 중…</p>
+  </header>
+
+  <main>
+    <section class="board" aria-label="바로가기 URL">
+      <div id="grid" class="grid"></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <dialog id="dlgSite" class="sheet">
+    <form method="dialog" id="siteForm" class="sheet-body">
+      <h2 id="dlgTitle">사이트</h2>
+      <p class="dlg-url" id="dlgUrl"></p>
+      <label>아이디
+        <input id="dlgUser" name="user" autocomplete="username" />
+      </label>
+      <label>비밀번호
+        <input id="dlgPass" name="password" type="password" autocomplete="current-password" />
+      </label>
+      <div class="sheet-actions">
+        <button type="button" id="btnOpenUrl" class="btn ghost">URL만 열기</button>
+        <button type="button" id="btnCopyId" class="btn ghost">ID 복사</button>
+        <button type="button" id="btnCopyPw" class="btn ghost">PW 복사</button>
+        <button type="button" id="btnAutoLogin" class="btn primary">자동 로그인</button>
+        <button type="submit" class="btn ghost" value="cancel">닫기</button>
+      </div>
+      <p class="hint">휴대폰: ID/PW 복사 후 로그인 화면 붙여넣기 · PC 서버: 자동 로그인(Playwright)</p>
+    </form>
+  </dialog>
+
+  <dialog id="dlgSettings" class="sheet wide">
+    <div class="sheet-body">
+      <h2>ID/PW 설정</h2>
+      <p class="hint">값은 이 기기 localStorage + 서버 <code>sites.local.json</code>에 저장됩니다. Git에 올리지 마세요.</p>
+      <div id="settingsList" class="settings-list"></div>
+      <div class="sheet-actions">
+        <button type="button" id="btnSaveSettings" class="btn primary">저장</button>
+        <button type="button" id="btnCloseSettings" class="btn ghost">닫기</button>
+      </div>
+    </div>
+  </dialog>
+
+  <dialog id="dlgHowto" class="sheet">
+    <div class="sheet-body">
+      <h2>휴대폰 홈 아이콘</h2>
+      <ol class="howto">
+        <li>PC에서 <code>biz_board\run.bat</code> 실행</li>
+        <li>휴대폰을 같은 Wi-Fi에 연결</li>
+        <li>보드에 표시된 Phone URL로 접속</li>
+        <li>Safari/Chrome 메뉴 → <strong>홈 화면에 추가</strong> / Add to Home Screen</li>
+        <li>홈 아이콘 탭 → 바로가기 20+ 표시 → 각 URL 로그인</li>
+      </ol>
+      <div class="sheet-actions">
+        <button type="button" id="btnCloseHowto" class="btn primary">확인</button>
+      </div>
+    </div>
+  </dialog>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

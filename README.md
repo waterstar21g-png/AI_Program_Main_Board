@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.1.45** (Python B안)
+# AI_Program_Main_Board **v2.2.0** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
@@ -8,6 +8,7 @@
 | **P1_101** | 엑셀 URL → 팝업닫기 → 3초대기 → 상품수 UPDATE |
 | **P1_ZARA_DE** | 독일자라(ZARA DE) 카테고리 URL 리스트 추출 → 엑셀 |
 | **P2** | 더망고 대량수집 (구 **P3**, P1/P1_ZARA_DE 엑셀 입력) |
+| **비즈 보드** | **독립 실행** · 휴대폰 홈 아이콘 · 바로가기 URL 20+ · 사전 ID/PW 로그인 (`biz_board/run.bat`) |
 
 로컬 경로(고정):
 
