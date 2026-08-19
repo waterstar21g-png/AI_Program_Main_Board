@@ -211,11 +211,13 @@ def read_category_url_rows(path: str) -> list[dict]:
             return []
         headers = [str(c or "").strip() for c in header_cells]
         try:
-            label_col = headers.index("상위 최종 카테고리명")
+            # ★요건(2026-08-19): 카테고리URL목록 화면에는 "최종카테고리명"을
+            # "상위 최종카테고리명" 대신 표시한다.
+            label_col = headers.index("최종 카테고리명")
             url_col = headers.index("최종 카테고리 URL주소")
         except ValueError as e:
             raise ValueError(
-                "엑셀 1행 헤더에 '상위 최종 카테고리명', "
+                "엑셀 1행 헤더에 '최종 카테고리명', "
                 "'최종 카테고리 URL주소' 열이 있어야 합니다."
             ) from e
 

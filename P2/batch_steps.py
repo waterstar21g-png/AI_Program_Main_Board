@@ -239,7 +239,7 @@ def step06b_quick_check(
             return False, "no_results", 0
         raise RuntimeError(
             f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
-            f"  · 상위 최종 카테고리명={label}\n"
+            f"  · 최종 카테고리명={label}\n"
             f"  · 최종 카테고리 URL주소={url}"
         )
 
@@ -259,7 +259,7 @@ def step06b_quick_check(
         return False, "no_results", last_count
     raise RuntimeError(
         f"#{rn} 더망고 자체 메세지: 검색결과가 없습니다.\n"
-        f"  · 상위 최종 카테고리명={label}\n"
+        f"  · 최종 카테고리명={label}\n"
         f"  · 최종 카테고리 URL주소={url}"
     )
 
