@@ -1649,6 +1649,32 @@ class BoardApp(tk.Tk):
         self.var_dir = tk.StringVar(value=(default_roots() or [str(Path.home())])[0])
         self.var_q = tk.StringVar(value="카테고리URL")
 
+        # ★요건(2026-08-19): 폴더 목록 위에 "수집사이트명"·"수집사이트URL" 입력칸 추가.
+        # 더망고에서 선택된 사이트 정보와 비교해 수집 시작 전 검증한다.
+        self.var_p2_site_name = tk.StringVar(value="")
+        self.var_p2_site_url = tk.StringVar(value="")
+
+        r0 = tk.Frame(search, bg="#ffffff")
+        r0.pack(fill="x", pady=2)
+        tk.Label(r0, text="수집사이트명", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        tk.Entry(r0, textvariable=self.var_p2_site_name, width=18).pack(side="left")
+        tk.Label(r0, text="수집사이트URL", width=11, anchor="w", bg="#ffffff").pack(
+            side="left", padx=(10, 0)
+        )
+        tk.Entry(r0, textvariable=self.var_p2_site_url).pack(side="left", fill="x", expand=True)
+        tk.Label(
+            search,
+            text=(
+                "★ 더망고 화면에서 선택된 사이트명/URL과 다르면 수집 시작 전에 "
+                "상세 오류와 함께 중단됩니다. (비워두면 검증 생략)"
+            ),
+            bg="#ffffff",
+            fg="#64748b",
+            anchor="w",
+            font=("Malgun Gothic", 8),
+            justify="left",
+        ).pack(fill="x", pady=(0, 4))
+
         r1 = tk.Frame(search, bg="#ffffff")
         r1.pack(fill="x", pady=2)
         tk.Label(r1, text="폴더", width=8, anchor="w", bg="#ffffff").pack(side="left")
@@ -3143,6 +3169,13 @@ class BoardApp(tk.Tk):
         if verify:
             # ★스크린샷만 1·2행 — 처리 행 수는 엑셀 전체 (max_rows 강제 금지)
             args.append("--verify")
+        # ★요건: 수집사이트명·수집사이트URL — 더망고 화면과 다르면 상세오류 후 중단
+        site_name = self.var_p2_site_name.get().strip()
+        site_url = self.var_p2_site_url.get().strip()
+        if site_name:
+            args.extend(["--site-name", site_name])
+        if site_url:
+            args.extend(["--site-url", site_url])
 
         set_selected(path)
         self._clear_p2_log()

@@ -16,7 +16,7 @@ def test_read_category_url_rows(tmp_path: Path):
     fp = tmp_path / "sample.xlsx"
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.append(["상위 최종 카테고리명", "최종 카테고리 URL주소", "기타"])
+    ws.append(["최종 카테고리명", "최종 카테고리 URL주소", "기타"])
     ws.append(["목차", "https://example.com/toc", "skip-toc"])  # 총건수 제외
     ws.append(["MEN 스니커즈", "https://example.com/a", "x"])
     ws.append(["", "", "skip"])
