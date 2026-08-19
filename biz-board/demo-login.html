@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>비즈보드 데모 로그인</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="login-shell">
+      <div class="login-card">
+        <h1>데모 로그인 수신</h1>
+        <p id="msg">폼 데이터를 확인하는 중…</p>
+        <pre id="out" style="text-align:left;overflow:auto;background:#07161a;padding:12px;border-radius:12px;border:1px solid rgba(242,247,246,.12)"></pre>
+        <div class="hero-actions" style="justify-content:center;margin-top:16px">
+          <a class="btn btn-primary" href="./index.html">보드로</a>
+        </div>
+      </div>
+    </div>
+    <script>
+      (async () => {
+        const msg = document.getElementById("msg");
+        const out = document.getElementById("out");
+        let data = {};
+        if (location.search) {
+          data = Object.fromEntries(new URLSearchParams(location.search));
+        }
+        // POST body is not readable after navigation in plain static page without server.
+        // For static demo, form_get works; for POST we show hint.
+        if (Object.keys(data).length) {
+          msg.textContent = "GET 로그인 데이터 수신 성공";
+          out.textContent = JSON.stringify(data, null, 2);
+        } else {
+          msg.textContent =
+            "POST 로 도착했습니다(정적 호스팅은 body 를 JS 로 못 읽습니다). 실제 서비스는 서버가 ID/PW 를 처리합니다.";
+          out.textContent = "method=POST 로 전송 완료 · 대상 사이트가 세션을 발급하면 로그인됩니다.";
+        }
+      })();
+    </script>
+  </body>
+</html>

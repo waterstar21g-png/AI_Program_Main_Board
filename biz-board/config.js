@@ -1,0 +1,310 @@
+/**
+ * 비즈보드 기본 바로가기 (20개 이상)
+ * - id/pw 는 예시 자리값. 설정 화면 또는 localStorage 로 덮어씀.
+ * - loginMode:
+ *   - "form_post"  : 로그인 URL 로 ID/PW 폼 POST (교차출처 전송 가능)
+ *   - "form_get"   : 로그인 URL 로 ID/PW 쿼리 GET
+ *   - "open_assist": 로그인 페이지 열고 ID/PW 복사 지원
+ */
+window.BIZ_BOARD_DEFAULTS = [
+  {
+    id: "demo",
+    name: "데모 로그인",
+    group: "테스트",
+    url: "./demo-login.html",
+    loginMode: "form_get",
+    idField: "admin_id",
+    pwField: "admin_pwd",
+    userId: "demo_user",
+    password: "demo_pass",
+    color: "#e89144"
+  },
+  {
+    id: "themango",
+    name: "더망고",
+    group: "수집",
+    url: "https://tmg1898.cafe24.com/mall/admin/admin_login.php",
+    loginMode: "form_post",
+    idField: "admin_id",
+    pwField: "admin_pwd",
+    userId: "",
+    password: "",
+    color: "#e89144"
+  },
+  {
+    id: "cafe24",
+    name: "카페24",
+    group: "쇼핑몰",
+    url: "https://user.cafe24.com/",
+    loginMode: "open_assist",
+    idField: "member_id",
+    pwField: "member_passwd",
+    userId: "",
+    password: "",
+    color: "#3aa894"
+  },
+  {
+    id: "smartstore",
+    name: "스마트스토어",
+    group: "마켓",
+    url: "https://sell.smartstore.naver.com/",
+    loginMode: "open_assist",
+    idField: "id",
+    pwField: "pw",
+    userId: "",
+    password: "",
+    color: "#03c75a"
+  },
+  {
+    id: "coupang_wing",
+    name: "쿠팡 Wing",
+    group: "마켓",
+    url: "https://wing.coupang.com/",
+    loginMode: "open_assist",
+    idField: "username",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#e94235"
+  },
+  {
+    id: "esm",
+    name: "ESM Plus",
+    group: "마켓",
+    url: "https://www.esmplus.com/",
+    loginMode: "open_assist",
+    idField: "loginId",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#ff7a00"
+  },
+  {
+    id: "elevenst",
+    name: "11번가",
+    group: "마켓",
+    url: "https://soffice.11st.co.kr/",
+    loginMode: "open_assist",
+    idField: "loginName",
+    pwField: "passWord",
+    userId: "",
+    password: "",
+    color: "#ff0038"
+  },
+  {
+    id: "kakao_biz",
+    name: "카카오비즈니스",
+    group: "광고",
+    url: "https://business.kakao.com/",
+    loginMode: "open_assist",
+    idField: "email",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#fee500"
+  },
+  {
+    id: "naver_ads",
+    name: "네이버광고",
+    group: "광고",
+    url: "https://ads.naver.com/",
+    loginMode: "open_assist",
+    idField: "id",
+    pwField: "pw",
+    userId: "",
+    password: "",
+    color: "#00c73c"
+  },
+  {
+    id: "google_ads",
+    name: "Google Ads",
+    group: "광고",
+    url: "https://ads.google.com/",
+    loginMode: "open_assist",
+    idField: "Email",
+    pwField: "Passwd",
+    userId: "",
+    password: "",
+    color: "#4285f4"
+  },
+  {
+    id: "sabangnet",
+    name: "사방넷",
+    group: "수집",
+    url: "https://sbadmin05.sabangnet.co.kr/",
+    loginMode: "open_assist",
+    idField: "id",
+    pwField: "passwd",
+    userId: "",
+    password: "",
+    color: "#2f6fed"
+  },
+  {
+    id: "playauto",
+    name: "플레이오토",
+    group: "수집",
+    url: "https://www.playauto.co.kr/",
+    loginMode: "open_assist",
+    idField: "userid",
+    pwField: "passwd",
+    userId: "",
+    password: "",
+    color: "#6c5ce7"
+  },
+  {
+    id: "sellmate",
+    name: "셀메이트",
+    group: "수집",
+    url: "https://www.sellmate.co.kr/",
+    loginMode: "open_assist",
+    idField: "id",
+    pwField: "pw",
+    userId: "",
+    password: "",
+    color: "#00b894"
+  },
+  {
+    id: "qoo10",
+    name: "Qoo10",
+    group: "마켓",
+    url: "https://www.qoo10.com/gmkt.inc/Login/Login.aspx",
+    loginMode: "open_assist",
+    idField: "txtLoginID",
+    pwField: "txtLoginPwd",
+    userId: "",
+    password: "",
+    color: "#e84393"
+  },
+  {
+    id: "amazon_seller",
+    name: "Amazon Seller",
+    group: "해외",
+    url: "https://sellercentral.amazon.com/",
+    loginMode: "open_assist",
+    idField: "email",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#ff9900"
+  },
+  {
+    id: "lotteon",
+    name: "롯데ON",
+    group: "마켓",
+    url: "https://soi.lotteon.com/",
+    loginMode: "open_assist",
+    idField: "userId",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#e60012"
+  },
+  {
+    id: "ssg",
+    name: "SSG",
+    group: "마켓",
+    url: "https://ecom.ssgadm.com/",
+    loginMode: "open_assist",
+    idField: "userId",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#f6a800"
+  },
+  {
+    id: "wemakeprice",
+    name: "위메프",
+    group: "마켓",
+    url: "https://wpartner.wemakeprice.com/",
+    loginMode: "open_assist",
+    idField: "userId",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#e31c79"
+  },
+  {
+    id: "tmon",
+    name: "티몬",
+    group: "마켓",
+    url: "https://sso.tmon.co.kr/",
+    loginMode: "open_assist",
+    idField: "id",
+    pwField: "pw",
+    userId: "",
+    password: "",
+    color: "#ff5000"
+  },
+  {
+    id: "interpark",
+    name: "인터파크",
+    group: "마켓",
+    url: "https://shop.interpark.com/",
+    loginMode: "open_assist",
+    idField: "userId",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#0046ff"
+  },
+  {
+    id: "hometax",
+    name: "홈택스",
+    group: "행정",
+    url: "https://hometax.go.kr/",
+    loginMode: "open_assist",
+    idField: "userId",
+    pwField: "userPw",
+    userId: "",
+    password: "",
+    color: "#1a73e8"
+  },
+  {
+    id: "toss_biz",
+    name: "토스비즈니스",
+    group: "금융",
+    url: "https://business.toss.im/",
+    loginMode: "open_assist",
+    idField: "id",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#3182f6"
+  },
+  {
+    id: "mailbiz",
+    name: "네이버웍스",
+    group: "업무",
+    url: "https://www.naverworks.com/",
+    loginMode: "open_assist",
+    idField: "user_id",
+    pwField: "user_pw",
+    userId: "",
+    password: "",
+    color: "#03c75a"
+  },
+  {
+    id: "easyadmin",
+    name: "이지어드민",
+    group: "수집",
+    url: "https://www.easyadmin.co.kr/",
+    loginMode: "open_assist",
+    idField: "userid",
+    pwField: "passwd",
+    userId: "",
+    password: "",
+    color: "#0984e3"
+  },
+  {
+    id: "gmarket",
+    name: "G마켓 셀러",
+    group: "마켓",
+    url: "https://www.gmarket.co.kr/",
+    loginMode: "open_assist",
+    idField: "id",
+    pwField: "password",
+    userId: "",
+    password: "",
+    color: "#00d4c8"
+  }
+];
