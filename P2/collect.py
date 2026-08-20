@@ -141,7 +141,8 @@ SAVE_POPUP_CONFIRM_WAIT_SEC = 300.0
 # 해당 입력을 포기하고 다음 엑셀 행으로 넘어간다.
 SAVE_PHASE_BUDGET_SEC = 180.0
 SAVE_COMPLETE_WAIT_SEC = 180.0  # 9~11 합산 상한과 동일
-DEFAULT_SAVE_COUNT = 3
+# ★요건(2026-08-20): 행당 저장상품수 3 → 50
+DEFAULT_SAVE_COUNT = 50
 DEFAULT_ROW_RETRIES = 1  # ★요건(2026-08-08): 엑셀 각 행은 1번 시도로 끝냄 — 재시도 없음
 SEARCH_MAX_TRIES = 2  # URL 검색 재시도(행 안) — 적게 두고 다음 행으로 넘김
 ROW_BUDGET_SEC = 240  # 한 입력 행(2~7항 검색단계)에 쓸 수 있는 최대 시간(초)
@@ -460,7 +461,7 @@ class RunCtx:
         excel_row = row.get("row", "?")
         self.info(
             f"--- 입력#{ordinal} 엑셀{excel_row}행 | "
-            f"상위 최종 카테고리명={self.current_label} | "
+            f"최종 카테고리명={self.current_label} | "
             f"최종 카테고리 URL주소={self.current_url} | "
             f"제한 {ROW_BUDGET_SEC}초 ---"
         )
@@ -695,7 +696,7 @@ class RunCtx:
             if ord_n:
                 meta_bits.append(f"입력#{ord_n}")
             if cat:
-                meta_bits.append(f"상위 최종 카테고리명={cat}")
+                meta_bits.append(f"최종 카테고리명={cat}")
             if url:
                 meta_bits.append(f"최종 카테고리 URL주소={url}")
             meta = " | ".join(meta_bits)
@@ -1149,12 +1150,24 @@ def read_excel(path: str) -> list[dict]:
     ws = wb.active
     headers = [str(c.value or "").strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
     try:
-        label_col = headers.index("상위 최종 카테고리명")
         url_col = headers.index("최종 카테고리 URL주소")
     except ValueError:
         raise SystemExit(
-            "엑셀 1행 헤더에 '상위 최종 카테고리명', '최종 카테고리 URL주소' 열이 있어야 합니다."
+            "엑셀 1행 헤더에 '최종 카테고리 URL주소' 열이 있어야 합니다."
         )
+    # ★요건(2026-08-20): 망고 "검색필터명"에 "최종 카테고리명"을 넣는다.
+    # 옛 엑셀에는 이 열이 없을 수 있어 "상위 최종 카테고리명"으로 대체한다
+    # (엑셀 포맷이 다르다는 이유로 수집 자체가 멈추는 회귀 방지).
+    try:
+        label_col = headers.index("최종 카테고리명")
+    except ValueError:
+        try:
+            label_col = headers.index("상위 최종 카테고리명")
+        except ValueError:
+            raise SystemExit(
+                "엑셀 1행 헤더에 '최종 카테고리명'"
+                "(또는 '상위 최종 카테고리명') 열이 있어야 합니다."
+            )
 
     rows = []
     for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
@@ -2706,12 +2719,12 @@ def fill_save_modal_fields(
     label: str,
     save_count: int,
 ) -> int:
-    """상품저장설정 모달 — 검색필터명에만 엑셀 데이터를 입력.
+    """상품저장설정 모달 — 검색필터명·저장상품수 입력.
 
-    ★요건(사용자 지시): "저장상품수" 입력칸은 절대 건드리지 않는다 —
-    원래 세팅값(모달을 열었을 때 이미 들어있던 값) 그대로 둔다.
-    반환값: 저장상품수 칸의 현재(원래) 값 — 이후 12항 건수확인에서
-    이 값을 기대값으로 쓴다(우리가 입력한 값이 아니라 원래 세팅값 기준).
+    ★요건(2026-08-20): "저장상품수" 를 DEFAULT_SAVE_COUNT(50)로 맞춘다.
+    2026-08-08 의 "저장상품수는 원래 세팅값 그대로 둔다" 요건을 대체한다 —
+    망고 모달 기본값이 3 이라 손대지 않으면 행당 3개만 저장되기 때문이다.
+    반환값: 최종적으로 모달에 들어간 저장상품수 — 이후 12항 건수확인의 기대값.
     """
     filter_field = modal_field(page, FILTER_NAME_LABEL)
     count_field = modal_field(page, SAVE_COUNT_LABEL)
@@ -2720,8 +2733,7 @@ def fill_save_modal_fields(
         raise RuntimeError(f"#{rn} 저장상품수 입력칸을 찾지 못함")
 
     # 안전장치: 검색필터명·저장상품수 칸이 실제로 같은 엘리먼트로 잘못
-    # 잡히면 즉시 확정 실패 (저장상품수 칸을 건드리지 않아도, 필터
-    # 입력이 저장상품수 칸까지 바꿔버리는 사고를 막기 위함)
+    # 잡히면 즉시 확정 실패 (필터 입력이 저장상품수 칸까지 덮어쓰는 사고 방지)
     try:
         same_el = page.evaluate(
             "([a, b]) => a === b",
@@ -2736,12 +2748,12 @@ def fill_save_modal_fields(
             "필드 구분 실패"
         )
 
-    # 저장상품수 원래 세팅값 — 건드리기 전에 먼저 읽어 기준으로 삼음
     original_count = _safe_input_value(count_field)
+    want_count = str(int(save_count))
 
     ctx.step(8, "수집 상품 필터·수집상품갯수 입력")
     ctx.info(f"검색필터명: {label}")
-    ctx.info(f"저장상품수(원래 세팅값, 변경 안 함): {original_count!r}")
+    ctx.info(f"저장상품수: {original_count or '(비어있음)'} → {want_count}")
 
     max_rounds = 4
     filter_ok = False
@@ -2753,7 +2765,6 @@ def fill_save_modal_fields(
         if round_i > 1:
             ctx.info(f"검색필터명 재입력 (라운드 {round_i}) — 이전 값 {cur_filter!r}")
         type_into(page, filter_field, label)
-        # 저장상품수는 절대 다시 읽거나 건드리지 않음 (요건)
 
     if not filter_ok:
         ctx.shot(page, "02_count_mismatch", rn)
@@ -2761,15 +2772,34 @@ def fill_save_modal_fields(
             f"#{rn} {max_rounds}회 시도 후에도 검색필터명이 안정되지 않음"
         )
 
-    # 저장상품수는 우리가 건드리지 않았으므로 마지막에 그대로인지만 확인
-    final_count = _safe_input_value(count_field)
-    if final_count != original_count:
-        ctx.info(
-            f"[경고] 저장상품수가 원래 값과 달라짐(우리가 안 건드렸는데도) — "
-            f"원래={original_count!r} / 현재={final_count!r}"
+    count_ok = False
+    for round_i in range(1, max_rounds + 1):
+        cur_count = _safe_input_value(count_field)
+        if re.sub(r"\D", "", cur_count) == want_count:
+            count_ok = True
+            break
+        if round_i > 1:
+            ctx.info(f"저장상품수 재입력 (라운드 {round_i}) — 이전 값 {cur_count!r}")
+        type_into(page, count_field, want_count)
+
+    if not count_ok:
+        ctx.shot(page, "02_count_mismatch", rn)
+        raise RuntimeError(
+            f"#{rn} {max_rounds}회 시도 후에도 저장상품수가 {want_count} 로 "
+            f"들어가지 않음 (현재 {_safe_input_value(count_field)!r})"
         )
 
-    ctx.info("검색필터명 입력 완료(저장상품수는 원래 값 유지) → 저장하기 진행")
+    # 저장상품수를 넣는 과정에서 검색필터명이 흔들리지 않았는지 최종 확인
+    final_filter = _safe_input_value(filter_field)
+    if final_filter.strip() != label.strip():
+        ctx.shot(page, "02_count_mismatch", rn)
+        raise RuntimeError(
+            f"#{rn} 저장상품수 입력 후 검색필터명이 바뀜 — "
+            f"기대={label!r} / 현재={final_filter!r}"
+        )
+
+    final_count = _safe_input_value(count_field)
+    ctx.info(f"검색필터명·저장상품수 입력 완료 (저장수 {final_count}) → 저장하기 진행")
     ctx.shot(page, "02_modal_filled", rn)
 
     digits = re.sub(r"\D", "", final_count or "")
@@ -3933,7 +3963,7 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
             try:
                 ctx.info(
                     f"> 시도 {attempt}/{ctx.retries} (엑셀 {row['row']}행) | "
-                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+                    f"최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
                 )
                 page = refresh_if_closed(page)
                 _process_row_once(page, row, ctx)
@@ -3950,7 +3980,7 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                     )
                 ctx.info(
                     f"[OK] 엑셀{row['row']}행 성공 (저장하기 서버갱신 OK, 시도 {attempt}) | "
-                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
+                    f"최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url}"
                 )
                 success = True
                 return True
@@ -3971,7 +4001,7 @@ def process_row_with_retries(page: Page, row: dict, ctx: RunCtx) -> bool:
                 err_name = type(e).__name__
                 ctx.info(
                     f"[FAIL] 엑셀{row['row']}행 실패 (시도 {attempt}/{ctx.retries}) | "
-                    f"상위 최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url} | "
+                    f"최종 카테고리명={label} | 최종 카테고리 URL주소={raw_url} | "
                     f"{err_name}: {e}"
                 )
                 try:
@@ -4169,11 +4199,11 @@ def main() -> None:
 
     # 모든 입력 데이터 카테고리명·URL을 실행 로그에 기록
     ctx.info(f"[입력목록] 파일={excel_path}")
-    ctx.info(f"[입력목록] 총 {len(all_rows)}건 (상위 최종 카테고리명 / 최종 카테고리 URL주소)")
+    ctx.info(f"[입력목록] 총 {len(all_rows)}건 (최종 카테고리명 / 최종 카테고리 URL주소)")
     for i, r in enumerate(all_rows, start=1):
         ctx.info(
             f"  입력#{i} 엑셀{r['row']}행 | "
-            f"상위 최종 카테고리명={r['label']} | "
+            f"최종 카테고리명={r['label']} | "
             f"최종 카테고리 URL주소={r['url']}"
         )
 

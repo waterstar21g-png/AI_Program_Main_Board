@@ -238,11 +238,9 @@ def test_run_save_submit_and_verify_full_flow_is_fast_and_shoots_10_11_12(browse
     page.close()
 
 
-def test_fill_save_modal_only_touches_filter_field(browser):
-    """요건: 검색필터명에만 엑셀 데이터 입력, 저장상품수는 절대 안 건드림.
-
-    회귀: modal_field()가 넓은 #settings div까지 매치해 저장상품수 칸에
-    검색필터명 값이 덮어써지던 버그 재현("저장상품수 불일치 — 실제 'xxx'").
+def test_fill_save_modal_fields_are_distinct(browser):
+    """회귀: modal_field()가 넓은 #settings div까지 매치해 저장상품수 칸에
+    검색필터명 값이 덮어써지던 버그("저장상품수 불일치 — 실제 'xxx'") 방지.
     """
     page = _open(browser, "popup")
     page.click("#allSave")
@@ -257,43 +255,47 @@ def test_fill_save_modal_only_touches_filter_field(browser):
         [filter_loc.element_handle(), count_loc.element_handle()],
     )
     assert not same, "검색필터명·저장상품수 입력칸이 같은 엘리먼트로 잡힘"
-
-    # "원래 세팅값" 시뮬레이션 — 우리가 넣을 save_count(3)와 다른 값
-    page.fill("#count", "5")
-
-    ctx = FakeCtx()
-    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
-    assert page.locator("#filter").input_value() == "MEN 라이프스타일"
-    # 저장상품수는 절대 안 건드림 — 원래 세팅값(5) 그대로
-    assert page.locator("#count").input_value() == "5"
-    assert effective == 5
     page.close()
 
 
-def test_fill_save_modal_no_redundant_retype_when_filter_already_correct(browser):
-    """검색필터명이 이미 맞으면 재입력(덮어쓰기) 로그가 없어야 한다."""
+def test_fill_save_modal_overwrites_mango_default_count(browser):
+    """★요건(2026-08-20): 망고 기본값 3 을 그대로 두지 않고 저장상품수로 덮어쓴다."""
+    page = _open(browser, "popup")
+    page.click("#allSave")
+    page.fill("#count", "3")  # 망고 모달 기본값
+
+    ctx = FakeCtx()
+    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 50)
+    assert page.locator("#filter").input_value() == "MEN 라이프스타일"
+    assert page.locator("#count").input_value() == "50"
+    assert effective == 50
+    page.close()
+
+
+def test_fill_save_modal_no_redundant_retype_when_already_correct(browser):
+    """검색필터명·저장상품수가 이미 맞으면 재입력(덮어쓰기) 로그가 없어야 한다."""
     page = _open(browser, "popup")
     page.click("#allSave")
     page.fill("#filter", "MEN 라이프스타일")
-    page.fill("#count", "7")
+    page.fill("#count", "50")
     ctx = FakeCtx()
-    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
+    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 50)
     assert page.locator("#filter").input_value() == "MEN 라이프스타일"
-    assert page.locator("#count").input_value() == "7"
-    assert effective == 7
+    assert page.locator("#count").input_value() == "50"
+    assert effective == 50
     assert not any("재입력" in m for m in ctx.msgs), ctx.msgs
     page.close()
 
 
-def test_fill_save_modal_falls_back_to_save_count_when_field_empty(browser):
-    """저장상품수 칸이 원래 비어있으면(파싱 불가) save_count 인자를 기대값으로 사용."""
+def test_fill_save_modal_fills_empty_count_field(browser):
+    """저장상품수 칸이 비어 있어도 저장수를 채워 넣는다."""
     page = _open(browser, "popup")
     page.click("#allSave")
     assert page.locator("#count").input_value() == ""
     ctx = FakeCtx()
-    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 3)
-    assert page.locator("#count").input_value() == ""
-    assert effective == 3
+    effective = C.fill_save_modal_fields(page, ctx, 1, "MEN 라이프스타일", 50)
+    assert page.locator("#count").input_value() == "50"
+    assert effective == 50
     page.close()
 
 
@@ -906,9 +908,10 @@ if __name__ == "__main__":
             ("popup_blocking_flag", lambda _b: test_chrome_launch_disables_popup_blocking()),
             ("no_popup_block_hint", test_no_popup_no_layer_raises_with_popup_block_hint),
             ("batch_blocks_init", lambda _b: test_batch_step_blocks_init_when_save_awaiting_popup()),
-            ("fill_modal_only_filter", test_fill_save_modal_only_touches_filter_field),
-            ("fill_modal_no_redundant_retype", test_fill_save_modal_no_redundant_retype_when_filter_already_correct),
-            ("fill_modal_fallback_save_count", test_fill_save_modal_falls_back_to_save_count_when_field_empty),
+            ("fill_modal_fields_distinct", test_fill_save_modal_fields_are_distinct),
+            ("fill_modal_overwrites_default_count", test_fill_save_modal_overwrites_mango_default_count),
+            ("fill_modal_no_redundant_retype", test_fill_save_modal_no_redundant_retype_when_already_correct),
+            ("fill_modal_fills_empty_count", test_fill_save_modal_fills_empty_count_field),
             ("complete_signal_exact_phrase", test_find_save_complete_signal_detects_exact_phrase),
             ("complete_signal_immediate", test_wait_for_save_complete_signal_is_immediate_not_blind),
             ("full_flow_fast_shots_10_11_12", test_run_save_submit_and_verify_full_flow_is_fast_and_shoots_10_11_12),
