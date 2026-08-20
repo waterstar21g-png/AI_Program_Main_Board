@@ -1,0 +1,9 @@
+**/__pycache__/
+**/*.pyc
+.env
+.env.local
+.env*.local
+*.xlsx
+!docs/**/*.xlsx
+programs/**/run-logs/
+programs/**/.chrome-profile/
