@@ -14,3 +14,11 @@
 
 보드 UI: `board/app.py`  
 이전 Next.js 보드: `legacy-next/` (보관용)
+
+---
+
+## 신규 보드 (별도 작업)
+
+| 이름 | 폴더 | 설명 |
+|------|------|------|
+| **Mango_Recreate_Board** | `Mango_Recreate_Board/` | 메인 UI 셸만 복사 · 신규 프로그램 추가용 (목표 독립 GitHub 저장소) |
