@@ -12,13 +12,9 @@
 ## PC에서 빠르게 시작
 
 ```powershell
-# 1) 받기 (독립 repo 또는 부모 repo — PC_SETUP.md 참고)
-# 2) 최초 설정
-.\scripts\setup-pc.ps1
-# 3) 실행
-.\run.bat
-# 또는
-.\망고보드_실행.bat
+# 폴더 D:\My_Project\Mango_Helper_AI_Board 준비 후
+.\망고보드_한번에설치.bat    ← ★ 이것만 실행 (clone·pip·바로가기·확인)
+.\run.bat                   ← 망고보드 실행
 ```
 
 **모든 프로그램 목록:** `py -3 scripts\launch.py list`  

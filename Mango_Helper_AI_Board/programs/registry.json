@@ -10,6 +10,15 @@
   "board_entry": "run.bat",
   "programs": [
     {
+      "id": "install_all",
+      "name": "PC 원클릭 전체 설치",
+      "folder": ".",
+      "script": "scripts/install-all.ps1",
+      "launcher": "망고보드_한번에설치.bat",
+      "board_tab": null,
+      "description": "clone·pip·바로가기·확인 한 번에"
+    },
+    {
       "id": "board",
       "name": "망고보드 메인 UI",
       "folder": ".",
