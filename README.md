@@ -1,5 +1,9 @@
 # AI_Program_Main_Board **v2.1.54** (Python B안)
 
+> **신규 보드:** 앞으로 당분간 신규 요구 작업은 [`Mango_Recreate_Board/`](./Mango_Recreate_Board/) 에서 개발합니다  
+> (메인 UI만 복사한 셸 · GitHub 저장소 `waterstar21g-png/Mango_Recreate_Board` 신규).  
+> 본 저장소(P1/P2/P3 등)는 그대로 유지합니다.
+
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
 | 프로그램 | 역할 |

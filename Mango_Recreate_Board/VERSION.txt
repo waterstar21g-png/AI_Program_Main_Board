@@ -1,0 +1,3 @@
+버전 1.0.0 (Mango_Recreate_Board UI 셸)
+업데이트: AI_Program_Main_Board 메인 UI만 복사한 신규 보드 초기 버전.
+프로그램(P1/P2 등)은 포함하지 않음 — 추후 이 보드에 신규 프로그램 추가 예정.
