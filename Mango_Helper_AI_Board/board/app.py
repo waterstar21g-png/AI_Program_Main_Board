@@ -1,5 +1,5 @@
 """
-Mango_Recreate_Board — Python 메인 보드 (UI 셸)
+Mango_Helper_AI_Board — Python 메인 보드 (UI 셸)
 AI_Program_Main_Board 메인 UI만 복사. 프로그램은 programs/ 에 추가.
 """
 
@@ -37,7 +37,7 @@ def _read_version() -> str:
 
 
 VERSION = _read_version()
-APP_TITLE = "Mango_Recreate_Board"
+APP_TITLE = "Mango_Helper_AI_Board"
 
 # 향후 programs/ 에 모듈 추가 시 여기에 등록
 PROGRAMS: list[dict[str, str]] = [
@@ -72,7 +72,7 @@ class BoardApp(tk.Tk):
         ).pack()
         tk.Label(
             head,
-            text="망고 재구축 보드 — 신규 프로그램 추가 예정",
+            text="Mango Helper AI 보드 — 신규 프로그램 추가 예정",
             fg="#cbd5e1",
             bg="#164a59",
             font=("Malgun Gothic", 9),
@@ -166,7 +166,7 @@ class BoardApp(tk.Tk):
     def _build_welcome(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="Mango_Recreate_Board",
+            text="Mango_Helper_AI_Board",
             font=("Malgun Gothic", 16, "bold"),
             bg="#f1f5f9",
             fg="#0f172a",
@@ -224,7 +224,7 @@ class BoardApp(tk.Tk):
         try:
             pr_url = latest_open_pr_url()
         except Exception:
-            pr_url = "https://github.com/waterstar21g-png/Mango_Recreate_Board/pulls"
+            pr_url = "https://github.com/waterstar21g-png/Mango_Helper_AI_Board/pulls"
 
         cur = local_version(ROOT) or VERSION
         msg = (

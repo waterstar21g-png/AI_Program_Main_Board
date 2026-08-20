@@ -1,4 +1,4 @@
-# Mango_Recreate_Board **v1.0.0** (Python 보드)
+# Mango_Helper_AI_Board **v1.0.1** (Python 보드)
 
 **AI_Program_Main_Board** 의 **메인 UI 셸만** 복사한 신규 보드입니다.  
 신규 프로그램은 `programs/` 폴더에 추가하고 `board/app.py` 의 `PROGRAMS` 목록에 등록합니다.
@@ -6,20 +6,20 @@
 로컬 경로(권장):
 
 ```
-D:\My_Project\Mango_Recreate_Board
+D:\My_Project\Mango_Helper_AI_Board
 ```
 
 ## 로컬에 받기 (최초 1회)
 
 ```powershell
 Set-Location D:\My_Project
-if (Test-Path .\Mango_Recreate_Board\.git) {
-  Set-Location .\Mango_Recreate_Board
+if (Test-Path .\Mango_Helper_AI_Board\.git) {
+  Set-Location .\Mango_Helper_AI_Board
   git pull origin main
 } else {
-  if (Test-Path .\Mango_Recreate_Board) { Remove-Item -Recurse -Force .\Mango_Recreate_Board }
-  git clone https://github.com/waterstar21g-png/Mango_Recreate_Board.git Mango_Recreate_Board
-  Set-Location .\Mango_Recreate_Board
+  if (Test-Path .\Mango_Helper_AI_Board) { Remove-Item -Recurse -Force .\Mango_Helper_AI_Board }
+  git clone https://github.com/waterstar21g-png/Mango_Helper_AI_Board.git Mango_Helper_AI_Board
+  Set-Location .\Mango_Helper_AI_Board
 }
 ```
 
@@ -60,5 +60,5 @@ PROGRAMS = [
 
 ## GitHub
 
-- 저장소: https://github.com/waterstar21g-png/Mango_Recreate_Board
+- 저장소: https://github.com/waterstar21g-png/Mango_Helper_AI_Board
 - 기반: AI_Program_Main_Board 메인 UI (Python Tkinter)

@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 echo ========================================
-echo   Mango_Recreate_Board  (Python)
+echo   Mango_Helper_AI_Board  (Python)
 echo ========================================
 
 where py >nul 2>nul

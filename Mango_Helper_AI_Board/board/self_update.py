@@ -1,4 +1,4 @@
-"""Mango_Recreate_Board — '머지반영 업데이트' GitHub main 반영 + 재시작."""
+"""Mango_Helper_AI_Board — '머지반영 업데이트' GitHub main 반영 + 재시작."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 import time
 from pathlib import Path
 
-REPO = "waterstar21g-png/Mango_Recreate_Board"
+REPO = "waterstar21g-png/Mango_Helper_AI_Board"
 DEFAULT_BRANCH = "main"
 
 

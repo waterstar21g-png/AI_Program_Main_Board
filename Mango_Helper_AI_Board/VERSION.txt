@@ -1,0 +1,2 @@
+버전 1.0.1 (Python 보드)
+업데이트: 프로젝트명 Mango_Helper_AI_Board 로 변경 (구 Mango_Recreate_Board).
