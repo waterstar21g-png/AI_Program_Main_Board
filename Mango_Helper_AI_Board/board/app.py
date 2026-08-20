@@ -33,6 +33,7 @@ def _load_py_module(mod_name: str, folder: str, filename: str) -> ModuleType:
 
 
 p3_update = _load_py_module("p3_update_filters", "P3_필터_갱신", "update_filters.py")
+p1_policy = _load_py_module("p1_apply_policy", "P1_정책적용", "apply_policy.py")
 
 from library import (  # noqa: E402
     add_paths,
@@ -93,6 +94,7 @@ class BoardApp(tk.Tk):
         self.minsize(1024, 760)
         self.configure(bg="#1a4d5c")
 
+        self._p1_proc: subprocess.Popen | None = None
         self._p2_proc: subprocess.Popen | None = None
         self._p3_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
@@ -114,7 +116,7 @@ class BoardApp(tk.Tk):
         ).pack()
         tk.Label(
             head,
-            text=f"{APP_SHORT_EN} · P2 대량수집 · P3_필터_갱신",
+            text=f"{APP_SHORT_EN} · P1 정책적용 · P2 대량수집 · P3_필터_갱신",
             fg="#cbd5e1",
             bg="#164a59",
             font=("Malgun Gothic", 9),
@@ -135,6 +137,16 @@ class BoardApp(tk.Tk):
             font=("Malgun Gothic", 9, "bold"),
             pady=8,
         ).pack(fill="x")
+
+        self.btn_p1 = tk.Button(
+            side,
+            text="P1_정책적용\n정책명 일괄적용",
+            command=lambda: self._show("p1"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p1.pack(fill="x", padx=6, pady=6)
 
         self.btn_p2 = tk.Button(
             side,
@@ -193,17 +205,24 @@ class BoardApp(tk.Tk):
         self.main = tk.Frame(body, bg="#f1f5f9")
         self.main.pack(side="left", fill="both", expand=True)
 
+        self.frame_p1 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p2 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self._build_p1(self.frame_p1)
         self._build_p2(self.frame_p2)
         self._build_p3(self.frame_p3)
 
     def _show(self, which: str) -> None:
+        self.frame_p1.pack_forget()
         self.frame_p2.pack_forget()
         self.frame_p3.pack_forget()
+        self.btn_p1.configure(bg="#ececec")
         self.btn_p2.configure(bg="#ececec")
         self.btn_p3.configure(bg="#ececec")
-        if which == "p3":
+        if which == "p1":
+            self.frame_p1.pack(fill="both", expand=True)
+            self.btn_p1.configure(bg="#dbeafe")
+        elif which == "p3":
             self.frame_p3.pack(fill="both", expand=True)
             self.btn_p3.configure(bg="#dbeafe")
         else:
@@ -250,11 +269,14 @@ class BoardApp(tk.Tk):
             fg="#0f172a",
         )
 
-        # 실행 중 수집 중단
+        # 실행 중 작업 중단
         try:
-        # P2/P3만 중단
-        # P2/P3만 중단
-        # P2/P3만 중단
+            if self._p1_proc and self._p1_proc.poll() is None:
+                self._p1_stop_flag().write_text("stop\n", encoding="utf-8")
+                self._p1_proc.terminate()
+        except Exception:
+            pass
+        try:
             if self._p2_proc and self._p2_proc.poll() is None:
                 self._stop_flag_path().write_text("stop\n", encoding="utf-8")
                 self._p2_proc.terminate()
@@ -276,7 +298,7 @@ class BoardApp(tk.Tk):
                 "업데이트 실패",
                 "외부 버전갱신 실행에 실패했습니다.\n\n"
                 f"{detail}\n\n"
-                "바탕화면 버전갱신 아이콘 아이콘을 사용하세요.\n"
+                "바탕화면 버전갱신 아이콘을 사용하세요.\n"
                 f"머지 URL:\n{pr_url}",
                 parent=self,
             )
@@ -288,7 +310,7 @@ class BoardApp(tk.Tk):
             "이어서 자동으로:\n"
             "1) GitHub main 강제 반영\n"
             "2) 망고보드 재시작\n\n"
-            f"(실패 시 바탕화면 버전갱신 아이콘 아이콘)\n"
+            f"(실패 시 바탕화면 버전갱신 아이콘)\n"
             f"머지 URL:\n{pr_url}",
             parent=self,
         )
@@ -298,6 +320,192 @@ class BoardApp(tk.Tk):
             pass
         sys.exit(0)
 
+    # ── P1_정책적용 ─────────────────────────────────────
+    def _build_p1(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P1_정책적용 — 정책명 입력 → 망고 정책적용 목록(체크된 행만) 순차 갱신",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        form = tk.LabelFrame(parent, text="입력", bg="#ffffff", padx=8, pady=6)
+        form.pack(fill="x")
+
+        r1 = tk.Frame(form, bg="#ffffff")
+        r1.pack(fill="x", pady=4)
+        tk.Label(r1, text="정책명", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p1_policy = tk.StringVar()
+        tk.Entry(r1, textvariable=self.var_p1_policy, width=40).pack(
+            side="left", fill="x", expand=True
+        )
+
+        r2 = tk.Frame(form, bg="#ffffff")
+        r2.pack(fill="x", pady=4)
+        tk.Label(r2, text="망고 URL", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p1_mango_url = tk.StringVar(value=p1_policy.DEFAULT_MANGO_URL)
+        tk.Entry(r2, textvariable=self.var_p1_mango_url).pack(
+            side="left", fill="x", expand=True
+        )
+        tk.Label(
+            form,
+            text="(비우면 Chrome에 열린 정책적용 목록 화면 사용)",
+            bg="#ffffff",
+            fg="#64748b",
+            font=("Malgun Gothic", 8),
+            anchor="w",
+        ).pack(fill="x")
+
+        actions = tk.Frame(parent, bg="#f1f5f9")
+        actions.pack(fill="x", pady=8)
+        tk.Button(
+            actions,
+            text="작업시작",
+            command=self._run_p1,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="작업중단",
+            command=self._stop_p1,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left", padx=6)
+
+        log_frame = tk.LabelFrame(parent, text="실행 로그", bg="#ffffff", padx=6, pady=4)
+        log_frame.pack(fill="both", expand=True)
+        self.p1_log = tk.Text(
+            log_frame,
+            height=18,
+            font=("Consolas", 9),
+            wrap="word",
+            bg="#0f172a",
+            fg="#e2e8f0",
+        )
+        p1_sb = tk.Scrollbar(log_frame, command=self.p1_log.yview)
+        self.p1_log.configure(yscrollcommand=p1_sb.set)
+        self.p1_log.pack(side="left", fill="both", expand=True)
+        p1_sb.pack(side="right", fill="y")
+
+        self.p1_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
+        self.p1_status.pack(fill="x", pady=4)
+
+    def _p1_stop_flag(self) -> Path:
+        return ROOT / "P1_정책적용" / ".policy_stop"
+
+    def _append_p1_log(self, line: str) -> None:
+        text = (line or "").strip()
+        if text.startswith("##MAIN##"):
+            text = text[8:]
+        self.p1_log.insert("end", text + "\n")
+        self.p1_log.see("end")
+
+    def _run_p1(self) -> None:
+        policy = self.var_p1_policy.get().strip()
+        if not policy:
+            messagebox.showinfo("안내", "정책명을 입력하세요.")
+            return
+        if self._p1_proc and self._p1_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
+            return
+
+        apply_py = ROOT / "P1_정책적용" / "apply_policy.py"
+        if not apply_py.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{apply_py}")
+            return
+
+        try:
+            self._p1_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+        mango = self.var_p1_mango_url.get().strip()
+        args = [sys.executable, str(apply_py), "--policy-name", policy]
+        if mango:
+            args.extend(["--mango-url", mango])
+
+        self.p1_log.delete("1.0", "end")
+        self.p1_status.configure(text=f"작업 시작 — 정책명: {policy}", fg="#15803d")
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        try:
+            self._p1_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P1_정책적용"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p1_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(target=self._watch_p1_proc, args=(self._p1_proc,), daemon=True).start()
+
+    def _stop_p1(self) -> None:
+        proc = self._p1_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 작업이 없습니다.")
+            return
+        try:
+            self._p1_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p1_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
+            return
+        self.p1_status.configure(text="작업중단 요청 중…", fg="#b45309")
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    def _watch_p1_proc(self, proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stdout is not None
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self.after(0, lambda t=text: self._append_p1_log(t))
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self.after(0, lambda t=text: self._append_p1_log(t))
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p1_status.configure(text=f"로그 수신 오류: {e}", fg="#b91c1c"),
+            )
+        code = proc.wait()
+        if code == 0:
+            self.after(0, lambda: self.p1_status.configure(text="작업 완료", fg="#15803d"))
+        else:
+            self.after(
+                0,
+                lambda: self.p1_status.configure(text=f"종료 (exit={code})", fg="#b91c1c"),
+            )
 
     def _build_p2(self, parent: tk.Frame) -> None:
         tk.Label(
