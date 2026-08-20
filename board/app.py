@@ -2258,7 +2258,12 @@ class BoardApp(tk.Tk):
             return
         headers = [str(h or "").strip() for h in rows[0]]
         try:
-            label_i = headers.index("상위 최종 카테고리명")
+            # ★요건(2026-08-20): 검색필터명 = "최종 카테고리명" (옛 엑셀은 상위로 폴백)
+            label_i = (
+                headers.index("최종 카테고리명")
+                if "최종 카테고리명" in headers
+                else headers.index("상위 최종 카테고리명")
+            )
             url_i = headers.index("최종 카테고리 URL주소")
         except ValueError:
             # P3: 검색필터 URL 헤더도 허용
@@ -3133,7 +3138,7 @@ class BoardApp(tk.Tk):
             sys.executable,
             str(collect_py),
             path,
-            "3",
+            "50",  # ★요건(2026-08-20): 행당 저장상품수 3 → 50
             "--retries",
             "1",  # ★요건: 엑셀 각 행은 1번 시도로 끝냄(재시도 없음)
             "--yes",
