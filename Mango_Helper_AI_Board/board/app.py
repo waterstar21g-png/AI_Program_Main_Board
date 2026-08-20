@@ -35,6 +35,7 @@ def _load_py_module(mod_name: str, folder: str, filename: str) -> ModuleType:
 p3_update = _load_py_module("p3_update_filters", "P3_필터_갱신", "update_filters.py")
 p1_policy = _load_py_module("p1_apply_policy", "P1_필터단위_마진정책적용", "apply_policy.py")
 p2_count = _load_py_module("p2_update_product_count", "P2_필터단위_상품수변경", "update_product_count.py")
+p3_fitcl = _load_py_module("p3_fitcl_detail", "P3_핏클상세페이지", "fitcl_detail.py")
 
 from library import (  # noqa: E402
     add_paths,
@@ -99,6 +100,7 @@ class BoardApp(tk.Tk):
         self._p2_count_proc: subprocess.Popen | None = None
         self._p2_proc: subprocess.Popen | None = None
         self._p3_proc: subprocess.Popen | None = None
+        self._p3_fitcl_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
         self._merge_update_busy = False
         self._build()
@@ -118,7 +120,7 @@ class BoardApp(tk.Tk):
         ).pack()
         tk.Label(
             head,
-            text=f"{APP_SHORT_EN} · P1 마진정책 · P2 상품수 · P2 수집 · P3 필터",
+            text=f"{APP_SHORT_EN} · P1 마진 · P2 상품수 · P2 수집 · P3 필터 · P3 핏클",
             fg="#cbd5e1",
             bg="#164a59",
             font=("Malgun Gothic", 9),
@@ -180,6 +182,16 @@ class BoardApp(tk.Tk):
         )
         self.btn_p3.pack(fill="x", padx=6, pady=6)
 
+        self.btn_p3_fitcl = tk.Button(
+            side,
+            text="P3_핏클\n상세페이지",
+            command=lambda: self._show("p3_fitcl"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p3_fitcl.pack(fill="x", padx=6, pady=6)
+
         side_bottom = tk.Frame(side, bg="#d9d9d9")
         side_bottom.pack(side="bottom", fill="x", padx=6, pady=(4, 10))
         tk.Label(
@@ -221,20 +233,24 @@ class BoardApp(tk.Tk):
         self.frame_p2_count = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p2 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self.frame_p3_fitcl = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self._build_p1(self.frame_p1)
         self._build_p2_count(self.frame_p2_count)
         self._build_p2(self.frame_p2)
         self._build_p3(self.frame_p3)
+        self._build_p3_fitcl(self.frame_p3_fitcl)
 
     def _show(self, which: str) -> None:
         self.frame_p1.pack_forget()
         self.frame_p2_count.pack_forget()
         self.frame_p2.pack_forget()
         self.frame_p3.pack_forget()
+        self.frame_p3_fitcl.pack_forget()
         self.btn_p1.configure(bg="#ececec")
         self.btn_p2_count.configure(bg="#ececec")
         self.btn_p2.configure(bg="#ececec")
         self.btn_p3.configure(bg="#ececec")
+        self.btn_p3_fitcl.configure(bg="#ececec")
         if which == "p1":
             self.frame_p1.pack(fill="both", expand=True)
             self.btn_p1.configure(bg="#dbeafe")
@@ -244,6 +260,9 @@ class BoardApp(tk.Tk):
         elif which == "p3":
             self.frame_p3.pack(fill="both", expand=True)
             self.btn_p3.configure(bg="#dbeafe")
+        elif which == "p3_fitcl":
+            self.frame_p3_fitcl.pack(fill="both", expand=True)
+            self.btn_p3_fitcl.configure(bg="#dbeafe")
         else:
             self.frame_p2.pack(fill="both", expand=True)
             self.btn_p2.configure(bg="#dbeafe")
@@ -311,6 +330,12 @@ class BoardApp(tk.Tk):
             if self._p3_proc and self._p3_proc.poll() is None:
                 self._p3_stop_flag().write_text("stop\n", encoding="utf-8")
                 self._p3_proc.terminate()
+        except Exception:
+            pass
+        try:
+            if self._p3_fitcl_proc and self._p3_fitcl_proc.poll() is None:
+                self._p3_fitcl_stop_flag().write_text("stop\n", encoding="utf-8")
+                self._p3_fitcl_proc.terminate()
         except Exception:
             pass
 
@@ -985,6 +1010,292 @@ class BoardApp(tk.Tk):
 
         self.p2_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
         self.p2_status.pack(fill="x", pady=4)
+
+    # ── P3_핏클상세페이지 (FitCL 연동) ─────────────────────────────
+    def _build_p3_fitcl(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P3_핏클상세페이지 — FitCL 연동 · 모델컷 10장 + 디테일컷 5장 추출",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        form = tk.LabelFrame(parent, text="입력", bg="#ffffff", padx=8, pady=6)
+        form.pack(fill="x")
+
+        r1 = tk.Frame(form, bg="#ffffff")
+        r1.pack(fill="x", pady=4)
+        tk.Label(r1, text="1.소싱상품", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p3_fitcl_product = tk.StringVar()
+        tk.Entry(r1, textvariable=self.var_p3_fitcl_product).pack(
+            side="left", fill="x", expand=True
+        )
+        tk.Button(r1, text="…", width=3, command=self._pick_p3_fitcl_product).pack(
+            side="left", padx=4
+        )
+
+        r2 = tk.Frame(form, bg="#ffffff")
+        r2.pack(fill="x", pady=4)
+        tk.Label(r2, text="2.사진모델", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p3_fitcl_model = tk.StringVar()
+        model_cb = ttk.Combobox(
+            r2,
+            textvariable=self.var_p3_fitcl_model,
+            values=p3_fitcl.DEFAULT_MODELS,
+            width=48,
+        )
+        model_cb.pack(side="left", fill="x", expand=True)
+        if p3_fitcl.DEFAULT_MODELS:
+            model_cb.current(0)
+
+        r3 = tk.Frame(form, bg="#ffffff")
+        r3.pack(fill="x", pady=4)
+        tk.Label(r3, text="FitCL URL", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p3_fitcl_url = tk.StringVar(value=p3_fitcl.DEFAULT_FITCL_URL)
+        tk.Entry(r3, textvariable=self.var_p3_fitcl_url).pack(
+            side="left", fill="x", expand=True
+        )
+
+        pose_frame = tk.LabelFrame(
+            form,
+            text=f"3.모델포즈 — 정확히 {p3_fitcl.REQUIRED_POSE_COUNT}개 선택 (Ctrl+클릭)",
+            bg="#ffffff",
+            padx=6,
+            pady=4,
+        )
+        pose_frame.pack(fill="both", expand=True, pady=(6, 0))
+        pose_wrap = tk.Frame(pose_frame, bg="#ffffff")
+        pose_wrap.pack(fill="both", expand=True)
+        self.p3_fitcl_pose_list = tk.Listbox(
+            pose_wrap,
+            height=8,
+            selectmode=tk.EXTENDED,
+            exportselection=False,
+            font=("Malgun Gothic", 9),
+        )
+        pose_sb = tk.Scrollbar(pose_wrap, command=self.p3_fitcl_pose_list.yview)
+        self.p3_fitcl_pose_list.configure(yscrollcommand=pose_sb.set)
+        self.p3_fitcl_pose_list.pack(side="left", fill="both", expand=True)
+        pose_sb.pack(side="right", fill="y")
+        for pose in p3_fitcl.DEFAULT_POSES:
+            self.p3_fitcl_pose_list.insert("end", pose)
+        # 기본 10개 선택
+        for i in range(min(p3_fitcl.REQUIRED_POSE_COUNT, self.p3_fitcl_pose_list.size())):
+            self.p3_fitcl_pose_list.selection_set(i)
+
+        self.p3_fitcl_pose_status = tk.Label(
+            pose_frame,
+            text=f"선택: {p3_fitcl.REQUIRED_POSE_COUNT}개",
+            bg="#ffffff",
+            fg="#64748b",
+            anchor="w",
+            font=("Malgun Gothic", 8),
+        )
+        self.p3_fitcl_pose_status.pack(fill="x", pady=(2, 0))
+        self.p3_fitcl_pose_list.bind("<<ListboxSelect>>", self._on_p3_fitcl_pose_select)
+
+        actions = tk.Frame(parent, bg="#f1f5f9")
+        actions.pack(fill="x", pady=8)
+        tk.Button(
+            actions,
+            text="작업시작",
+            command=self._run_p3_fitcl,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="작업중단",
+            command=self._stop_p3_fitcl,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left", padx=6)
+
+        log_frame = tk.LabelFrame(parent, text="실행 로그", bg="#ffffff", padx=6, pady=4)
+        log_frame.pack(fill="both", expand=True)
+        self.p3_fitcl_log = tk.Text(
+            log_frame,
+            height=12,
+            font=("Consolas", 9),
+            wrap="word",
+            bg="#0f172a",
+            fg="#e2e8f0",
+        )
+        log_sb = tk.Scrollbar(log_frame, command=self.p3_fitcl_log.yview)
+        self.p3_fitcl_log.configure(yscrollcommand=log_sb.set)
+        self.p3_fitcl_log.pack(side="left", fill="both", expand=True)
+        log_sb.pack(side="right", fill="y")
+
+        self.p3_fitcl_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
+        self.p3_fitcl_status.pack(fill="x", pady=4)
+
+    def _pick_p3_fitcl_product(self) -> None:
+        path = filedialog.askopenfilename(
+            title="소싱상품 이미지 선택",
+            filetypes=[
+                ("이미지", "*.jpg *.jpeg *.png *.webp *.bmp"),
+                ("모든 파일", "*.*"),
+            ],
+        )
+        if path:
+            self.var_p3_fitcl_product.set(path)
+
+    def _on_p3_fitcl_pose_select(self, _evt=None) -> None:
+        n = len(self.p3_fitcl_pose_list.curselection())
+        need = p3_fitcl.REQUIRED_POSE_COUNT
+        color = "#15803d" if n == need else "#b45309"
+        self.p3_fitcl_pose_status.configure(
+            text=f"선택: {n}개 / 필요: {need}개", fg=color
+        )
+
+    def _p3_fitcl_stop_flag(self) -> Path:
+        return ROOT / "P3_핏클상세페이지" / ".fitcl_stop"
+
+    def _append_p3_fitcl_log(self, line: str) -> None:
+        text = (line or "").strip()
+        if text.startswith("##MAIN##"):
+            text = text[8:]
+        self.p3_fitcl_log.insert("end", text + "\n")
+        self.p3_fitcl_log.see("end")
+
+    def _run_p3_fitcl(self) -> None:
+        product = self.var_p3_fitcl_product.get().strip()
+        if not product or not os.path.isfile(product):
+            messagebox.showinfo("안내", "소싱상품 이미지를 선택하세요.")
+            return
+        model = self.var_p3_fitcl_model.get().strip()
+        if not model:
+            messagebox.showinfo("안내", "사진모델을 선택하세요.")
+            return
+        sel = self.p3_fitcl_pose_list.curselection()
+        poses = [self.p3_fitcl_pose_list.get(i) for i in sel]
+        if len(poses) != p3_fitcl.REQUIRED_POSE_COUNT:
+            messagebox.showinfo(
+                "안내",
+                f"모델포즈는 정확히 {p3_fitcl.REQUIRED_POSE_COUNT}개를 선택하세요 "
+                f"(현재 {len(poses)}개).",
+            )
+            return
+        if self._p3_fitcl_proc and self._p3_fitcl_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
+            return
+
+        script = ROOT / "P3_핏클상세페이지" / "fitcl_detail.py"
+        if not script.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{script}")
+            return
+
+        try:
+            self._p3_fitcl_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+        fitcl_url = self.var_p3_fitcl_url.get().strip()
+        args = [
+            sys.executable,
+            str(script),
+            "--product",
+            product,
+            "--model",
+            model,
+            "--poses",
+            ",".join(poses),
+        ]
+        if fitcl_url:
+            args.extend(["--fitcl-url", fitcl_url])
+
+        self.p3_fitcl_log.delete("1.0", "end")
+        self.p3_fitcl_status.configure(
+            text=f"작업 시작 — 모델컷 {p3_fitcl.REQUIRED_POSE_COUNT}장 + 디테일컷 5장",
+            fg="#15803d",
+        )
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        try:
+            self._p3_fitcl_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P3_핏클상세페이지"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p3_fitcl_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p3_fitcl_proc, args=(self._p3_fitcl_proc,), daemon=True
+        ).start()
+
+    def _stop_p3_fitcl(self) -> None:
+        proc = self._p3_fitcl_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 작업이 없습니다.")
+            return
+        try:
+            self._p3_fitcl_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p3_fitcl_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
+            return
+        self.p3_fitcl_status.configure(text="작업중단 요청 중…", fg="#b45309")
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    def _watch_p3_fitcl_proc(self, proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stdout is not None
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self.after(0, lambda t=text: self._append_p3_fitcl_log(t))
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self.after(0, lambda t=text: self._append_p3_fitcl_log(t))
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p3_fitcl_status.configure(
+                    text=f"로그 수신 오류: {e}", fg="#b91c1c"
+                ),
+            )
+        code = proc.wait()
+        if code == 0:
+            self.after(
+                0, lambda: self.p3_fitcl_status.configure(text="작업 완료", fg="#15803d")
+            )
+        else:
+            self.after(
+                0,
+                lambda: self.p3_fitcl_status.configure(
+                    text=f"종료 (exit={code})", fg="#b91c1c"
+                ),
+            )
 
     # ── P3_필터_갱신 (UI 구조 = P2와 유사 + 더망고 URL 입력) ──
     def _build_p3(self, parent: tk.Frame) -> None:
