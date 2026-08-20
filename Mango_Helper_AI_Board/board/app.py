@@ -25,8 +25,8 @@ from terms import (  # noqa: E402
     APP_NAME,
     APP_SHORT_EN,
     APP_SHORT_KO,
-    OTHER_BOARD_KO,
     OTHER_BOARD_NAME,
+    OTHER_BOARD_SHORT,
 )
 
 
@@ -183,8 +183,8 @@ class BoardApp(tk.Tk):
             text=(
                 f"공식명: {APP_NAME}\n"
                 f"약칭: {APP_SHORT_KO} · {APP_SHORT_EN}\n"
-                f"({OTHER_BOARD_KO} / {OTHER_BOARD_NAME} 와 구분)\n\n"
-                f"{OTHER_BOARD_NAME} 의 메인 UI 셸만 복사한 신규 보드입니다.\n\n"
+                f"({OTHER_BOARD_SHORT} / {OTHER_BOARD_NAME} 와 구분)\n\n"
+                f"{OTHER_BOARD_SHORT} 의 메인 UI 셸만 복사한 신규 보드입니다.\n\n"
                 "• 좌측: 프로그램 목록 (향후 programs/ 폴더에 추가)\n"
                 "• 하단: 머지반영 업데이트 (GitHub main 강제 반영)\n\n"
                 "신규 프로그램을 추가할 준비가 되었습니다."

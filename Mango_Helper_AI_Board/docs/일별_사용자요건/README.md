@@ -8,7 +8,7 @@ CHANGELOG와 **별도**로, 사용자가 요청한 내용을 **원문 그대로*
 |------|--------|------|
 | **망고보드** | Mango_Helper_AI_Board | 한글 약칭 |
 | **mango board** | Mango_Helper_AI_Board | 영문 약칭 |
-| AI 메인보드 | AI_Program_Main_Board | 구분 대상 |
+| **AI board** | AI_Program_Main_Board | 구분 대상 (기존 보드) |
 
 정의 파일: `board/terms.py`
 

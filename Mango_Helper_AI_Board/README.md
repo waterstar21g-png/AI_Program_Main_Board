@@ -1,4 +1,4 @@
-# 망고보드 (mango board) **v1.0.2**
+# 망고보드 (mango board) **v1.0.3**
 
 공식 프로젝트명: **Mango_Helper_AI_Board**
 
@@ -6,9 +6,9 @@
 |------|------|
 | **망고보드** | 이 보드의 한글 약칭 |
 | **mango board** | 이 보드의 영문 약칭 |
-| **AI 메인보드** | 기존 `AI_Program_Main_Board` (구분 대상) |
+| **AI board** | 기존 `AI_Program_Main_Board` 약칭 (구분 대상) |
 
-**AI 메인보드**의 **메인 UI 셸만** 복사한 신규 보드입니다.  
+**AI board** 의 **메인 UI 셸만** 복사한 신규 보드입니다.  
 신규 프로그램은 `programs/` 폴더에 추가하고 `board/app.py` 의 `PROGRAMS` 목록에 등록합니다.
 
 로컬 경로(권장):
@@ -70,4 +70,4 @@ PROGRAMS = [
 ## GitHub
 
 - 저장소: https://github.com/waterstar21g-png/Mango_Helper_AI_Board
-- 기반: AI_Program_Main_Board 메인 UI (Python Tkinter)
+- 기반: AI board (`AI_Program_Main_Board`) 메인 UI (Python Tkinter)

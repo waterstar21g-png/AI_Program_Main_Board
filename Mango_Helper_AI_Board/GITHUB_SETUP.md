@@ -16,7 +16,7 @@ git remote add origin https://github.com/waterstar21g-png/Mango_Helper_AI_Board.
 git push -u origin main
 ```
 
-## 방법 B — AI_Program_Main_Board 에서 폴더만 복사
+## 방법 B — AI board (`AI_Program_Main_Board`) 에서 폴더만 복사
 
 부모 저장소의 `Mango_Helper_AI_Board/` 폴더를 새 저장소로 옮긴 뒤:
 

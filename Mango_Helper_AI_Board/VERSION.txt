@@ -1,2 +1,2 @@
-버전 1.0.2 (Python 보드)
-업데이트: 용어 통일 — 망고보드 / mango board 약칭 확정.
+버전 1.0.3 (Python 보드)
+업데이트: AI_Program_Main_Board 약칭을 AI board 로 통일.
