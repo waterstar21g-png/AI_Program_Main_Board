@@ -81,6 +81,22 @@ PROFILE_DIR = Path(__file__).parent / ".chrome-profile"
 MANGO_EXT_ID = "lgfjcapohoongednoojdaiedebgbcelp"
 MANGO_EXT_DIR = Path(__file__).parent / "extensions" / "themango-solution"
 MANGO_EXT_POPUP = f"chrome-extension://{MANGO_EXT_ID}/popup.html"
+MANGO_EXT_WEBSTORE = f"https://chromewebstore.google.com/detail/{MANGO_EXT_ID}"
+# 확장이 전용 프로필에 없을 때 사용자에게 그대로 보여주는 안내.
+# 최초 1회 웹스토어 설치만 하면 프로필(P2/.chrome-profile)에 남아 이후 실행부터
+# 자동으로 인식된다.
+MANGO_EXT_MISSING_GUIDE = (
+    "더망고 솔루션 확장프로그램이 P2 전용 Chrome 프로필에 설치되어 있지 않습니다.\n"
+    "  · 방금 열린 Chrome 창(주소창에 --no-sandbox 경고가 있는 창)에서\n"
+    "    웹스토어 페이지를 띄웠습니다. [Chrome에 추가] 를 한 번만 눌러 주세요.\n"
+    f"  · 설치 페이지: {MANGO_EXT_WEBSTORE}\n"
+    "  · 설치 후 그 창을 닫고 P2를 다시 실행하면 됩니다 "
+    "(설치 내용은 전용 프로필에 남아 다음부터는 자동 인식).\n"
+    "  · 평소 쓰는 Chrome 에 이미 설치돼 있어도 소용없습니다 — P2 는 별도 프로필로\n"
+    "    실행되며, Chrome 136 부터 원격 디버깅이 기본 프로필에서 막혀 있기 때문입니다.\n"
+    f"  · 확인 대상: {MANGO_EXT_POPUP}\n"
+    "  · 원인: {cause}"
+)
 # 크롬 기동 시 확장 팝업에 반드시 넣을 값 (사용자 지정)
 MANGO_SERVICE_URL = "https://tmg1898.cafe24.com"
 MANGO_SERVICE_KEY = "y94Tmx9LbxxCJtk5uI9z0RjGWDtVW4"
@@ -806,12 +822,21 @@ def launch_debug_browser() -> None:
         # Chrome 자체 팝업차단을 완전히 끈다.
         "--disable-popup-blocking",
     ]
-    # 더망고 솔루션 확장 로드 (전용 프로필에 설정값이 비어 있는 문제 방지)
+    # 더망고 솔루션 확장 로드 시도.
+    #
+    # ★정품 Chrome 137+ 에서는 --load-extension 이 제거되어 조용히 무시된다
+    #   (크롬 로그: "--load-extension is not allowed in Google Chrome, ignoring.").
+    #   Chromium·Chrome for Testing 에서는 아직 동작하므로 인자는 그대로 넘긴다.
+    #
+    # ★--disable-extensions-except 는 절대 넣지 않는다. "지정 경로 외 전부 비활성화"
+    #   라서, 정품 Chrome 에서 --load-extension 이 무시되는 상황과 겹치면 전용
+    #   프로필에 웹스토어로 설치해 둔 더망고 확장까지 매 실행 꺼버린다 —
+    #   그 결과가 "더망고 확장프로그램이 설치되어 있지 않습니다" 배너다.
     if MANGO_EXT_DIR.is_dir() and (MANGO_EXT_DIR / "manifest.json").is_file():
         ext_path = str(MANGO_EXT_DIR.resolve())
         chrome_args.append(f"--load-extension={ext_path}")
-        chrome_args.append(f"--disable-extensions-except={ext_path}")
-        log(f"더망고 솔루션 확장 로드: {ext_path}")
+        log(f"더망고 솔루션 확장 로드 시도: {ext_path}")
+        log("  (정품 Chrome 137+ 는 이 인자를 무시함 — 프로필에 설치된 확장을 사용)")
     else:
         log(f"[경고] 확장 폴더 없음 — {MANGO_EXT_DIR} (Web Store 설치분만 사용)")
     chrome_args.append(MAIN_URL)
@@ -908,6 +933,22 @@ def connect_browser(p) -> tuple[Browser, Page]:
     return browser, page
 
 
+def open_extension_install_page(context: BrowserContext) -> None:
+    """P2 전용 프로필 창에 더망고 확장 웹스토어 페이지를 띄운다.
+
+    정품 Chrome 137+ 는 --load-extension 을 무시하므로, 이 프로필에 확장을
+    넣는 유일한 방법이 웹스토어 설치다. 실패해도 원래 오류를 가리지 않도록
+    조용히 넘어간다.
+    """
+    try:
+        page = context.new_page()
+        page.goto(MANGO_EXT_WEBSTORE, wait_until="domcontentloaded", timeout=20_000)
+        page.bring_to_front()
+        log(f"  확장 설치 페이지를 열었습니다 — {MANGO_EXT_WEBSTORE}")
+    except Exception as e:  # noqa: BLE001
+        log(f"  [안내] 확장 설치 페이지를 열지 못했습니다: {e}")
+
+
 def ensure_mango_extension_settings(
     context: BrowserContext,
     *,
@@ -943,13 +984,8 @@ def ensure_mango_extension_settings(
                     shot_ctx.shot(page, "ext_settings_fail", 0)
                 except Exception:  # noqa: BLE001
                     pass
-            raise RuntimeError(
-                "더망고 솔루션 확장프로그램 팝업을 열 수 없습니다.\n"
-                f"  · 대상: {MANGO_EXT_POPUP}\n"
-                "  · Chrome을 모두 닫고 P2를 다시 실행하세요 "
-                "(전용 프로필에 확장이 로드됩니다).\n"
-                f"  · 원인: {e}"
-            ) from e
+            open_extension_install_page(context)
+            raise RuntimeError(MANGO_EXT_MISSING_GUIDE.format(cause=e)) from e
 
         page.wait_for_selector("#site_url", timeout=10_000)
         page.wait_for_selector("#site_key", timeout=5_000)
