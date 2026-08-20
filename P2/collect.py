@@ -776,15 +776,6 @@ def _clear_stale_singleton_locks() -> None:
 POPUP_BLOCK_FIX_VERSION = "1"
 _POPUP_FIX_MARKER = "popup_block_fix_v{}.marker"
 
-# ★요건(2026-08-20): "더망고 확장프로그램이 설치되어 있지 않습니다" 배너 —
-# 최신 Chrome(134+는 재시작 시, 137+는 기본적으로)이 --load-extension 으로
-# 불러온 확장을 "개발자 모드 미확인" 상태로 보고 자동으로 비활성화한다.
-# --enable-unsafe-extension-debugging 을 함께 주면 --load-extension 확장이
-# 정식 설치처럼 유지된다(신규 Chrome DevTools Extensions 도메인 요건, 우리가
-# 이미 쓰는 --remote-debugging-port 방식과 그대로 호환됨 — pipe 전환 불필요).
-EXT_DEBUG_FIX_VERSION = "1"
-_EXT_DEBUG_FIX_MARKER = "ext_debug_fix_v{}.marker"
-
 
 def launch_debug_browser() -> None:
     """평소 쓰는 Chrome/Edge를 디버그 포트로 실행 — Playwright Chromium 미사용"""
@@ -816,16 +807,11 @@ def launch_debug_browser() -> None:
         "--disable-popup-blocking",
     ]
     # 더망고 솔루션 확장 로드 (전용 프로필에 설정값이 비어 있는 문제 방지)
-    ext_loaded = False
     if MANGO_EXT_DIR.is_dir() and (MANGO_EXT_DIR / "manifest.json").is_file():
         ext_path = str(MANGO_EXT_DIR.resolve())
         chrome_args.append(f"--load-extension={ext_path}")
         chrome_args.append(f"--disable-extensions-except={ext_path}")
-        # ★요건: 최신 Chrome이 --load-extension 확장을 "미확인" 상태로 보고
-        # 조용히 비활성화하는 문제 방지 — 정식 설치처럼 유지.
-        chrome_args.append("--enable-unsafe-extension-debugging")
         log(f"더망고 솔루션 확장 로드: {ext_path}")
-        ext_loaded = True
     else:
         log(f"[경고] 확장 폴더 없음 — {MANGO_EXT_DIR} (Web Store 설치분만 사용)")
     chrome_args.append(MAIN_URL)
@@ -839,8 +825,6 @@ def launch_debug_browser() -> None:
         if cdp_port_open():
             log("브라우저 연결 확인됨")
             _write_popup_fix_marker()
-            if ext_loaded:
-                _write_ext_debug_fix_marker()
             return
         if i > 0 and i % 6 == 0:
             log(f"  아직 대기 중... ({i * 0.5:.0f}초 경과 — 화면에 Chrome 창이 떴는지 확인해 주세요)")
@@ -864,38 +848,20 @@ def _write_popup_fix_marker() -> None:
         pass
 
 
-def _ext_debug_fix_marker_path() -> Path:
-    return PROFILE_DIR / _EXT_DEBUG_FIX_MARKER.format(EXT_DEBUG_FIX_VERSION)
-
-
-def _write_ext_debug_fix_marker() -> None:
-    """--enable-unsafe-extension-debugging 로 새로 켠 Chrome 표시(재사용 판별용)."""
-    try:
-        _ext_debug_fix_marker_path().write_text("ok\n", encoding="utf-8")
-    except OSError:
-        pass
-
-
 def warn_if_reusing_pre_fix_browser() -> None:
     """이미 떠 있던(우리가 방금 새로 켠 게 아닌) Chrome을 재사용하는 중이면 경고.
 
-    --disable-popup-blocking, --enable-unsafe-extension-debugging 은 모두
-    Chrome '실행 시'에만 적용되는 플래그라, 이 프로그램을 업데이트하기 전부터
-    열려 있던 Chrome을 계속 붙잡고 쓰는 중이면 여전히 문제가 남을 수 있다.
+    --disable-popup-blocking 은 Chrome '실행 시' 적용되는 플래그라,
+    이 프로그램을 업데이트하기 전부터 열려 있던 Chrome을 계속 붙잡고
+    쓰는 중이면 여전히 팝업이 차단될 수 있다.
     """
-    if not _popup_fix_marker_path().exists():
-        log(
-            "  [중요] 저장하기 팝업이 계속 안 뜨면 Chrome을 완전히 종료 후 "
-            "다시 실행해 보세요 — 이번 업데이트(팝업차단 해제)는 Chrome을 "
-            "새로 켤 때만 적용됩니다. (기존에 열려 있던 창을 재사용 중일 수 있음)"
-        )
-    if not _ext_debug_fix_marker_path().exists():
-        log(
-            "  [중요] '더망고 확장프로그램이 설치되어 있지 않습니다' 배너가 보이면 "
-            "Chrome을 완전히 종료(작업관리자에서 chrome.exe 프로세스까지 확인)한 뒤 "
-            "다시 실행해 보세요 — 확장 인식 업데이트는 Chrome을 새로 켤 때만 "
-            "적용됩니다. (기존에 열려 있던 창을 재사용 중일 수 있음)"
-        )
+    if _popup_fix_marker_path().exists():
+        return
+    log(
+        "  [중요] 저장하기 팝업이 계속 안 뜨면 Chrome을 완전히 종료 후 "
+        "다시 실행해 보세요 — 이번 업데이트(팝업차단 해제)는 Chrome을 "
+        "새로 켤 때만 적용됩니다. (기존에 열려 있던 창을 재사용 중일 수 있음)"
+    )
 
 
 def pick_working_page(context: BrowserContext) -> Page:
@@ -980,11 +946,8 @@ def ensure_mango_extension_settings(
             raise RuntimeError(
                 "더망고 솔루션 확장프로그램 팝업을 열 수 없습니다.\n"
                 f"  · 대상: {MANGO_EXT_POPUP}\n"
-                "  · Chrome을 모두 닫고(작업관리자에서 chrome.exe 프로세스까지 확인) "
-                "P2를 다시 실행하세요 (전용 프로필에 확장이 로드됩니다).\n"
-                "  · 화면에 '더망고 확장프로그램이 설치되어 있지 않습니다'가 보이면 "
-                "최신 Chrome이 --load-extension 확장을 자동 비활성화한 것입니다 — "
-                "위 안내대로 Chrome을 완전히 재시작하면 해결됩니다.\n"
+                "  · Chrome을 모두 닫고 P2를 다시 실행하세요 "
+                "(전용 프로필에 확장이 로드됩니다).\n"
                 f"  · 원인: {e}"
             ) from e
 
@@ -1096,25 +1059,12 @@ def read_excel(path: str) -> list[dict]:
     ws = wb.active
     headers = [str(c.value or "").strip() for c in next(ws.iter_rows(min_row=1, max_row=1))]
     try:
+        label_col = headers.index("상위 최종 카테고리명")
         url_col = headers.index("최종 카테고리 URL주소")
     except ValueError:
         raise SystemExit(
-            "엑셀 1행 헤더에 '최종 카테고리명'(또는 '상위 최종 카테고리명'), "
-            "'최종 카테고리 URL주소' 열이 있어야 합니다."
+            "엑셀 1행 헤더에 '상위 최종 카테고리명', '최종 카테고리 URL주소' 열이 있어야 합니다."
         )
-    # ★요건(2026-08-19): 망고 연동 시 "수집필터명"에 "최종 카테고리명"을 우선
-    # 반영한다 — 없으면 예전 방식("상위 최종 카테고리명")으로 안전하게 대체
-    # (엑셀 포맷이 다르다는 이유로 수집 자체가 멈추는 회귀를 막기 위함).
-    try:
-        label_col = headers.index("최종 카테고리명")
-    except ValueError:
-        try:
-            label_col = headers.index("상위 최종 카테고리명")
-        except ValueError:
-            raise SystemExit(
-                "엑셀 1행 헤더에 '최종 카테고리명'(또는 '상위 최종 카테고리명') "
-                "열이 있어야 합니다."
-            )
 
     rows = []
     for i, row in enumerate(ws.iter_rows(min_row=2), start=2):
@@ -4040,111 +3990,6 @@ def ensure_ready_page(page: Page) -> Page:
     return page
 
 
-def _norm_site_token(s: str) -> str:
-    """사이트명/URL을 비교용으로 정규화 (프로토콜·www.·끝 슬래시 제거, 소문자)."""
-    s = (s or "").strip().lower()
-    s = re.sub(r"^https?://", "", s)
-    s = re.sub(r"^www\.", "", s)
-    return s.rstrip("/")
-
-
-def read_selected_site_from_list(page: Page) -> tuple[str, str]:
-    """더망고 좌측 "대량수집 사이트" 목록에서 현재 선택(active)된 사이트의
-    (사이트명, 사이트URL)을 읽는다. 못 찾으면 ("", "").
-
-    ★선택자(2026-08-19, 실제 화면 개발자도구로 확인):
-        #site_list .sites.active .text-name  → 사이트명 (title 속성, 예: "MUSINSA.com")
-        #site_list .sites.active a.icon-link  → 사이트URL (href 속성)
-    """
-    try:
-        row = page.locator("#site_list .sites.active").first
-        if row.count() == 0:
-            return "", ""
-    except Exception:  # noqa: BLE001
-        return "", ""
-
-    name = ""
-    try:
-        name_el = row.locator(".text-name").first
-        name = (name_el.get_attribute("title") or "").strip()
-        if not name:
-            name = (name_el.inner_text() or "").strip()
-    except Exception:  # noqa: BLE001
-        pass
-
-    url = ""
-    try:
-        link_el = row.locator("a.icon-link").first
-        url = (link_el.get_attribute("href") or link_el.get_attribute("title") or "").strip()
-    except Exception:  # noqa: BLE001
-        pass
-
-    return name, url
-
-
-def verify_selected_site(
-    page: Page,
-    expected_name: str,
-    expected_url: str,
-    *,
-    ctx: "RunCtx | None" = None,
-) -> None:
-    """★요건: 입력한 "수집사이트명"/"수집사이트URL"이 더망고 좌측
-    "대량수집 사이트" 목록(``#site_list``)에서 현재 선택(active)된 사이트와
-    일치하는지 확인한다. 다르면 상세한 오류 메세지와 함께 즉시 중단한다.
-    """
-    name = (expected_name or "").strip()
-    url = (expected_url or "").strip()
-    if not name and not url:
-        return
-
-    actual_name, actual_url = read_selected_site_from_list(page)
-
-    if not actual_name and not actual_url:
-        # ★안전장치: 목록(#site_list)을 못 찾으면(화면 구조 변경·로딩 지연 등)
-        # 확정된 불일치로 보지 않고 경고만 남기고 수집을 계속 진행한다.
-        if ctx is not None:
-            ctx.info(
-                "[검증생략] 더망고 '대량수집 사이트' 목록(#site_list)에서 선택된 "
-                "사이트를 확인하지 못해 검증을 건너뜁니다."
-            )
-        return
-
-    actual_tokens = {t for t in (_norm_site_token(actual_name), _norm_site_token(actual_url)) if t}
-
-    problems: list[str] = []
-    if name and _norm_site_token(name) not in actual_tokens:
-        problems.append(
-            f"수집사이트명 불일치 — 입력값 {name!r} / 더망고 선택 사이트 {actual_name!r}"
-        )
-    if url and _norm_site_token(url) not in actual_tokens:
-        problems.append(
-            f"수집사이트URL 불일치 — 입력값 {url!r} / 더망고 선택 사이트URL {actual_url!r}"
-        )
-
-    if problems:
-        detail = "\n".join(f"  · {p}" for p in problems)
-        msg = (
-            "수집사이트 검증 실패 — 입력한 '수집사이트명'/'수집사이트URL'이 더망고 "
-            "좌측 '대량수집 사이트' 목록에서 선택된 사이트와 다릅니다. 수집을 중단합니다.\n"
-            f"{detail}\n"
-            f"  · 입력한 수집사이트명: {name or '(미입력)'}\n"
-            f"  · 입력한 수집사이트URL: {url or '(미입력)'}\n"
-            f"  · 더망고 선택된 사이트명: {actual_name or '(확인안됨)'}\n"
-            f"  · 더망고 선택된 사이트URL: {actual_url or '(확인안됨)'}\n"
-            "  · 더망고 좌측 '대량수집 사이트' 목록에서 올바른 사이트를 선택했는지, "
-            "입력값이 정확한지 확인한 뒤 다시 실행하세요."
-        )
-        if ctx is not None:
-            ctx.info("[검증실패] " + msg.replace("\n", " / "))
-        raise RuntimeError(msg)
-
-    if ctx is not None:
-        ctx.info(
-            f"[검증 OK] 수집사이트 확인 — 더망고 선택 사이트: {actual_name} ({actual_url})"
-        )
-
-
 def main() -> None:
     import argparse
 
@@ -4189,18 +4034,6 @@ def main() -> None:
         dest="batch",
         action="store_true",
         help="실패해도 y/n 묻지 않고 다음 행으로 (또는 재시도만)",
-    )
-    ap.add_argument(
-        "--site-name",
-        dest="site_name",
-        default="",
-        help="수집사이트명 — 더망고 화면에서 선택된 사이트명과 일치해야 시작 (미입력 시 검증 생략)",
-    )
-    ap.add_argument(
-        "--site-url",
-        dest="site_url",
-        default="",
-        help="수집사이트URL — 더망고 화면에서 선택된 사이트URL과 일치해야 시작 (미입력 시 검증 생략)",
     )
     ap.add_argument(
         "--id",
@@ -4279,12 +4112,6 @@ def main() -> None:
             page = refresh_if_closed(page)
             page = ensure_ready_page(page)
             ctx.shot(page, "ready", 0)
-
-            # ★요건: 수집사이트명·수집사이트URL이 더망고에서 선택된 정보와
-            # 다르면 확인(경고). ★안전장치: 더망고 화면 표시 위치가 아직
-            # 확인되지 않아, 미확인/오탐으로 정상 수집이 막히지 않도록
-            # 지금은 경고만 남기고 항상 계속 진행한다.
-            verify_selected_site(page, args.site_name, args.site_url, ctx=ctx)
 
             for ordinal, row in enumerate(rows, start=1):
                 success = False
