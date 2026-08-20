@@ -90,13 +90,16 @@ MANGO_EXT_MISSING_GUIDE = (
     "  · 방금 열린 Chrome 창(주소창에 --no-sandbox 경고가 있는 창)에서\n"
     "    웹스토어 페이지를 띄웠습니다. [Chrome에 추가] 를 한 번만 눌러 주세요.\n"
     f"  · 설치 페이지: {MANGO_EXT_WEBSTORE}\n"
-    "  · 설치 후 그 창을 닫고 P2를 다시 실행하면 됩니다 "
-    "(설치 내용은 전용 프로필에 남아 다음부터는 자동 인식).\n"
+    "  · 설치가 확인되면 프로그램이 자동으로 이어서 진행합니다 "
+    "(설치 내용은 전용 프로필에 남아 다음부터는 대기 없이 통과).\n"
     "  · 평소 쓰는 Chrome 에 이미 설치돼 있어도 소용없습니다 — P2 는 별도 프로필로\n"
     "    실행되며, Chrome 136 부터 원격 디버깅이 기본 프로필에서 막혀 있기 때문입니다.\n"
     f"  · 확인 대상: {MANGO_EXT_POPUP}\n"
     "  · 원인: {cause}"
 )
+# 사용자가 웹스토어에서 [Chrome에 추가] 를 누를 때까지 기다리는 제한 (초).
+# 수동 로그인 대기(LOGIN_WAIT_SEC)와 같은 성격이라 동일하게 취급한다.
+EXT_INSTALL_WAIT_SEC = 600
 # 크롬 기동 시 확장 팝업에 반드시 넣을 값 (사용자 지정)
 MANGO_SERVICE_URL = "https://tmg1898.cafe24.com"
 MANGO_SERVICE_KEY = "y94Tmx9LbxxCJtk5uI9z0RjGWDtVW4"
@@ -289,6 +292,7 @@ SHOT_STEP_LABELS: dict[str, str] = {
     "login_required": "세션만료·재로그인",
     "ext_settings": "확장프로그램(더망고솔루션) 설정값 저장",
     "ext_settings_fail": "확장프로그램 설정 실패",
+    "ext_installed": "확장프로그램 설치 확인",
     "ready": "준비완료(대량수집 진입)",
     "00_overlays_clear": "다음행 전 — 팝업/모달 전부 닫힘 확인",
     "00_overlays_stuck": "다음행 전 — 팝업/모달 미종료(경고)",
@@ -933,7 +937,7 @@ def connect_browser(p) -> tuple[Browser, Page]:
     return browser, page
 
 
-def open_extension_install_page(context: BrowserContext) -> None:
+def open_extension_install_page(context: BrowserContext) -> "Page | None":
     """P2 전용 프로필 창에 더망고 확장 웹스토어 페이지를 띄운다.
 
     정품 Chrome 137+ 는 --load-extension 을 무시하므로, 이 프로필에 확장을
@@ -945,8 +949,46 @@ def open_extension_install_page(context: BrowserContext) -> None:
         page.goto(MANGO_EXT_WEBSTORE, wait_until="domcontentloaded", timeout=20_000)
         page.bring_to_front()
         log(f"  확장 설치 페이지를 열었습니다 — {MANGO_EXT_WEBSTORE}")
+        return page
     except Exception as e:  # noqa: BLE001
         log(f"  [안내] 확장 설치 페이지를 열지 못했습니다: {e}")
+        return None
+
+
+def wait_for_extension_install(
+    page: "Page",
+    timeout_sec: int = EXT_INSTALL_WAIT_SEC,
+) -> bool:
+    """사용자가 웹스토어에서 [Chrome에 추가] 를 누를 때까지 대기.
+
+    수동 로그인 대기(wait_for_user_login)와 같은 방식이다 — 확장 팝업 주소가
+    열리는 순간 설치가 끝난 것이므로 그대로 True 를 돌려주고 이어서 진행한다.
+    성공 시 page 는 이미 확장 팝업에 올라와 있다.
+    """
+    safe_print("")
+    safe_print("================================================")
+    safe_print("  더망고 확장프로그램을 설치해 주세요.")
+    safe_print("  방금 열린 웹스토어 창에서 [Chrome에 추가] 클릭")
+    safe_print(f"  설치가 확인되면 자동으로 계속됩니다. (최대 {timeout_sec}초)")
+    safe_print("================================================")
+
+    deadline = time.time() + max(30, int(timeout_sec))
+    next_notice = time.time() + 30
+    while time.time() < deadline:
+        check_stop("확장프로그램 설치 대기")
+        try:
+            page.goto(MANGO_EXT_POPUP, wait_until="domcontentloaded", timeout=5_000)
+            log("확장프로그램 설치 확인 — 계속 진행")
+            return True
+        except Exception:  # noqa: BLE001
+            pass
+        if time.time() >= next_notice:
+            left = int(deadline - time.time())
+            log(f"  [대기] 확장 설치를 기다리는 중... (남은 {left}초)")
+            next_notice = time.time() + 30
+        # Playwright 이벤트루프와 무관한 소켓/프로세스 대기라 sleep 으로 충분
+        time.sleep(2)
+    return False
 
 
 def ensure_mango_extension_settings(
@@ -984,8 +1026,20 @@ def ensure_mango_extension_settings(
                     shot_ctx.shot(page, "ext_settings_fail", 0)
                 except Exception:  # noqa: BLE001
                     pass
-            open_extension_install_page(context)
-            raise RuntimeError(MANGO_EXT_MISSING_GUIDE.format(cause=e)) from e
+            log(MANGO_EXT_MISSING_GUIDE.format(cause=e))
+            store_page = open_extension_install_page(context)
+            if not wait_for_extension_install(page):
+                raise RuntimeError(MANGO_EXT_MISSING_GUIDE.format(cause=e)) from e
+            if store_page is not None:
+                try:
+                    store_page.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            if shot_ctx is not None:
+                try:
+                    shot_ctx.shot(page, "ext_installed", 0)
+                except Exception:  # noqa: BLE001
+                    pass
 
         page.wait_for_selector("#site_url", timeout=10_000)
         page.wait_for_selector("#site_key", timeout=5_000)

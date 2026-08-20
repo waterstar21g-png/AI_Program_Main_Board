@@ -11,6 +11,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
@@ -71,7 +73,43 @@ def test_install_page_failure_does_not_mask_original_error():
         def new_page(self):
             raise RuntimeError("no page")
 
-    C.open_extension_install_page(_BoomContext())
+    assert C.open_extension_install_page(_BoomContext()) is None
+
+
+class _ProbePage:
+    """N 번째 시도부터 확장 팝업이 열리는 가짜 page."""
+
+    def __init__(self, succeed_on: int):
+        self.succeed_on = succeed_on
+        self.attempts = 0
+
+    def goto(self, url, **kwargs):
+        self.attempts += 1
+        if self.attempts < self.succeed_on:
+            raise RuntimeError("net::ERR_BLOCKED_BY_CLIENT")
+
+
+def test_wait_for_extension_install_continues_after_user_installs(monkeypatch):
+    """설치가 확인되면 재실행 없이 그대로 이어서 진행한다."""
+    monkeypatch.setattr(C.time, "sleep", lambda *_: None)
+    page = _ProbePage(succeed_on=3)
+    assert C.wait_for_extension_install(page, timeout_sec=60) is True
+    assert page.attempts == 3
+
+
+def test_wait_for_extension_install_gives_up_after_timeout(monkeypatch):
+    """끝내 설치하지 않으면 False — 호출부가 원래 오류를 올린다."""
+    monkeypatch.setattr(C.time, "sleep", lambda *_: None)
+    ticks = iter([1000.0] + [1000.0 + i * 5 for i in range(1, 400)])
+    monkeypatch.setattr(C.time, "time", lambda: next(ticks))
+    assert C.wait_for_extension_install(_ProbePage(succeed_on=10**9), 30) is False
+
+
+def test_wait_for_extension_install_honors_stop_request(monkeypatch):
+    """보드 [수집 종료] 를 누르면 대기 중에도 즉시 빠져나온다."""
+    monkeypatch.setattr(C, "stop_requested", lambda: True)
+    with pytest.raises(C.CollectStopped):
+        C.wait_for_extension_install(_ProbePage(succeed_on=10**9), 60)
 
 
 if __name__ == "__main__":
