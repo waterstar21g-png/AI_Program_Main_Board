@@ -34,6 +34,7 @@ def _load_py_module(mod_name: str, folder: str, filename: str) -> ModuleType:
 
 p3_update = _load_py_module("p3_update_filters", "P3_필터_갱신", "update_filters.py")
 p1_policy = _load_py_module("p1_apply_policy", "P1_필터단위_마진정책적용", "apply_policy.py")
+p2_count = _load_py_module("p2_update_product_count", "P2_필터단위_상품수변경", "update_product_count.py")
 
 from library import (  # noqa: E402
     add_paths,
@@ -95,6 +96,7 @@ class BoardApp(tk.Tk):
         self.configure(bg="#1a4d5c")
 
         self._p1_proc: subprocess.Popen | None = None
+        self._p2_count_proc: subprocess.Popen | None = None
         self._p2_proc: subprocess.Popen | None = None
         self._p3_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
@@ -116,7 +118,7 @@ class BoardApp(tk.Tk):
         ).pack()
         tk.Label(
             head,
-            text=f"{APP_SHORT_EN} · P1 필터단위 마진정책 · P2 대량수집 · P3_필터_갱신",
+            text=f"{APP_SHORT_EN} · P1 마진정책 · P2 상품수 · P2 수집 · P3 필터",
             fg="#cbd5e1",
             bg="#164a59",
             font=("Malgun Gothic", 9),
@@ -147,6 +149,16 @@ class BoardApp(tk.Tk):
             pady=10,
         )
         self.btn_p1.pack(fill="x", padx=6, pady=6)
+
+        self.btn_p2_count = tk.Button(
+            side,
+            text="P2_필터단위\n상품수변경",
+            command=lambda: self._show("p2_count"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p2_count.pack(fill="x", padx=6, pady=6)
 
         self.btn_p2 = tk.Button(
             side,
@@ -206,22 +218,29 @@ class BoardApp(tk.Tk):
         self.main.pack(side="left", fill="both", expand=True)
 
         self.frame_p1 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self.frame_p2_count = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p2 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self._build_p1(self.frame_p1)
+        self._build_p2_count(self.frame_p2_count)
         self._build_p2(self.frame_p2)
         self._build_p3(self.frame_p3)
 
     def _show(self, which: str) -> None:
         self.frame_p1.pack_forget()
+        self.frame_p2_count.pack_forget()
         self.frame_p2.pack_forget()
         self.frame_p3.pack_forget()
         self.btn_p1.configure(bg="#ececec")
+        self.btn_p2_count.configure(bg="#ececec")
         self.btn_p2.configure(bg="#ececec")
         self.btn_p3.configure(bg="#ececec")
         if which == "p1":
             self.frame_p1.pack(fill="both", expand=True)
             self.btn_p1.configure(bg="#dbeafe")
+        elif which == "p2_count":
+            self.frame_p2_count.pack(fill="both", expand=True)
+            self.btn_p2_count.configure(bg="#dbeafe")
         elif which == "p3":
             self.frame_p3.pack(fill="both", expand=True)
             self.btn_p3.configure(bg="#dbeafe")
@@ -274,6 +293,12 @@ class BoardApp(tk.Tk):
             if self._p1_proc and self._p1_proc.poll() is None:
                 self._p1_stop_flag().write_text("stop\n", encoding="utf-8")
                 self._p1_proc.terminate()
+        except Exception:
+            pass
+        try:
+            if self._p2_count_proc and self._p2_count_proc.poll() is None:
+                self._p2_count_stop_flag().write_text("stop\n", encoding="utf-8")
+                self._p2_count_proc.terminate()
         except Exception:
             pass
         try:
@@ -505,6 +530,206 @@ class BoardApp(tk.Tk):
             self.after(
                 0,
                 lambda: self.p1_status.configure(text=f"종료 (exit={code})", fg="#b91c1c"),
+            )
+
+    # ── P2_필터단위_상품수변경 ─────────────────────────────────────
+    def _build_p2_count(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P2_필터단위_상품수변경 — 적용상품수 입력 → 필터 목록 순차 갱신",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        form = tk.LabelFrame(parent, text="입력", bg="#ffffff", padx=8, pady=6)
+        form.pack(fill="x")
+
+        r1 = tk.Frame(form, bg="#ffffff")
+        r1.pack(fill="x", pady=4)
+        tk.Label(r1, text="적용상품수", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p2_count_apply = tk.StringVar(value="50")
+        tk.Entry(r1, textvariable=self.var_p2_count_apply, width=20).pack(
+            side="left", fill="x", expand=True
+        )
+
+        r2 = tk.Frame(form, bg="#ffffff")
+        r2.pack(fill="x", pady=4)
+        tk.Label(r2, text="망고 URL", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p2_count_mango_url = tk.StringVar(value=p3_update.DEFAULT_MANGO_URL)
+        tk.Entry(r2, textvariable=self.var_p2_count_mango_url).pack(
+            side="left", fill="x", expand=True
+        )
+        tk.Label(
+            form,
+            text="(비우면 Chrome에 열린 필터 목록 화면 사용)",
+            bg="#ffffff",
+            fg="#64748b",
+            font=("Malgun Gothic", 8),
+            anchor="w",
+        ).pack(fill="x")
+
+        actions = tk.Frame(parent, bg="#f1f5f9")
+        actions.pack(fill="x", pady=8)
+        tk.Button(
+            actions,
+            text="작업시작",
+            command=self._run_p2_count,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="작업중단",
+            command=self._stop_p2_count,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left", padx=6)
+
+        log_frame = tk.LabelFrame(parent, text="실행 로그", bg="#ffffff", padx=6, pady=4)
+        log_frame.pack(fill="both", expand=True)
+        self.p2_count_log = tk.Text(
+            log_frame,
+            height=18,
+            font=("Consolas", 9),
+            wrap="word",
+            bg="#0f172a",
+            fg="#e2e8f0",
+        )
+        p2_count_sb = tk.Scrollbar(log_frame, command=self.p2_count_log.yview)
+        self.p2_count_log.configure(yscrollcommand=p2_count_sb.set)
+        self.p2_count_log.pack(side="left", fill="both", expand=True)
+        p2_count_sb.pack(side="right", fill="y")
+
+        self.p2_count_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
+        self.p2_count_status.pack(fill="x", pady=4)
+
+    def _p2_count_stop_flag(self) -> Path:
+        return ROOT / "P2_필터단위_상품수변경" / ".count_stop"
+
+    def _append_p2_count_log(self, line: str) -> None:
+        text = (line or "").strip()
+        if text.startswith("##MAIN##"):
+            text = text[8:]
+        self.p2_count_log.insert("end", text + "\n")
+        self.p2_count_log.see("end")
+
+    def _run_p2_count(self) -> None:
+        apply_count = self.var_p2_count_apply.get().strip()
+        if not apply_count:
+            messagebox.showinfo("안내", "적용상품수를 입력하세요.")
+            return
+        if not apply_count.isdigit() or int(apply_count) < 0:
+            messagebox.showinfo("안내", "적용상품수는 0 이상의 숫자여야 합니다.")
+            return
+        if self._p2_count_proc and self._p2_count_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
+            return
+
+        update_py = ROOT / "P2_필터단위_상품수변경" / "update_product_count.py"
+        if not update_py.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{update_py}")
+            return
+
+        try:
+            self._p2_count_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+        mango = self.var_p2_count_mango_url.get().strip()
+        args = [sys.executable, str(update_py), "--apply-count", apply_count]
+        if mango:
+            args.extend(["--mango-url", mango])
+
+        self.p2_count_log.delete("1.0", "end")
+        self.p2_count_status.configure(
+            text=f"작업 시작 — 적용상품수: {apply_count}", fg="#15803d"
+        )
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        try:
+            self._p2_count_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P2_필터단위_상품수변경"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p2_count_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p2_count_proc, args=(self._p2_count_proc,), daemon=True
+        ).start()
+
+    def _stop_p2_count(self) -> None:
+        proc = self._p2_count_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 작업이 없습니다.")
+            return
+        try:
+            self._p2_count_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p2_count_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
+            return
+        self.p2_count_status.configure(text="작업중단 요청 중…", fg="#b45309")
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    def _watch_p2_count_proc(self, proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stdout is not None
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self.after(0, lambda t=text: self._append_p2_count_log(t))
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self.after(0, lambda t=text: self._append_p2_count_log(t))
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p2_count_status.configure(
+                    text=f"로그 수신 오류: {e}", fg="#b91c1c"
+                ),
+            )
+        code = proc.wait()
+        if code == 0:
+            self.after(
+                0, lambda: self.p2_count_status.configure(text="작업 완료", fg="#15803d")
+            )
+        else:
+            self.after(
+                0,
+                lambda: self.p2_count_status.configure(
+                    text=f"종료 (exit={code})", fg="#b91c1c"
+                ),
             )
 
     def _build_p2(self, parent: tk.Frame) -> None:
