@@ -12,6 +12,7 @@ $RepoUrl      = "https://github.com/waterstar21g-png/Mango_Helper_AI_Board.git"
 $ParentUrl    = "https://github.com/waterstar21g-png/AI_Program_Main_Board.git"
 $ParentBranch = "cursor/mango-helper-ai-board-0c73"
 $DefaultRoot  = "D:\My_Project\Mango_Helper_AI_Board"
+$AiBoardPath  = "D:\My_Project\AI_Program_Main_Board"   # 절대 수정 금지
 
 function Write-Step($n, $total, $msg) {
     Write-Host ""
@@ -91,6 +92,7 @@ function Init-GitAndPull($root) {
 Write-Host "========================================" -ForegroundColor Green
 Write-Host "  망고보드 (Mango_Helper_AI_Board)" -ForegroundColor Green
 Write-Host "  PC 원클릭 전체 설치" -ForegroundColor Green
+Write-Host "  ※ AI board 폴더는 건드리지 않습니다" -ForegroundColor DarkGray
 Write-Host "========================================" -ForegroundColor Green
 
 $total = 6
@@ -133,6 +135,11 @@ if ($ScriptRoot) {
     $Root = $DefaultRoot
     Ensure-Directory $Root
     Write-Host "  기본 경로 생성: $Root" -ForegroundColor Yellow
+}
+
+if ($Root -eq $AiBoardPath) {
+    Write-Host "[ERROR] 망고보드 경로가 AI board 와 같습니다. Mango_Helper_AI_Board 폴더를 사용하세요." -ForegroundColor Red
+    exit 1
 }
 
 # 4) 소스 받기 (clone / pull / 부모 폴백)

@@ -3,8 +3,8 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 :: 망고보드 PC 원클릭 전체 설치
-:: - 빈 폴더여도 동작 (자동으로 GitHub 소스 받기)
-:: - pip · 바로가기 · 동작 확인
+:: ★ AI board (D:\My_Project\AI_Program_Main_Board) 는 절대 수정하지 않음
+:: ★ 이 스크립트는 Mango_Helper_AI_Board 폴더만 사용
 ::
 :: 사용: D:\My_Project\Mango_Helper_AI_Board 에 이 파일을 넣고 더블클릭
 ::       (또는 저장소 clone 후 이 파일 더블클릭)
