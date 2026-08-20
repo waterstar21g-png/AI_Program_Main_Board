@@ -1,4 +1,4 @@
-# 망고보드 (mango board) **v1.0.3**
+# 망고보드 (mango board) **v1.1.0**
 
 공식 프로젝트명: **Mango_Helper_AI_Board**
 
@@ -6,10 +6,16 @@
 |------|------|
 | **망고보드** | 이 보드의 한글 약칭 |
 | **mango board** | 이 보드의 영문 약칭 |
-| **AI board** | 기존 `AI_Program_Main_Board` 약칭 (구분 대상) |
+| **AI board** | 기존 `AI_Program_Main_Board` 약칭 (별도 유지) |
 
-**AI board** 의 **메인 UI 셸만** 복사한 신규 보드입니다.  
-신규 프로그램은 `programs/` 폴더에 추가하고 `board/app.py` 의 `PROGRAMS` 목록에 등록합니다.
+**AI board** 에서 **망고 연동(P2·P3) 소스만 복사**했습니다. AI board 원본은 삭제하지 않습니다.
+
+## 포함 프로그램
+
+| 프로그램 | 폴더 | 역할 |
+|----------|------|------|
+| P2 | `P2/` | 더망고 대량수집 |
+| P3_필터_갱신 | `P3_필터_갱신/` | 검색필터 저장상품수 갱신 |
 
 로컬 경로(권장):
 
@@ -47,10 +53,9 @@ python board\app.py
 
 | 경로 | 역할 |
 |------|------|
-| `board/app.py` | 망고보드 메인 UI (헤더·사이드바·프로그램 탭) |
-| `board/terms.py` | 용어 정의 (망고보드 / mango board) |
-| `board/self_update.py` | 머지반영 업데이트 (GitHub main 강제 반영) |
-| `programs/` | 신규 프로그램 추가 폴더 |
+| `P2/` | 더망고 대량수집 (AI board에서 복사) |
+| `P3_필터_갱신/` | 필터 저장상품수 갱신 (AI board에서 복사) |
+| `board/app.py` | 망고보드 메인 UI (P2·P3 탭) |
 | `VERSION.txt` | 버전 단일 소스 |
 | `docs/일별_사용자요건/` | 사용자 요구사항 원문 보관 |
 

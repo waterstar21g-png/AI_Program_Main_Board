@@ -1,2 +1,2 @@
-버전 1.0.3 (Python 보드)
-업데이트: AI_Program_Main_Board 약칭을 AI board 로 통일.
+버전 1.1.0 (Python 보드)
+업데이트: AI board 망고 연동(P2·P3) 소스 복사. AI board 원본 유지.
