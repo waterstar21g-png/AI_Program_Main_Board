@@ -11,4 +11,5 @@
 | P3_필터_갱신 | `P3_필터_갱신/` | 더망고 검색필터 저장상품수 갱신 |
 | P3_핏클상세페이지 | `P3_핏클상세페이지/` | FitCL 연동 모델컷 10장 + 디테일컷 5장 추출 |
 
-보드 UI: `board/app.py`
+보드 UI: `board/app.py`  
+PC 설정: `PC_SETUP.md` · 실행: `scripts/launch.py` · 레지스트리: `programs/registry.json`

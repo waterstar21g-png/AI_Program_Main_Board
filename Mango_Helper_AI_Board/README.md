@@ -1,81 +1,65 @@
-# 망고보드 (mango board) **v1.4.0**
+# 망고보드 (mango board) **v1.4.1**
 
-공식 프로젝트명: **Mango_Helper_AI_Board**
+> **공식 저장소명:** `Mango_Helper_AI_Board`  
+> PC 가이드: **[PC_SETUP.md](PC_SETUP.md)** · 저장소 정의: **[REPOSITORY.md](REPOSITORY.md)**
 
 | 용어 | 의미 |
 |------|------|
 | **망고보드** | 이 보드의 한글 약칭 |
 | **mango board** | 이 보드의 영문 약칭 |
-| **AI board** | 기존 `AI_Program_Main_Board` 약칭 (별도 유지) |
+| **AI board** | 기존 `AI_Program_Main_Board` (별도 유지) |
 
-**AI board** 에서 **망고 연동(P2·P3) 소스만 복사**했습니다. AI board 원본은 삭제하지 않습니다.
+## PC에서 빠르게 시작
+
+```powershell
+# 1) 받기 (독립 repo 또는 부모 repo — PC_SETUP.md 참고)
+# 2) 최초 설정
+.\scripts\setup-pc.ps1
+# 3) 실행
+.\run.bat
+# 또는
+.\망고보드_실행.bat
+```
+
+**모든 프로그램 목록:** `py -3 scripts\launch.py list`  
+**개별 바로가기:** `scripts\launch\` 폴더
 
 ## 포함 프로그램
 
 | 프로그램 | 폴더 | 역할 |
 |----------|------|------|
-| P1_필터단위_마진정책적용 | `P1_필터단위_마진정책적용/` | 정책명 입력 → 체크된 행에 정책 선택·적용확인 |
-| P2_필터단위_상품수변경 | `P2_필터단위_상품수변경/` | 적용상품수 입력 → 필터 목록 순차 갱신 |
+| 망고보드 메인 | `board/` | Tkinter 탭 UI |
+| P1_필터단위_마진정책적용 | `P1_필터단위_마진정책적용/` | 정책명 → 체크 행 적용확인 |
+| P2_필터단위_상품수변경 | `P2_필터단위_상품수변경/` | 적용상품수 일괄 갱신 |
 | P2 | `P2/` | 더망고 대량수집 |
-| P3_필터_갱신 | `P3_필터_갱신/` | 검색필터 저장상품수 갱신 |
-| P3_핏클상세페이지 | `P3_핏클상세페이지/` | FitCL 연동 모델컷 10장 + 디테일컷 5장 |
+| P3_필터_갱신 | `P3_필터_갱신/` | 저장상품수 갱신 |
+| P3_핏클상세페이지 | `P3_핏클상세페이지/` | FitCL 모델컷 10 + 디테일컷 5 |
 
-로컬 경로(권장):
+레지스트리: `programs/registry.json`
+
+## 로컬 경로 (권장)
 
 ```
 D:\My_Project\Mango_Helper_AI_Board
 ```
 
-## 로컬에 받기 (최초 1회)
+## GitHub
 
-```powershell
-Set-Location D:\My_Project
-if (Test-Path .\Mango_Helper_AI_Board\.git) {
-  Set-Location .\Mango_Helper_AI_Board
-  git pull origin main
-} else {
-  if (Test-Path .\Mango_Helper_AI_Board) { Remove-Item -Recurse -Force .\Mango_Helper_AI_Board }
-  git clone https://github.com/waterstar21g-png/Mango_Helper_AI_Board.git Mango_Helper_AI_Board
-  Set-Location .\Mango_Helper_AI_Board
-}
-```
+| 저장소 | 용도 |
+|--------|------|
+| [Mango_Helper_AI_Board](https://github.com/waterstar21g-png/Mango_Helper_AI_Board) | **망고보드 독립 repo (목표)** |
+| [AI_Program_Main_Board](https://github.com/waterstar21g-png/AI_Program_Main_Board) | 부모 repo · 브랜치 `cursor/mango-helper-ai-board-0c73` |
 
-## 실행
-
-```powershell
-.\run.bat
-```
-
-또는:
-
-```powershell
-python board\app.py
-```
+독립 repo 생성: `GITHUB_SETUP.md` · `scripts\publish-standalone.ps1`
 
 ## 구조
 
 | 경로 | 역할 |
 |------|------|
-| `P2/` | 더망고 대량수집 (AI board에서 복사) |
-| `P3_필터_갱신/` | 필터 저장상품수 갱신 (AI board에서 복사) |
-| `board/app.py` | 망고보드 메인 UI (P1·P2·P3·P3 핏클 탭) |
+| `run.bat` / `망고보드_실행.bat` | 메인 실행 |
+| `scripts/launch.py` | 통합 CLI 실행기 |
+| `scripts/launch/` | 프로그램별 배치 바로가기 |
+| `programs/registry.json` | 프로그램·경로·로그인 정의 |
+| `board/app.py` | 메인 UI |
 | `VERSION.txt` | 버전 단일 소스 |
-| `docs/일별_사용자요건/` | 사용자 요구사항 원문 보관 |
-
-## 프로그램 추가 방법
-
-1. `programs/프로그램명/` 폴더 생성
-2. `board/app.py` 의 `PROGRAMS` 리스트에 항목 추가:
-
-```python
-PROGRAMS = [
-    {"id": "my_prog", "label": "MY\n프로그램", "subtitle": "설명"},
-]
-```
-
-3. `_build_placeholder` 대신 전용 `_build_my_prog()` 메서드로 UI 구현
-
-## GitHub
-
-- 저장소: https://github.com/waterstar21g-png/Mango_Helper_AI_Board
-- 기반: AI board (`AI_Program_Main_Board`) 메인 UI (Python Tkinter)
+| `docs/일별_사용자요건/` | 요구사항 원문 보관 |
