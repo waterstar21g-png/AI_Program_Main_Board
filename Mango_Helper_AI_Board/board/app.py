@@ -33,7 +33,7 @@ def _load_py_module(mod_name: str, folder: str, filename: str) -> ModuleType:
 
 
 p3_update = _load_py_module("p3_update_filters", "P3_필터_갱신", "update_filters.py")
-p1_policy = _load_py_module("p1_apply_policy", "P1_정책적용", "apply_policy.py")
+p1_policy = _load_py_module("p1_apply_policy", "P1_필터단위_마진정책적용", "apply_policy.py")
 
 from library import (  # noqa: E402
     add_paths,
@@ -116,7 +116,7 @@ class BoardApp(tk.Tk):
         ).pack()
         tk.Label(
             head,
-            text=f"{APP_SHORT_EN} · P1 정책적용 · P2 대량수집 · P3_필터_갱신",
+            text=f"{APP_SHORT_EN} · P1 필터단위 마진정책 · P2 대량수집 · P3_필터_갱신",
             fg="#cbd5e1",
             bg="#164a59",
             font=("Malgun Gothic", 9),
@@ -140,7 +140,7 @@ class BoardApp(tk.Tk):
 
         self.btn_p1 = tk.Button(
             side,
-            text="P1_정책적용\n정책명 일괄적용",
+            text="P1_필터단위\n마진정책적용",
             command=lambda: self._show("p1"),
             font=("Malgun Gothic", 9, "bold"),
             relief="groove",
@@ -320,11 +320,11 @@ class BoardApp(tk.Tk):
             pass
         sys.exit(0)
 
-    # ── P1_정책적용 ─────────────────────────────────────
+    # ── P1_필터단위_마진정책적용 ─────────────────────────────────────
     def _build_p1(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="P1_정책적용 — 정책명 입력 → 망고 정책적용 목록(체크된 행만) 순차 갱신",
+            text="P1_필터단위_마진정책적용 — 정책명 입력 → 필터단위 마진정책 목록(체크 행) 순차 갱신",
             bg="#f1f5f9",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",
@@ -350,7 +350,7 @@ class BoardApp(tk.Tk):
         )
         tk.Label(
             form,
-            text="(비우면 Chrome에 열린 정책적용 목록 화면 사용)",
+            text="(비우면 Chrome에 열린 필터단위 마진정책 목록 화면 사용)",
             bg="#ffffff",
             fg="#64748b",
             font=("Malgun Gothic", 8),
@@ -399,7 +399,7 @@ class BoardApp(tk.Tk):
         self.p1_status.pack(fill="x", pady=4)
 
     def _p1_stop_flag(self) -> Path:
-        return ROOT / "P1_정책적용" / ".policy_stop"
+        return ROOT / "P1_필터단위_마진정책적용" / ".policy_stop"
 
     def _append_p1_log(self, line: str) -> None:
         text = (line or "").strip()
@@ -417,7 +417,7 @@ class BoardApp(tk.Tk):
             messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
             return
 
-        apply_py = ROOT / "P1_정책적용" / "apply_policy.py"
+        apply_py = ROOT / "P1_필터단위_마진정책적용" / "apply_policy.py"
         if not apply_py.is_file():
             messagebox.showerror("오류", f"실행 파일 없음:\n{apply_py}")
             return
@@ -444,7 +444,7 @@ class BoardApp(tk.Tk):
         try:
             self._p1_proc = subprocess.Popen(
                 args,
-                cwd=str(ROOT / "P1_정책적용"),
+                cwd=str(ROOT / "P1_필터단위_마진정책적용"),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=False,

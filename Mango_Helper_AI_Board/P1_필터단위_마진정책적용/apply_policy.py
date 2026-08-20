@@ -1,7 +1,7 @@
 """
-P1_정책적용 — 더망고 정책적용 목록(체크된 행만) 순차 갱신.
+P1_필터단위_마진정책적용 — 더망고 정책적용 목록(체크된 행만) 순차 갱신.
 
-1) 정책적용 목록에서 체크된 행만 읽음
+1) 필터단위 마진정책 목록에서 체크된 행만 읽음
 2) 각 행의 정책명 리스트박스(select)에서 입력 정책명과 일치하는 항목 선택
 3) 해당 행의 「적용확인」 클릭
 
@@ -36,7 +36,7 @@ RUN_LOG_DIR = Path(__file__).resolve().parent / "run-logs"
 
 ProgressFn = Callable[[str], None]
 
-# 정책적용 목록 화면 — 비우면 브라우저 현재 탭 사용
+# 필터단위 마진정책 목록 화면 — 비우면 브라우저 현재 탭 사용
 DEFAULT_MANGO_URL = ""
 
 
@@ -260,7 +260,7 @@ def run_apply_policy(
             rows = list_checked_policy_rows(page)
             result.total_checked = len(rows)
             if not rows:
-                result.errors.append("체크된 정책적용 행이 없습니다.")
+                result.errors.append("체크된 필터단위 마진정책 행이 없습니다.")
                 _log(progress, result.errors[0], major=True)
                 return result
 
@@ -319,12 +319,12 @@ def run_apply_policy(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="P1_정책적용 — 체크된 행에 정책명 일괄 적용")
+    parser = argparse.ArgumentParser(description="P1_필터단위_마진정책적용 — 체크된 행에 정책명 일괄 적용")
     parser.add_argument("--policy-name", required=True, help="적용할 정책명")
     parser.add_argument(
         "--mango-url",
         default=DEFAULT_MANGO_URL,
-        help="정책적용 목록 URL (비우면 현재 브라우저 화면 사용)",
+        help="필터단위 마진정책 목록 URL (비우면 현재 브라우저 화면 사용)",
     )
     args = parser.parse_args(argv)
     result = run_apply_policy(args.policy_name, mango_url=args.mango_url)
