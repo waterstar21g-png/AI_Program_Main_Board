@@ -1,6 +1,14 @@
-# Mango_Helper_AI_Board **v1.0.1** (Python 보드)
+# 망고보드 (mango board) **v1.0.2**
 
-**AI_Program_Main_Board** 의 **메인 UI 셸만** 복사한 신규 보드입니다.  
+공식 프로젝트명: **Mango_Helper_AI_Board**
+
+| 용어 | 의미 |
+|------|------|
+| **망고보드** | 이 보드의 한글 약칭 |
+| **mango board** | 이 보드의 영문 약칭 |
+| **AI 메인보드** | 기존 `AI_Program_Main_Board` (구분 대상) |
+
+**AI 메인보드**의 **메인 UI 셸만** 복사한 신규 보드입니다.  
 신규 프로그램은 `programs/` 폴더에 추가하고 `board/app.py` 의 `PROGRAMS` 목록에 등록합니다.
 
 로컬 경로(권장):
@@ -39,7 +47,8 @@ python board\app.py
 
 | 경로 | 역할 |
 |------|------|
-| `board/app.py` | 메인 보드 UI (헤더·사이드바·프로그램 탭) |
+| `board/app.py` | 망고보드 메인 UI (헤더·사이드바·프로그램 탭) |
+| `board/terms.py` | 용어 정의 (망고보드 / mango board) |
 | `board/self_update.py` | 머지반영 업데이트 (GitHub main 강제 반영) |
 | `programs/` | 신규 프로그램 추가 폴더 |
 | `VERSION.txt` | 버전 단일 소스 |

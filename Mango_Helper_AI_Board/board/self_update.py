@@ -1,4 +1,4 @@
-"""Mango_Helper_AI_Board — '머지반영 업데이트' GitHub main 반영 + 재시작."""
+"""망고보드 — '머지반영 업데이트' GitHub main 반영 + 재시작."""
 
 from __future__ import annotations
 

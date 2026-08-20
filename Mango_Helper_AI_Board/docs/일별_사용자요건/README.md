@@ -2,6 +2,16 @@
 
 CHANGELOG와 **별도**로, 사용자가 요청한 내용을 **원문 그대로** 보관합니다.
 
+## 용어 (망고보드)
+
+| 약칭 | 공식명 | 비고 |
+|------|--------|------|
+| **망고보드** | Mango_Helper_AI_Board | 한글 약칭 |
+| **mango board** | Mango_Helper_AI_Board | 영문 약칭 |
+| AI 메인보드 | AI_Program_Main_Board | 구분 대상 |
+
+정의 파일: `board/terms.py`
+
 ## 디렉터리
 
 - 경로: `docs/일별_사용자요건/`
