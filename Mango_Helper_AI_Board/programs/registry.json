@@ -1,0 +1,81 @@
+{
+  "repository": "Mango_Helper_AI_Board",
+  "display_name_ko": "망고보드",
+  "display_name_en": "mango board",
+  "github": "https://github.com/waterstar21g-png/Mango_Helper_AI_Board",
+  "parent_repo": "https://github.com/waterstar21g-png/AI_Program_Main_Board",
+  "parent_branch": "cursor/mango-helper-ai-board-0c73",
+  "parent_folder": "Mango_Helper_AI_Board",
+  "local_path_windows": "D:\\My_Project\\Mango_Helper_AI_Board",
+  "board_entry": "run.bat",
+  "programs": [
+    {
+      "id": "install_all",
+      "name": "PC 원클릭 전체 설치",
+      "folder": ".",
+      "script": "scripts/install-all.ps1",
+      "launcher": "망고보드_한번에설치.bat",
+      "board_tab": null,
+      "description": "clone·pip·바로가기·확인 한 번에"
+    },
+    {
+      "id": "board",
+      "name": "망고보드 메인 UI",
+      "folder": ".",
+      "script": "board/app.py",
+      "launcher": "run.bat",
+      "board_tab": null,
+      "description": "Tkinter 보드 — 모든 프로그램 탭"
+    },
+    {
+      "id": "p1_policy",
+      "name": "P1_필터단위_마진정책적용",
+      "folder": "P1_필터단위_마진정책적용",
+      "script": "apply_policy.py",
+      "launcher": "run.bat",
+      "board_tab": "p1",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "정책명 입력 → 체크 행 순차 적용확인"
+    },
+    {
+      "id": "p2_count",
+      "name": "P2_필터단위_상품수변경",
+      "folder": "P2_필터단위_상품수변경",
+      "script": "update_product_count.py",
+      "launcher": "run.bat",
+      "board_tab": "p2_count",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "적용상품수 일괄 갱신"
+    },
+    {
+      "id": "p2_collect",
+      "name": "P2_더망고 대량수집",
+      "folder": "P2",
+      "script": "collect.py",
+      "launcher": "run.bat",
+      "board_tab": "p2",
+      "login": "더망고 (Chrome CDP 9222 + 확장)",
+      "description": "엑셀 카테고리 URL 대량 수집"
+    },
+    {
+      "id": "p3_filter",
+      "name": "P3_필터_갱신",
+      "folder": "P3_필터_갱신",
+      "script": "update_filters.py",
+      "launcher": "run.bat",
+      "board_tab": "p3",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "검색필터 저장상품수 갱신"
+    },
+    {
+      "id": "p3_fitcl",
+      "name": "P3_핏클상세페이지",
+      "folder": "P3_핏클상세페이지",
+      "script": "fitcl_detail.py",
+      "launcher": "run.bat",
+      "board_tab": "p3_fitcl",
+      "login": "FitCL fitcl.ai (Chrome CDP 9222)",
+      "description": "모델컷 10장 + 디테일컷 5장 추출"
+    }
+  ]
+}
