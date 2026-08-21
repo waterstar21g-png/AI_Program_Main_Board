@@ -122,6 +122,20 @@ class FakePage:
     def wait_for_load_state(self, state, timeout=None):
         self.waited = True
 
+    def wait_for_timeout(self, ms):
+        return None
+
+    def evaluate(self, script, *args):
+        if "location.href" in script:
+            return {
+                "url": "about:blank",
+                "title": "",
+                "selects": [],
+                "buttons": [],
+                "frames": 0,
+            }
+        return self._scan
+
 
 def _select_page(selected=0):
     return FakePage(FakeSelect(MANGO_OPTIONS, MANGO_VALUES, selected))
@@ -310,7 +324,8 @@ def test_apply_site_filter_all_skips_screen():
     assert page.locators == []  # 화면을 건드리지 않음
 
 
-def test_apply_site_filter_missing_select_fails():
+def test_apply_site_filter_missing_select_fails(monkeypatch):
+    monkeypatch.setattr(uco, "T_SITE", 300)
     assert uco.apply_site_filter(FakePage(), "MUSINSA.com") is False
 
 
@@ -550,17 +565,24 @@ def test_option_lines_include_sites():
 
 
 class FakeFrame:
-    def __init__(self, select=None, names=()):
+    def __init__(self, select=None, names=(), url="https://tmg1898.cafe24.com/frame"):
         self._select = select
         self._names = list(names)
+        self.url = url
 
     def locator(self, selector):
         if self._select is not None and uco.SITE_SELECT_NAME in selector:
             return self._select
         return MissingLocator()
 
-    def eval_on_selector_all(self, selector, script):
-        return self._names
+    def evaluate(self, script, *args):
+        return {
+            "url": self.url,
+            "title": "frame",
+            "selects": self._names,
+            "buttons": ["선택조건으로 검색하기"],
+            "frames": 0,
+        }
 
 
 class FramedPage:
@@ -574,8 +596,14 @@ class FramedPage:
     def locator(self, selector):
         return MissingLocator()
 
-    def eval_on_selector_all(self, selector, script):
-        return ["date_type", "start_yy"]
+    def evaluate(self, script, *args):
+        return {
+            "url": "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsCategory.php",
+            "title": "The.Mango",
+            "selects": ["date_type", "start_yy"],
+            "buttons": ["선택조건으로 검색하기"],
+            "frames": 1,
+        }
 
     def wait_for_timeout(self, ms):
         self.waits += 1
@@ -588,17 +616,36 @@ def test_site_select_found_inside_frame():
     assert uco.read_site_options(page) == MANGO_SITES
 
 
-def test_wait_site_select_retries_then_gives_up():
+def test_wait_site_select_retries_then_gives_up(monkeypatch):
+    monkeypatch.setattr(uco, "T_SITE", 500)  # 테스트는 짧게
     page = FramedPage(FakeFrame())  # 어디에도 없음
     logs: list[str] = []
     assert uco.wait_site_select(page, progress=logs.append) is None
-    assert page.waits == uco.POPUP_TRIES
+    assert page.waits >= 1
     assert any("대기" in l for l in logs)
 
 
-def test_dump_selects_lists_names_for_diagnosis():
+def test_site_wait_budget_is_five_seconds():
+    """시작 시 한 번만 하는 단계라 넉넉히 5초."""
+    assert uco.T_SITE == 5_000
+
+
+def test_pick_list_page_switches_to_tab_with_site_select():
+    good = FramedPage(FakeFrame(select=FakeSelect(MANGO_SITES, ["", "1"])))
+    blank = FramedPage(FakeFrame())
+
+    class Ctx:
+        pages = [blank, good]
+
+    blank.context = Ctx()
+    assert uco.pick_list_page(blank) is good
+
+
+def test_diagnose_reports_url_selects_and_buttons():
     page = FramedPage(FakeFrame(names=["site_id", "sales_yn"]))
     logs: list[str] = []
     names = uco.dump_selects(page, progress=logs.append)
     assert "site_id" in names and "date_type" in names
-    assert any("select 목록" in l for l in logs)
+    joined = " ".join(logs)
+    assert "[진단]" in joined and "url=" in joined
+    assert "선택조건으로 검색하기" in joined  # 버튼 라벨까지 알려준다
