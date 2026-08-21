@@ -1,4 +1,4 @@
-# AI_Program_Main_Board **v2.1.54** (Python B안)
+# AI_Program_Main_Board **v2.1.56** (Python B안)
 
 **최종 UI:** Python 심플 보드 (npm / Next.js **없음**)
 
@@ -104,6 +104,26 @@ P2 는 평소 쓰는 Chrome 이 아니라 **전용 프로필**(`P2/.chrome-profi
   (상품수 읽기 로직은 전부 주석처리)
 - 처음 **5개 처리행**은 `수집조건수정` · `저장하기` · `확인` 뒤 **각 3초 대기**(화면 변화
   확인용), **6번째 행부터는 지연 없이 최고속**
+
+## 별도 보드 — 망고보드 (`Mango_Helper_AI_Board/`)
+
+**망고보드는 AI보드(이 보드)와 별개의 독립 보드입니다.** 위 프로그램 표(P1·P2 …)에
+들어가는 기능이 아니라, 자기 실행·버전·문서를 가진 또 하나의 보드입니다.
+
+| 구분 | AI board (이 저장소 루트) | 망고보드 (`Mango_Helper_AI_Board/`) |
+|------|--------------------------|------------------------------------|
+| 실행 | 루트 `run.bat` · 바탕화면 아이콘 | `Mango_Helper_AI_Board\run.bat` (아이콘: `망고보드_바탕화면아이콘.bat`) |
+| 버전 | 루트 `VERSION.txt` (v2.x) | `Mango_Helper_AI_Board\VERSION.txt` (v1.x) |
+| 요건문서 | `docs/일별_사용자요건/` | `Mango_Helper_AI_Board\docs\일별_사용자요건\` |
+| PC 폴더 | `D:\My_Project\AI_Program_Main_Board` | `D:\My_Project\Mango_Helper_AI_Board` |
+| 포함 | P1 · P1_101 · P1_102 · P1_ZARA_DE · P2 · P3_필터_갱신 | 망고·FitCL 전용 프로그램 (망고보드 문서 참조) |
+
+- AI보드 기능·버전 체계는 **이 폴더 추가로 아무 영향도 받지 않습니다.**
+- 망고보드는 AI보드 소스를 import·수정하지 않고, 갱신도 자기 폴더 기준으로만 합니다.
+- 망고보드 안내: [`Mango_Helper_AI_Board/README.md`](Mango_Helper_AI_Board/README.md) ·
+  [`Mango_Helper_AI_Board/REPOSITORY.md`](Mango_Helper_AI_Board/REPOSITORY.md)
+- 최종 목표는 독립 저장소 `Mango_Helper_AI_Board` 이며, 그때까지는 이 저장소 `main` 의
+  하위 폴더에 함께 보관합니다.
 
 ## 예전 Next UI
 

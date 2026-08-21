@@ -14,3 +14,11 @@
 
 보드 UI: `board/app.py`  
 이전 Next.js 보드: `legacy-next/` (보관용)
+
+## 별도 보드 (AI보드 프로그램 아님)
+
+| 보드 | 폴더 | 설명 |
+|------|------|------|
+| **망고보드** (`Mango_Helper_AI_Board`) | `Mango_Helper_AI_Board/` | AI보드와 **별개의 독립 보드** — 자체 `run.bat`·`VERSION.txt`·`docs/`. 위 P1~P3 목록에 포함되지 않음 |
+
+망고보드 실행: `Mango_Helper_AI_Board\run.bat` (PC 폴더 `D:\My_Project\Mango_Helper_AI_Board`)
