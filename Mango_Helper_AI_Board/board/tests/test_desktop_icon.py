@@ -36,12 +36,47 @@ def test_desktop_dirs_empty_env_is_safe():
     assert desktop_icon.desktop_dirs({}) == []
 
 
-def test_shortcut_paths_include_desktops_and_project_folder(tmp_path):
+def test_shortcut_paths_default_is_single_executable_icon(monkeypatch, tmp_path):
     env = _fake_desktops(tmp_path)
+    monkeypatch.setattr(desktop_icon, "registry_desktop", lambda runner=None: None)
     paths = desktop_icon.shortcut_paths(ROOT, env)
+    assert len(paths) == 1
+    assert paths[0].name == "망고보드.lnk"
+    assert paths[0].parent == desktop_icon.desktop_dirs(env)[0]
+
+
+def test_shortcut_paths_all_targets_includes_project_copy(monkeypatch, tmp_path):
+    env = _fake_desktops(tmp_path)
+    paths = desktop_icon.shortcut_paths(ROOT, env, all_targets=True)
     assert all(p.name == "망고보드.lnk" for p in paths)
     assert paths[-1] == ROOT / "망고보드.lnk"  # 드래그용 사본
     assert len(paths) == len(desktop_icon.desktop_dirs(env)) + 1
+
+
+def test_primary_desktop_prefers_registry_value(tmp_path):
+    real = tmp_path / "OneDriveDesktop"
+    real.mkdir()
+
+    class Proc:
+        stdout = f"\r\n    Desktop    REG_SZ    {real}\r\n".encode("cp949")
+
+    picked = desktop_icon.primary_desktop({}, runner=lambda _args: Proc())
+    assert picked == real
+
+
+def test_parse_reg_desktop_handles_spaces_in_path():
+    line = "    Desktop    REG_SZ    C:\\Users\\me\\OneDrive\\바탕 화면\r\n"
+    assert desktop_icon.parse_reg_desktop(line) == "C:\\Users\\me\\OneDrive\\바탕 화면"
+    assert desktop_icon.parse_reg_desktop("Personal REG_SZ C:\\docs") == ""
+
+
+def test_create_reports_when_no_desktop_found(monkeypatch, tmp_path):
+    (tmp_path / "run.bat").write_text("@echo off\n", encoding="utf-8")
+    monkeypatch.setattr(desktop_icon, "is_windows", lambda: True)
+    monkeypatch.setattr(desktop_icon, "shortcut_paths", lambda *a, **k: [])
+    result = desktop_icon.create(tmp_path)
+    assert result["ok"] is False
+    assert "바탕화면" in result["message"]
 
 
 def test_build_powershell_points_at_run_bat(tmp_path):

@@ -65,12 +65,82 @@ def desktop_dirs(env: dict[str, str] | None = None) -> list[Path]:
     return found
 
 
-def shortcut_paths(root: Path | None = None, env: dict[str, str] | None = None) -> list[Path]:
-    """만들 .lnk 경로 — 바탕화면들 + 프로젝트 폴더(드래그용)."""
+REG_DESKTOP_KEY = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Folders"
+
+
+def parse_reg_desktop(output: str) -> str:
+    """`reg query … /v Desktop` 출력에서 실제 바탕화면 경로만 뽑는다."""
+    for line in (output or "").splitlines():
+        parts = line.split()
+        if len(parts) < 3 or parts[0].strip().lower() != "desktop":
+            continue
+        idx = line.lower().find("reg_sz")
+        if idx < 0:
+            continue
+        return line[idx + len("reg_sz") :].strip()
+    return ""
+
+
+def registry_desktop(runner=None) -> Path | None:
+    """Windows 가 실제로 쓰는 바탕화면 폴더 (OneDrive 리디렉션 포함)."""
+    if runner is None:
+        if not is_windows():
+            return None
+
+        def runner(args):  # noqa: WPS430
+            return subprocess.run(args, capture_output=True, timeout=15, check=False)
+
+    try:
+        proc = runner(["reg", "query", REG_DESKTOP_KEY, "/v", "Desktop"])
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+    out = getattr(proc, "stdout", b"") or b""
+    if isinstance(out, bytes):
+        for enc in ("cp949", "utf-8", "mbcs"):
+            try:
+                out = out.decode(enc)
+                break
+            except (UnicodeDecodeError, LookupError):
+                continue
+        else:
+            out = out.decode("utf-8", errors="replace")
+
+    path = parse_reg_desktop(str(out))
+    if not path:
+        return None
+    expanded = Path(os.path.expandvars(path))
+    return expanded if expanded.is_dir() else None
+
+
+def primary_desktop(env: dict[str, str] | None = None, runner=None) -> Path | None:
+    """아이콘을 놓을 바탕화면 한 곳 — 레지스트리 값 우선."""
+    reg = registry_desktop(runner)
+    if reg is not None:
+        return reg
+    dirs = desktop_dirs(env)
+    return dirs[0] if dirs else None
+
+
+def shortcut_paths(
+    root: Path | None = None,
+    env: dict[str, str] | None = None,
+    *,
+    all_targets: bool = False,
+) -> list[Path]:
+    """만들 .lnk 경로.
+
+    기본: **실행파일 아이콘 1개** — 실제 바탕화면에만.
+    `all_targets=True`: 바탕화면 후보 전부 + 프로젝트 폴더(드래그용) 사본.
+    """
     root = root or board_root()
-    paths = [d / LNK_NAME for d in desktop_dirs(env)]
-    paths.append(root / LNK_NAME)
-    return paths
+    if all_targets:
+        paths = [d / LNK_NAME for d in desktop_dirs(env)]
+        paths.append(root / LNK_NAME)
+        return paths
+
+    desktop = primary_desktop(env)
+    return [desktop / LNK_NAME] if desktop is not None else []
 
 
 def _ps_quote(value: str) -> str:
@@ -123,8 +193,13 @@ def powershell_command(script: str) -> list[str]:
     ]
 
 
-def create(root: Path | None = None, env: dict[str, str] | None = None) -> dict:
-    """바탕화면 아이콘 생성. 반환: ok · created · failed · message."""
+def create(
+    root: Path | None = None,
+    env: dict[str, str] | None = None,
+    *,
+    all_targets: bool = False,
+) -> dict:
+    """바탕화면에 실행파일 아이콘 생성. 반환: ok · created · failed · message."""
     root = root or board_root()
     launcher = root / LAUNCHER
     if not launcher.is_file():
@@ -142,7 +217,14 @@ def create(root: Path | None = None, env: dict[str, str] | None = None) -> dict:
             "message": "바탕화면 바로가기(.lnk)는 Windows 에서만 생성됩니다.",
         }
 
-    targets = shortcut_paths(root, env)
+    targets = shortcut_paths(root, env, all_targets=all_targets)
+    if not targets:
+        return {
+            "ok": False,
+            "created": [],
+            "failed": [],
+            "message": "바탕화면 폴더를 찾지 못했습니다.",
+        }
     script = build_powershell(root, targets)
     try:
         proc = subprocess.run(
@@ -174,13 +256,15 @@ def create(root: Path | None = None, env: dict[str, str] | None = None) -> dict:
     return {"ok": ok, "created": created, "failed": failed, "message": message}
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = list(argv if argv is not None else sys.argv[1:])
+    all_targets = "--all" in args  # 바탕화면 후보 전부 + 폴더 사본까지
     root = board_root()
     print("=" * 44)
     print("  망고보드 바탕화면 아이콘 만들기")
     print(f"  경로: {root}")
     print("=" * 44)
-    result = create(root)
+    result = create(root, all_targets=all_targets)
     print(result["message"])
     for f in result["failed"]:
         print(f"  [실패] {f}")
