@@ -43,9 +43,9 @@ if not exist "%ROOT%\run.bat" (
   :: 독립 repo clone 시도
   git clone https://github.com/waterstar21g-png/Mango_Helper_AI_Board.git . 2>nul
   if not exist "%ROOT%\run.bat" (
-    echo [안내] 독립 repo 비어있음 - 부모 브랜치에서 복사...
+    echo [안내] 독립 repo 비어있음 - 부모 저장소 main 에서 복사...
     set "TMP=%TEMP%\mango_parent_%RANDOM%"
-    git clone -b cursor/mango-helper-ai-board-0c73 --single-branch --depth 1 https://github.com/waterstar21g-png/AI_Program_Main_Board.git "!TMP!"
+    git clone -b main --single-branch --depth 1 https://github.com/waterstar21g-png/AI_Program_Main_Board.git "!TMP!"
     if exist "!TMP!\Mango_Helper_AI_Board\run.bat" (
       xcopy "!TMP!\Mango_Helper_AI_Board\*" "%ROOT%\" /E /Y /Q >nul
       echo [OK] 소스 복사 완료

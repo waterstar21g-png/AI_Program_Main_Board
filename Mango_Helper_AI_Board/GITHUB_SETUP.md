@@ -14,7 +14,7 @@
 
 ```powershell
 Set-Location D:\My_Project\AI_Program_Main_Board
-git pull origin cursor/mango-helper-ai-board-0c73
+git pull origin main
 Set-Location Mango_Helper_AI_Board
 .\scripts\publish-standalone.ps1
 ```

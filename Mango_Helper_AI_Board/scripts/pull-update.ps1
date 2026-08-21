@@ -17,8 +17,8 @@ if (Test-Path ".git") {
     if (Test-Path (Join-Path $parent ".git")) {
         Set-Location $parent
         Write-Host "부모 저장소에서 pull: $parent" -ForegroundColor Yellow
-        git fetch origin cursor/mango-helper-ai-board-0c73 --prune
-        git pull origin cursor/mango-helper-ai-board-0c73
+        git fetch origin main --prune
+        git pull origin main
         Set-Location $Root
     } else {
         Write-Host "[ERROR] .git 없음. PC_SETUP.md 의 클론 절차를 따르세요." -ForegroundColor Red

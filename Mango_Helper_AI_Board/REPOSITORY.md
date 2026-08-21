@@ -9,7 +9,7 @@
 | 영문 약칭 | **mango board** |
 | 독립 GitHub (목표) | `waterstar21g-png/Mango_Helper_AI_Board` |
 | 부모 저장소 (개발 중) | `waterstar21g-png/AI_Program_Main_Board` |
-| 부모 브랜치 | `cursor/mango-helper-ai-board-0c73` |
+| 부모 브랜치 | `main` |
 | 부모 내 경로 | `Mango_Helper_AI_Board/` |
 
 ## PC 권장 경로
@@ -31,11 +31,13 @@ D:\My_Project\Mango_Helper_AI_Board
 
 전체 목록: `programs/registry.json`
 
-## AI board 와의 관계
+## AI board 와의 관계 — 별개의 독립 보드
 
-- **AI board** = `AI_Program_Main_Board` (별도 유지, 삭제하지 않음)
-- **망고보드** = 망고·FitCL 연동 프로그램만 모은 보드
-- 소스 복사 시 AI board 원본은 그대로 둡니다.
+- **AI board** = `AI_Program_Main_Board` (별도 보드로 그대로 유지, 삭제하지 않음)
+- **망고보드** = 망고·FitCL 연동 프로그램만 모은 **독립 보드** — AI보드의 하위 기능이 아님
+- 실행(`run.bat`)·버전(`VERSION.txt`)·요건문서(`docs/일별_사용자요건/`)·업데이트를
+  모두 이 폴더 안에서 자체적으로 가짐
+- AI board 소스를 import·수정하지 않음 (부모 저장소에 폴더로 함께 있어도 무관하게 동작)
 
 ## 버전
 

@@ -6,6 +6,7 @@
 .data/
 *.xlsx
 !docs/**/*.xlsx
+*.lnk
 P2/.chrome-profile/
 P2/run-logs/
 P2/.collect_stop

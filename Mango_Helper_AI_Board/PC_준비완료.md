@@ -46,7 +46,7 @@ D:\My_Project\Mango_Helper_AI_Board
 Mango_Helper_AI_Board\망고보드_한번에설치.bat
 ```
 
-또는 GitHub에서 `cursor/mango-helper-ai-board-0c73` 브랜치의  
+또는 GitHub 부모 저장소 `main` 의  
 `Mango_Helper_AI_Board` 폴더 전체를 받은 뒤 실행.
 
 ### 3) 더블클릭

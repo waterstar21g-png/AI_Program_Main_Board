@@ -17,13 +17,16 @@ Set-Location Mango_Helper_AI_Board
 
 저장소가 아직 없으면 `scripts\publish-standalone.ps1` 또는 `GITHUB_SETUP.md` 참고.
 
-### B. 부모 저장소에서 (현재 개발 브랜치)
+### B. 부모 저장소 `main` 에서
 
 ```powershell
 Set-Location D:\My_Project
-git clone -b cursor/mango-helper-ai-board-0c73 https://github.com/waterstar21g-png/AI_Program_Main_Board.git
+git clone -b main https://github.com/waterstar21g-png/AI_Program_Main_Board.git
 Set-Location AI_Program_Main_Board\Mango_Helper_AI_Board
 ```
+
+이 경우에도 망고보드는 **AI보드와 별개**로 동작합니다 — 같은 저장소에 폴더만
+들어 있을 뿐, 실행·버전·업데이트는 이 폴더 안에서만 이뤄집니다.
 
 ---
 
@@ -54,7 +57,16 @@ py -3 -m pip install -r P2\requirements.txt
 .\run.bat
 ```
 
-바탕화면 **망고보드** 바로가기는 `setup-pc.ps1` 실행 시 자동 생성됩니다.
+바탕화면 **망고보드** 바로가기는 `setup-pc.ps1` · `망고보드_한번에설치.bat` 실행 시
+자동 생성됩니다. 아이콘만 다시 만들려면:
+
+```powershell
+.\망고보드_바탕화면아이콘.bat     # 또는 py -3 board\desktop_icon.py
+```
+
+보드 안에서는 좌측 하단 **[바탕화면 아이콘 만들기]** 버튼으로도 됩니다.
+OneDrive 바탕화면·한글 「바탕 화면」 폴더까지 찾아 각각 만들고, 프로젝트 폴더에도
+드래그용 사본을 둡니다.
 
 ### 개별 프로그램 바로가기
 

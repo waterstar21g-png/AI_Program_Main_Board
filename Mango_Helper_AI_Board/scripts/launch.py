@@ -40,6 +40,24 @@ def list_programs() -> None:
         print()
 
 
+def build_command(script: Path, extra_args: list[str]) -> list[str]:
+    """확장자별 실행 명령 — .py 는 파이썬, .ps1/.bat 는 Windows 셸."""
+    suffix = script.suffix.lower()
+    if suffix == ".ps1":
+        return [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            *extra_args,
+        ]
+    if suffix in (".bat", ".cmd"):
+        return ["cmd", "/c", str(script), *extra_args]
+    return [sys.executable, str(script), *extra_args]
+
+
 def run_program(prog_id: str, extra_args: list[str]) -> int:
     data = load_registry()
     prog = next((p for p in data["programs"] if p["id"] == prog_id), None)
@@ -56,7 +74,7 @@ def run_program(prog_id: str, extra_args: list[str]) -> int:
         if not script.is_file():
             print(f"스크립트 없음: {script}", file=sys.stderr)
             return 1
-        cmd = [sys.executable, str(script), *extra_args]
+        cmd = build_command(script, extra_args)
 
     print(f"[망고보드] {prog['name']} 실행")
     print(f"  cwd: {folder}")

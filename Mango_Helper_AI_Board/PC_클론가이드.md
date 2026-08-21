@@ -20,7 +20,7 @@ Set-Location D:\My_Project\Mango_Helper_AI_Board
 ```
 
 **한 번에 수행:**
-- GitHub 소스 자동 받기 (독립 repo → 비어 있으면 부모 브랜치 폴백)
+- GitHub 소스 자동 받기 (독립 repo → 비어 있으면 부모 저장소 `main` 폴백)
 - pip 설치
 - 바탕화면 바로가기
 - 동작 확인
@@ -35,6 +35,12 @@ Set-Location D:\My_Project\Mango_Helper_AI_Board
 ```
 
 또는 바탕화면 **망고보드** 더블클릭
+
+바탕화면 아이콘이 없으면:
+
+```powershell
+.\망고보드_바탕화면아이콘.bat
+```
 
 ---
 

@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoUrl      = "https://github.com/waterstar21g-png/Mango_Helper_AI_Board.git"
 $ParentUrl    = "https://github.com/waterstar21g-png/AI_Program_Main_Board.git"
-$ParentBranch = "cursor/mango-helper-ai-board-0c73"
+$ParentBranch = "main"
 $DefaultRoot  = "D:\My_Project\Mango_Helper_AI_Board"
 $AiBoardPath  = "D:\My_Project\AI_Program_Main_Board"   # 절대 수정 금지
 
