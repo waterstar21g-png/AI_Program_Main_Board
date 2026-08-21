@@ -74,11 +74,26 @@ def test_no_live_reference_to_dev_branch():
     assert not hits, f"개발 브랜치 참조 남음: {hits}"
 
 
+# 다른 보드 이름이 문자열로 등장해도 되는 파일 — 소스를 import 하는 게 아니라
+# 이름 구분(terms) 또는 원격 저장소 URL(auto_update: 부모 repo 폴백) 용도
+NAME_MENTION_ALLOWED = {"terms.py", "auto_update.py", "test_auto_update.py"}
+
+
 def test_python_sources_do_not_reach_into_ai_board():
     hits = [
         str(p.relative_to(ROOT))
         for p in _live_files()
-        if p.suffix == ".py" and AI_BOARD in p.read_text(encoding="utf-8", errors="ignore")
-        and p.name != "terms.py"
+        if p.suffix == ".py"
+        and p.name not in NAME_MENTION_ALLOWED
+        and AI_BOARD in p.read_text(encoding="utf-8", errors="ignore")
     ]
     assert not hits, f"AI보드 참조 코드: {hits}"
+
+
+def test_auto_update_only_uses_ai_board_as_remote_url():
+    """부모 repo 이름은 원격 URL 로만 등장해야 한다 (로컬 경로·import 금지)."""
+    text = (BOARD_DIR / "auto_update.py").read_text(encoding="utf-8")
+    for line in text.splitlines():
+        if AI_BOARD not in line:
+            continue
+        assert "PARENT_REPO" in line or "raw" in line or "github" in line or "#" in line

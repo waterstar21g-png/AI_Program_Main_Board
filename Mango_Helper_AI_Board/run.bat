@@ -31,7 +31,17 @@ pause
 exit /b 1
 
 :havepy
-echo [1/2] pip install ...
+:: 바탕화면 아이콘 실행 시 최신 소스 자동 반영 (--noupdate 로 생략)
+if /I "%~1"=="--noupdate" goto skipupdate
+echo [1/3] 최신 버전 확인 · 자동 반영 ...
+call %PY% board\auto_update.py
+goto afterupdate
+
+:skipupdate
+echo [1/3] 자동 반영 생략 (--noupdate)
+
+:afterupdate
+echo [2/3] pip install ...
 call %PY% -m pip install --quiet --disable-pip-version-check -r requirements.txt
 if errorlevel 1 (
   echo [ERROR] pip install failed
@@ -39,6 +49,6 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [2/2] board start
+echo [3/3] board start
 call %PY% board\app.py
 if errorlevel 1 pause
