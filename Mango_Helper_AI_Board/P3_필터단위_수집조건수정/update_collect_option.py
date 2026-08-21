@@ -104,8 +104,8 @@ T_FIELD = 2_000  # 입력/드롭다운 등장 대기 (ms)
 T_READ = 200  # 현재값 읽기 (ms)
 T_CLOSE = 800  # 팝업 닫힘 대기 (ms)
 T_NAV = 5_000  # 목록 화면 이동 대기 (ms)
-T_POPUP = 300  # 수집조건수정 팝업 열기·렌더 대기 (ms) — 요건: 0.3초
-POPUP_TRIES = 4  # 0.3초 단위로 최대 4회 (요소가 뜨면 즉시 진행)
+T_POPUP = 1_000  # 팝업·드롭다운 렌더 대기 (ms) — 요건: 1초
+POPUP_TRIES = 3  # 1초 단위로 최대 3회 (요소가 뜨면 즉시 진행)
 GAP_ROW = 0.02  # 행 간 간격 (초)
 GAP_SEARCH = 0.15  # 검색 후 목록 정착 (초)
 
@@ -365,20 +365,77 @@ def find_translate_select(page):
     return None
 
 
-def find_site_select(page):
-    """`select[name="site_id"]` — 필터 목록 화면 검색줄의 수집사이트 드롭다운."""
+def contexts(page) -> list:
+    """페이지 + 모든 프레임 (망고 화면이 프레임을 쓰는 경우 대응)."""
+    out = [page]
     try:
-        loc = page.locator(f'select[name="{SITE_SELECT_NAME}"]').first
-        if loc.count() > 0:
-            return loc
+        for f in page.frames:
+            if f is not page and f not in out:
+                out.append(f)
     except Exception:
         pass
+    return out
+
+
+def dump_selects(page, *, progress: ProgressFn | None = None) -> list[str]:
+    """화면에 있는 select 의 name/id 목록 — 미검출 원인 파악용."""
+    found: list[str] = []
+    for ctx in contexts(page):
+        try:
+            names = ctx.eval_on_selector_all(
+                "select", "els => els.map(e => e.name || e.id || '(무명)')"
+            )
+        except Exception:
+            continue
+        found.extend(str(n) for n in names or [])
+    _log(progress, f"  화면 select 목록({len(found)}): {found[:20]}", major=True)
+    return found
+
+
+def find_site_select(page):
+    """`select[name="site_id"]` — 필터 목록 검색줄의 수집사이트 드롭다운.
+
+    프레임 안에 있을 수 있고, name 이 바뀌었을 수도 있어 옵션 텍스트로도 찾는다.
+    """
+    for ctx in contexts(page):
+        try:
+            loc = ctx.locator(f'select[name="{SITE_SELECT_NAME}"]').first
+            if loc.count() > 0:
+                return loc
+        except Exception:
+            continue
+
+    # 폴백: 「수집사이트」 옵션을 가진 select
+    for ctx in contexts(page):
+        try:
+            loc = ctx.locator(
+                'xpath=//select[.//option[contains(normalize-space(.),"수집사이트")]]'
+            ).first
+            if loc.count() > 0:
+                return loc
+        except Exception:
+            continue
+    return None
+
+
+def wait_site_select(page, *, progress: ProgressFn | None = None):
+    """수집사이트 드롭다운이 뜰 때까지 1초 단위로 확인 (뜨면 즉시 반환)."""
+    for attempt in range(1, POPUP_TRIES + 1):
+        loc = find_site_select(page)
+        if loc is not None:
+            return loc
+        try:
+            page.wait_for_timeout(T_POPUP)
+        except Exception:
+            time.sleep(T_POPUP / 1000)
+        if attempt == 1:
+            _log(progress, f"  수집사이트 드롭다운 대기 {T_POPUP}ms …")
     return None
 
 
 def read_site_options(page) -> list[str]:
     """수집사이트 드롭다운의 옵션 텍스트 목록."""
-    loc = find_site_select(page)
+    loc = wait_site_select(page)
     if loc is None:
         return []
     try:
@@ -402,15 +459,18 @@ def click_search(page, *, progress: ProgressFn | None = None) -> bool:
         'xpath=//*[self::a or self::button or self::input]'
         '[contains(normalize-space(.),"검색") or @value="검색"]',
     )
-    for i, sel in enumerate(selectors, start=1):
+    attempts = [(ctx, s) for s in selectors for ctx in contexts(page)]
+    for i, (ctx, sel) in enumerate(attempts, start=1):
         try:
-            loc = page.locator(sel).first
+            loc = ctx.locator(sel).first
             if loc.count() == 0:
                 continue
             loc.click(timeout=T_CLICK)
             _log(
                 progress,
-                f"  [{SEARCH_BUTTON_LABEL}] 클릭" if i <= 2 else "  검색 버튼 클릭(폴백)",
+                f"  [{SEARCH_BUTTON_LABEL}] 클릭"
+                if i <= 2 * len(contexts(page))
+                else "  검색 버튼 클릭(폴백)",
             )
             return True
         except Exception:
@@ -435,9 +495,10 @@ def apply_site_filter(
         _log(progress, "수집사이트: 전체 (검색조건 미변경)", major=True)
         return True
 
-    loc = find_site_select(page)
+    loc = wait_site_select(page, progress=progress)
     if loc is None:
         _log(progress, "오류: 수집사이트 드롭다운 미검출", major=True)
+        dump_selects(page, progress=progress)
         return False
 
     options = read_site_options(page)

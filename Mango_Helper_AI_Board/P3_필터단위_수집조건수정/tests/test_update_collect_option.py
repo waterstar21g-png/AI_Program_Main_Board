@@ -497,13 +497,13 @@ def test_step_timeouts_are_fast():
     assert uco.GAP_SEARCH <= 0.2
 
 
-def test_popup_budget_is_300ms():
-    """요건: 팝업 열기·렌더 대기 0.3초."""
-    assert uco.T_POPUP == 300
+def test_popup_budget_is_one_second():
+    """요건: 팝업·드롭다운 렌더 대기 1초 (0.3초는 목록이 덜 뜬 상태에서 실패)."""
+    assert uco.T_POPUP == 1_000
 
 
 class SlowPopup(FakePopup):
-    """첫 0.3초에 안 뜨는 팝업 — 재시도로 성공."""
+    """첫 1초에 안 뜨는 팝업 — 재시도로 성공."""
 
     def __init__(self):
         super().__init__()
@@ -544,3 +544,61 @@ def test_option_lines_include_sites():
     text = uco.format_option_lines(MANGO_OPTIONS, MANGO_SITES)
     assert uco.parse_option_lines(text) == MANGO_OPTIONS
     assert uco.parse_site_lines(text) == MANGO_SITES
+
+
+# ── 프레임 안 드롭다운 · 대기 · 진단 (수집사이트 미검출 대응) ─────
+
+
+class FakeFrame:
+    def __init__(self, select=None, names=()):
+        self._select = select
+        self._names = list(names)
+
+    def locator(self, selector):
+        if self._select is not None and uco.SITE_SELECT_NAME in selector:
+            return self._select
+        return MissingLocator()
+
+    def eval_on_selector_all(self, selector, script):
+        return self._names
+
+
+class FramedPage:
+    """메인 프레임에는 없고 하위 프레임에 수집사이트 select 가 있는 화면."""
+
+    def __init__(self, frame):
+        self.frame = frame
+        self.frames = [self, frame]
+        self.waits = 0
+
+    def locator(self, selector):
+        return MissingLocator()
+
+    def eval_on_selector_all(self, selector, script):
+        return ["date_type", "start_yy"]
+
+    def wait_for_timeout(self, ms):
+        self.waits += 1
+
+
+def test_site_select_found_inside_frame():
+    frame = FakeFrame(select=FakeSelect(MANGO_SITES, ["", "1", "2", "3", "4", "5"]))
+    page = FramedPage(frame)
+    assert uco.find_site_select(page) is not None
+    assert uco.read_site_options(page) == MANGO_SITES
+
+
+def test_wait_site_select_retries_then_gives_up():
+    page = FramedPage(FakeFrame())  # 어디에도 없음
+    logs: list[str] = []
+    assert uco.wait_site_select(page, progress=logs.append) is None
+    assert page.waits == uco.POPUP_TRIES
+    assert any("대기" in l for l in logs)
+
+
+def test_dump_selects_lists_names_for_diagnosis():
+    page = FramedPage(FakeFrame(names=["site_id", "sales_yn"]))
+    logs: list[str] = []
+    names = uco.dump_selects(page, progress=logs.append)
+    assert "site_id" in names and "date_type" in names
+    assert any("select 목록" in l for l in logs)
