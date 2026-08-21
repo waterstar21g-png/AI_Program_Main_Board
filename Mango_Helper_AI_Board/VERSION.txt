@@ -1,3 +1,9 @@
+버전 1.7.2 (Python 보드)
+업데이트: 부트스트랩 복사 누락 방지.
+1) AI보드 루트 망고보드_시작.bat 의 robocopy 에 /IS /IT 추가 — 타임스탬프가 같은
+   옛 파일(app.py 등)이 남아 버전만 바뀌는 문제를 막는다.
+2) board/tests/test_bootstrap_bat.py 신설 — 단계·강제덮어쓰기·데이터보호·대상폴더 검증.
+
 버전 1.7.1 (Python 보드)
 업데이트: 독립 저장소 올리기 원클릭.
 1) 망고보드_독립저장소올리기.bat 신설 — scripts/publish-standalone.ps1 호출.
