@@ -1,3 +1,12 @@
+버전 1.7.0 (Python 보드)
+업데이트: 바탕화면 아이콘 실행 시 최신 소스 자동 반영.
+1) board/auto_update.py 신설 — VERSION.txt 를 원격과 비교해 더 높을 때만 갱신.
+   .git 이 있으면(자기 폴더 또는 부모 저장소) git pull, 없으면 GitHub ZIP 에서
+   필요한 파일만 덮어쓴다. 독립 repo 우선 → 부모 repo(main) 폴백.
+2) run.bat 이 보드 시작 전에 자동갱신을 수행 (--noupdate 로 생략).
+3) 사용자 데이터 보호: run-logs · output · .chrome-profile · *.xlsx ·
+   .translate_options.json · .site_options.json · *.lnk 는 덮지 않음.
+
 버전 1.6.2 (Python 보드)
 업데이트: 바탕화면 아이콘을 작업표시줄에 고정 가능하도록.
 1) board/desktop_icon.py — 핀 폴더(User Pinned\TaskBar) 복사 + 셸 「작업 표시줄에

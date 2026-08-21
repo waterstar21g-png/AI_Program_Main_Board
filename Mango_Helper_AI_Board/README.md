@@ -1,4 +1,4 @@
-# 망고보드 (mango board) **v1.6.2**
+# 망고보드 (mango board) **v1.7.0**
 
 > **공식 저장소명:** `Mango_Helper_AI_Board`  
 > **PC 한 페이지 가이드:** **[PC_클론가이드.md](PC_클론가이드.md)** · 상세: **[PC_SETUP.md](PC_SETUP.md)**
@@ -56,6 +56,26 @@
 
 **모든 프로그램 목록:** `py -3 scripts\launch.py list`  
 **개별 바로가기:** `scripts\launch\` 폴더
+
+## 자동 반영 (아이콘 실행 시)
+
+바탕화면 **[망고보드]** 아이콘(=`run.bat`)을 누르면 보드가 뜨기 전에 최신 버전을
+스스로 확인해 반영합니다.
+
+| 상황 | 동작 |
+|------|------|
+| 원격 버전이 더 높음 | `git pull`(가능하면) 또는 GitHub ZIP 으로 파일 갱신 후 실행 |
+| 이미 최신 | 그대로 실행 |
+| 오프라인·확인 실패 | 그대로 실행 (막지 않음) |
+
+- 대상: 독립 repo `Mango_Helper_AI_Board` 우선, 없으면 부모 repo `main` 의
+  `Mango_Helper_AI_Board/` 폴더
+- `.git` 이 없어도 됩니다 (ZIP 경로). 부모 저장소 하위 폴더로 쓰는 경우엔 상위
+  저장소에서 `git pull` 합니다
+- **건드리지 않는 것**: `run-logs` · `output` · `.chrome-profile` · `*.xlsx` ·
+  `.translate_options.json` · `.site_options.json` · `*.lnk`
+- 자동갱신 없이 켜려면 `run.bat --noupdate`
+- 확인만: `py -3 board\auto_update.py --check`
 
 ## 바탕화면 실행 아이콘
 
