@@ -147,8 +147,53 @@ def _ps_quote(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def build_powershell(root: Path, targets: list[Path]) -> str:
-    """WScript.Shell 로 .lnk 를 만드는 PowerShell 스크립트 본문."""
+PIN_DIR_SUFFIX = r"Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar"
+
+# 한글/영문 Windows 의 「작업 표시줄에 고정」 verb
+PIN_VERB_PATTERN = "작업.?표시줄에 고정|Pin to tas"
+
+
+def build_pin_powershell(lnk: Path) -> str:
+    """바탕화면 아이콘을 작업표시줄에 고정 (+ 시작메뉴 배치) 스크립트."""
+    return "\n".join(
+        [
+            f"$lnk = {_ps_quote(lnk)}",
+            f"$pinDir = Join-Path $env:APPDATA {_ps_quote(PIN_DIR_SUFFIX)}",
+            "try {",
+            "  if (-not (Test-Path -LiteralPath $pinDir)) {",
+            "    New-Item -ItemType Directory -Force -Path $pinDir | Out-Null",
+            "  }",
+            "  Copy-Item -LiteralPath $lnk -Destination $pinDir -Force",
+            "  Write-Output \"PINDIR $pinDir\"",
+            "} catch { Write-Output \"PINDIRFAIL $($_.Exception.Message)\" }",
+            # 시작 메뉴에도 둬서 우클릭 고정이 가능하게
+            "try {",
+            "  $menu = [Environment]::GetFolderPath('Programs')",
+            "  Copy-Item -LiteralPath $lnk -Destination $menu -Force",
+            "  Write-Output \"MENU $menu\"",
+            "} catch { Write-Output \"MENUFAIL $($_.Exception.Message)\" }",
+            # 셸 verb 로 실제 고정 시도
+            "try {",
+            "  $shell = New-Object -ComObject Shell.Application",
+            "  $folder = $shell.Namespace((Split-Path -Parent $lnk))",
+            "  $item = $folder.ParseName((Split-Path -Leaf $lnk))",
+            "  $done = $false",
+            "  foreach ($verb in $item.Verbs()) {",
+            f"    if ($verb.Name -replace '&','' -match '{PIN_VERB_PATTERN}') {{",
+            "      $verb.DoIt()",
+            "      $done = $true",
+            "      break",
+            "    }",
+            "  }",
+            "  if ($done) { Write-Output \"PIN $lnk\" }",
+            "  else { Write-Output \"PINVERB none\" }",
+            "} catch { Write-Output \"PINFAIL $($_.Exception.Message)\" }",
+        ]
+    )
+
+
+def build_powershell(root: Path, targets: list[Path], *, pin: bool = True) -> str:
+    """WScript.Shell 로 .lnk 를 만들고, 작업표시줄 고정까지 하는 스크립트 본문."""
     launcher = root / LAUNCHER
     lines = [
         "$ErrorActionPreference = 'Stop'",
@@ -177,6 +222,8 @@ def build_powershell(root: Path, targets: list[Path]) -> str:
             "  Write-Output \"FAIL $p :: $($_.Exception.Message)\"",
             "}",
         ]
+    if pin and targets:
+        lines.append(build_pin_powershell(targets[0]))
     return "\n".join(lines)
 
 
@@ -198,8 +245,12 @@ def create(
     env: dict[str, str] | None = None,
     *,
     all_targets: bool = False,
+    pin: bool = True,
 ) -> dict:
-    """바탕화면에 실행파일 아이콘 생성. 반환: ok · created · failed · message."""
+    """바탕화면에 실행파일 아이콘 생성 + 작업표시줄 고정.
+
+    반환: ok · created · failed · pinned · message
+    """
     root = root or board_root()
     launcher = root / LAUNCHER
     if not launcher.is_file():
@@ -207,6 +258,7 @@ def create(
             "ok": False,
             "created": [],
             "failed": [],
+            "pinned": [],
             "message": f"{LAUNCHER} 없음 — 망고보드 폴더에서 실행하세요: {root}",
         }
     if not is_windows():
@@ -214,6 +266,7 @@ def create(
             "ok": False,
             "created": [],
             "failed": [],
+            "pinned": [],
             "message": "바탕화면 바로가기(.lnk)는 Windows 에서만 생성됩니다.",
         }
 
@@ -223,9 +276,10 @@ def create(
             "ok": False,
             "created": [],
             "failed": [],
+            "pinned": [],
             "message": "바탕화면 폴더를 찾지 못했습니다.",
         }
-    script = build_powershell(root, targets)
+    script = build_powershell(root, targets, pin=pin)
     try:
         proc = subprocess.run(
             powershell_command(script),
@@ -234,7 +288,13 @@ def create(
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as e:
-        return {"ok": False, "created": [], "failed": [], "message": f"PowerShell 실행 실패: {e}"}
+        return {
+            "ok": False,
+            "created": [],
+            "failed": [],
+            "pinned": [],
+            "message": f"PowerShell 실행 실패: {e}",
+        }
 
     out = (proc.stdout or b"") + b"\n" + (proc.stderr or b"")
     for enc in ("utf-8", "cp949", "mbcs"):
@@ -248,29 +308,35 @@ def create(
 
     created = [l[3:].strip() for l in text.splitlines() if l.startswith("OK ")]
     failed = [l[5:].strip() for l in text.splitlines() if l.startswith("FAIL ")]
+    pinned = [l[4:].strip() for l in text.splitlines() if l.startswith("PIN ")]
     ok = bool(created)
     if ok:
         message = "바탕화면에 [망고보드] 아이콘을 만들었습니다.\n" + "\n".join(created)
+        if pinned:
+            message += "\n작업표시줄에 고정했습니다."
+        elif pin:
+            message += (
+                "\n작업표시줄 자동고정은 Windows 가 막았습니다 — 아이콘 우클릭 →"
+                " [작업 표시줄에 고정] (시작 메뉴에도 등록해 뒀습니다)."
+            )
     else:
         message = "아이콘 생성 실패\n" + (text.strip() or "출력 없음")
-    return {"ok": ok, "created": created, "failed": failed, "message": message}
+    return {"ok": ok, "created": created, "failed": failed, "pinned": pinned, "message": message}
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(argv if argv is not None else sys.argv[1:])
     all_targets = "--all" in args  # 바탕화면 후보 전부 + 폴더 사본까지
+    pin = "--no-pin" not in args  # 기본: 작업표시줄 고정까지 시도
     root = board_root()
     print("=" * 44)
     print("  망고보드 바탕화면 아이콘 만들기")
     print(f"  경로: {root}")
     print("=" * 44)
-    result = create(root, all_targets=all_targets)
+    result = create(root, all_targets=all_targets, pin=pin)
     print(result["message"])
     for f in result["failed"]:
         print(f"  [실패] {f}")
-    if result["ok"]:
-        print()
-        print("작업표시줄에도 두려면: 바탕화면 아이콘 우클릭 → [작업표시줄에 고정]")
     return 0 if result["ok"] else 1
 
 
