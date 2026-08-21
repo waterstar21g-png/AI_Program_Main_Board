@@ -1,5 +1,10 @@
-버전 2.1.56 (Python B안)
-업데이트: 망고보드(Mango_Helper_AI_Board) 를 main 으로 가져옴.
-1) AI보드와 별개의 독립 보드로 저장소에 포함 — 자체 run.bat·VERSION.txt(v1.5.0)·docs.
+버전 2.1.57 (Python B안)
+업데이트: 망고보드 시작 부트스트랩 추가 (AI보드 기능 변경 없음).
+1) 루트 `망고보드_시작.bat` 신설 — 더블클릭 한 번으로 AI보드 저장소 최신화 →
+   망고보드 폴더(D:\My_Project\Mango_Helper_AI_Board)로 최신 소스 복사 →
+   바탕화면 아이콘 생성·작업표시줄 고정 → 망고보드 실행.
+   이후로는 바탕화면 [망고보드] 아이콘이 스스로 최신 버전을 받아온다.
 2) AI보드 프로그램(P1·P1_101·P1_102·P1_ZARA_DE·P2·P3_필터_갱신) 코드는 변경 없음.
-3) 망고보드 설치·업데이트 스크립트의 clone/pull 대상을 개발 브랜치 → main 으로 정리.
+
+이전(2.1.56): 망고보드(Mango_Helper_AI_Board) 를 main 으로 가져옴.
+AI보드와 별개의 독립 보드 — 자체 run.bat·VERSION.txt·docs.

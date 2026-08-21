@@ -1,4 +1,4 @@
-# 망고보드 (mango board) **v1.7.1**
+# 망고보드 (mango board) **v1.7.2**
 
 > **공식 저장소명:** `Mango_Helper_AI_Board`  
 > **PC 한 페이지 가이드:** **[PC_클론가이드.md](PC_클론가이드.md)** · 상세: **[PC_SETUP.md](PC_SETUP.md)**

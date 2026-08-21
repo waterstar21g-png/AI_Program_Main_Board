@@ -76,7 +76,12 @@ def test_no_live_reference_to_dev_branch():
 
 # 다른 보드 이름이 문자열로 등장해도 되는 파일 — 소스를 import 하는 게 아니라
 # 이름 구분(terms) 또는 원격 저장소 URL(auto_update: 부모 repo 폴백) 용도
-NAME_MENTION_ALLOWED = {"terms.py", "auto_update.py", "test_auto_update.py"}
+NAME_MENTION_ALLOWED = {
+    "terms.py",
+    "auto_update.py",
+    "test_auto_update.py",
+    "test_bootstrap_bat.py",
+}
 
 
 def test_python_sources_do_not_reach_into_ai_board():
