@@ -1,0 +1,11 @@
+{
+  "name": "AI_Program_Main_Board (Python board)",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "terminals": [
+    {
+      "name": "xvfb",
+      "command": "Xvfb :99 -screen 0 1280x900x24"
+    }
+  ]
+}
