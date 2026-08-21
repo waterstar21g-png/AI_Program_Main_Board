@@ -64,7 +64,6 @@ from log_protocol import (  # noqa: E402
     strip_timestamp,
     sub_time_range,
 )
-from desktop_icon import create as create_desktop_icon  # noqa: E402
 from shot_viewer import latest_p3_shot_dir, latest_shot_dir, open_shot_viewer  # noqa: E402
 from self_update import (  # noqa: E402
     latest_open_pr_url,
@@ -210,20 +209,6 @@ class BoardApp(tk.Tk):
 
         side_bottom = tk.Frame(side, bg="#d9d9d9")
         side_bottom.pack(side="bottom", fill="x", padx=6, pady=(4, 10))
-        self.btn_desktop_icon = tk.Button(
-            side_bottom,
-            text="바탕화면\n아이콘 만들기",
-            command=self._make_desktop_icon,
-            bg="#f59e0b",
-            fg="white",
-            activebackground="#fbbf24",
-            activeforeground="white",
-            font=("Malgun Gothic", 9, "bold"),
-            relief="raised",
-            pady=8,
-            cursor="hand2",
-        )
-        self.btn_desktop_icon.pack(fill="x", pady=(0, 8))
         tk.Label(
             side_bottom,
             text="종료 후 강제 버전갱신",
@@ -303,26 +288,6 @@ class BoardApp(tk.Tk):
         else:
             self.frame_p2.pack(fill="both", expand=True)
             self.btn_p2.configure(bg="#dbeafe")
-
-    # ── 좌측 하단: 바탕화면 아이콘 ─────────────────────
-    def _make_desktop_icon(self) -> None:
-        self.btn_desktop_icon.configure(state="disabled")
-        try:
-            result = create_desktop_icon(ROOT)
-        except Exception as e:  # noqa: BLE001
-            messagebox.showerror("바탕화면 아이콘", f"생성 실패: {e}", parent=self)
-            return
-        finally:
-            self.btn_desktop_icon.configure(state="normal")
-
-        if result["ok"]:
-            messagebox.showinfo(
-                "바탕화면 아이콘",
-                result["message"] + "\n\n작업표시줄에도 두려면 아이콘 우클릭 → [작업표시줄에 고정]",
-                parent=self,
-            )
-        else:
-            messagebox.showwarning("바탕화면 아이콘", result["message"], parent=self)
 
     # ── 좌측 하단: 머지반영 업데이트 ───────────────────
     def _run_merge_update(self) -> None:
