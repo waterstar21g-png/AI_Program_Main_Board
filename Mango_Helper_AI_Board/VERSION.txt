@@ -1,3 +1,11 @@
+버전 1.7.1 (Python 보드)
+업데이트: 독립 저장소 올리기 원클릭.
+1) 망고보드_독립저장소올리기.bat 신설 — scripts/publish-standalone.ps1 호출.
+2) publish 스크립트 재작성: 폴더 상태를 자동 판별한다 —
+   (A) 독립 저장소 클론이면 그대로 push, (B) 단독 폴더면 그 자리에서 git init 후
+   push(이후 git pull 가능), (C) AI보드 하위 폴더면 임시 복사본으로 push(원본 불변).
+   push 성공 시 이후 아이콘 자동갱신이 독립 저장소를 쓰게 된다.
+
 버전 1.7.0 (Python 보드)
 업데이트: 바탕화면 아이콘 실행 시 최신 소스 자동 반영.
 1) board/auto_update.py 신설 — VERSION.txt 를 원격과 비교해 더 높을 때만 갱신.
