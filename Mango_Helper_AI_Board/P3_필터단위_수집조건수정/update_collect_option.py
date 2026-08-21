@@ -89,6 +89,24 @@ SAVE_SELECTORS = (
     'xpath=//*[self::a or self::button or self::input][contains(normalize-space(.),"저장하기")]',
 )
 
+# 저장하기 바로 옆 닫기
+#   <a onclick="window.close();" class="defbtn_lar dtype6"> … </a>
+CLOSE_SELECTORS = (
+    'a[onclick*="window.close"]',
+    "a.defbtn_lar.dtype6",
+    'xpath=//a[.//span[normalize-space()="닫기"]]',
+    'xpath=//*[self::a or self::button or self::input][contains(normalize-space(.),"닫기")]',
+)
+
+# ── 속도 (컴퓨터 속도로 — 단계별 대기를 10배 축소) ────────────────
+T_CLICK = 1_500  # 버튼 클릭 대기 (ms)
+T_FIELD = 2_000  # 입력/드롭다운 등장 대기 (ms)
+T_READ = 200  # 현재값 읽기 (ms)
+T_CLOSE = 800  # 팝업 닫힘 대기 (ms)
+T_NAV = 5_000  # 페이지 이동 대기 (ms)
+GAP_ROW = 0.02  # 행 간 간격 (초)
+GAP_SEARCH = 0.15  # 검색 후 목록 정착 (초)
+
 # 보드 리스트박스 목록 — 망고 화면의 실제 옵션 순서 그대로
 DEFAULT_TRANSLATE_OPTIONS = (
     "번역안함",
@@ -387,7 +405,7 @@ def click_search(page, *, progress: ProgressFn | None = None) -> bool:
             loc = page.locator(sel).first
             if loc.count() == 0:
                 continue
-            loc.click(timeout=3_000)
+            loc.click(timeout=T_CLICK)
             _log(
                 progress,
                 f"  [{SEARCH_BUTTON_LABEL}] 클릭" if i <= 2 else "  검색 버튼 클릭(폴백)",
@@ -396,7 +414,7 @@ def click_search(page, *, progress: ProgressFn | None = None) -> bool:
         except Exception:
             continue
     try:
-        page.locator('input[name="sch_keyword"]').first.press("Enter", timeout=3_000)
+        page.locator('input[name="sch_keyword"]').first.press("Enter", timeout=T_CLICK)
         _log(progress, "  검색 실행(키워드칸 Enter)")
         return True
     except Exception:
@@ -431,7 +449,7 @@ def apply_site_filter(
         return False
 
     try:
-        loc.select_option(label=target, timeout=3_000)
+        loc.select_option(label=target, timeout=T_CLICK)
     except Exception as e:  # noqa: BLE001
         _log(progress, f"오류: 수집사이트 선택 실패 · {target} · {e}", major=True)
         return False
@@ -439,10 +457,10 @@ def apply_site_filter(
     _log(progress, f"수집사이트: {target} — 검색 실행", major=True)
     click_search(page, progress=progress)
     try:
-        page.wait_for_load_state("domcontentloaded", timeout=15_000)
+        page.wait_for_load_state("domcontentloaded", timeout=T_NAV)
     except Exception:
         pass
-    time.sleep(1.0)
+    time.sleep(GAP_SEARCH)
     return True
 
 
@@ -523,13 +541,13 @@ def read_current_option(control: TranslateControl) -> str:
         if control.kind == "radio":
             for label, loc in control.choices:
                 try:
-                    if loc.is_checked(timeout=400):
+                    if loc.is_checked(timeout=T_READ):
                         return label
                 except Exception:
                     continue
             return ""
         if control.kind == "checkbox":
-            checked = bool(control.locator.is_checked(timeout=400))  # type: ignore[union-attr]
+            checked = bool(control.locator.is_checked(timeout=T_READ))  # type: ignore[union-attr]
             return control.options[0] if checked else control.options[-1]
     except Exception:
         return ""
@@ -569,7 +587,7 @@ def apply_option(
         if control.kind == "select":
             # 라벨로 선택 (onchange="trans_change(this.value)" 는 select_option 이 발생시킨다)
             try:
-                control.locator.select_option(label=target, timeout=3_000)  # type: ignore[union-attr]
+                control.locator.select_option(label=target, timeout=T_CLICK)  # type: ignore[union-attr]
             except Exception:
                 value = ""
                 if target in control.options:
@@ -577,21 +595,21 @@ def apply_option(
                     if idx < len(control.values):
                         value = control.values[idx]
                 control.locator.select_option(  # type: ignore[union-attr]
-                    value or target, timeout=3_000
+                    value or target, timeout=T_CLICK
                 )
         elif control.kind == "radio":
             loc = next((l for lab, l in control.choices if lab == target), None)
             if loc is None:
                 return False
             try:
-                loc.check(timeout=3_000)
+                loc.check(timeout=T_CLICK)
             except Exception:
-                loc.click(timeout=3_000)
+                loc.click(timeout=T_CLICK)
         else:  # checkbox
             if wants_on(target):
-                control.locator.check(timeout=3_000)  # type: ignore[union-attr]
+                control.locator.check(timeout=T_CLICK)  # type: ignore[union-attr]
             else:
-                control.locator.uncheck(timeout=3_000)  # type: ignore[union-attr]
+                control.locator.uncheck(timeout=T_CLICK)  # type: ignore[union-attr]
     except Exception as e:  # noqa: BLE001
         _log(progress, f"오류: 번역옵션 적용 실패 · {target} · {e}", major=True)
         return False
@@ -649,10 +667,8 @@ def open_modify_popup(page, fuid: str, *, list_url: str = "", progress: Progress
 
     if fuid:
         try:
-            with page.expect_popup(timeout=8_000) as popup_info:
-                page.locator(f"a[onclick*=\"modify_filter('{fuid}')\"]").first.click(
-                    timeout=5_000
-                )
+            with page.expect_popup(timeout=T_NAV) as popup_info:
+                page.locator(f"a[onclick*=\"modify_filter('{fuid}')\"]").first.click(timeout=T_CLICK)
             popup = popup_info.value
             _log(progress, f"  수집조건수정 팝업 열림 (fuid={fuid})")
             return popup
@@ -666,7 +682,7 @@ def open_modify_popup(page, fuid: str, *, list_url: str = "", progress: Progress
 
     try:
         popup = page.context.new_page()
-        popup.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        popup.goto(url, wait_until="domcontentloaded", timeout=T_NAV)
         _log(progress, f"  수집조건수정 직접 열기 (fuid={fuid})")
         return popup
     except Exception as e:  # noqa: BLE001
@@ -681,7 +697,7 @@ def click_save_in_popup(popup, *, progress: ProgressFn | None = None) -> bool:
             loc = popup.locator(sel).first
             if loc.count() == 0:
                 continue
-            loc.click(timeout=5_000)
+            loc.click(timeout=T_CLICK)
             _log(progress, "  저장하기 클릭")
             return True
         except Exception:
@@ -696,8 +712,30 @@ def click_save_in_popup(popup, *, progress: ProgressFn | None = None) -> bool:
         return False
 
 
-def close_popup(popup, *, timeout_ms: int = 10_000, progress: ProgressFn | None = None) -> bool:
-    """저장 후 팝업(window.close())이 닫히기를 기다리고, 안 닫히면 닫는다."""
+def click_close_in_popup(popup, *, progress: ProgressFn | None = None) -> bool:
+    """저장하기 **바로 옆 [닫기]**(onclick=window.close()) 를 눌러 즉시 종료."""
+    for sel in CLOSE_SELECTORS:
+        try:
+            loc = popup.locator(sel).first
+            if loc.count() == 0:
+                continue
+            loc.click(timeout=T_CLICK)
+            _log(progress, "  닫기 클릭")
+            return True
+        except Exception:
+            continue
+    try:
+        popup.evaluate("() => window.close()")
+        _log(progress, "  닫기 (window.close 직접 호출)")
+        return True
+    except Exception:
+        return False
+
+
+def close_popup(popup, *, timeout_ms: int = T_CLOSE, progress: ProgressFn | None = None) -> bool:
+    """[닫기] 로 팝업을 즉시 종료. 그래도 남아 있으면 강제로 닫는다."""
+    click_close_in_popup(popup, progress=progress)
+
     closed = False
     try:
         popup.wait_for_event("close", timeout=timeout_ms)
@@ -709,9 +747,9 @@ def close_popup(popup, *, timeout_ms: int = 10_000, progress: ProgressFn | None 
         try:
             if not popup.is_closed():
                 popup.close()
+                closed = True
         except Exception:
             pass
-    _log(progress, "  모달 닫힘" if closed else "  모달 닫기(수동)")
     return closed
 
 
@@ -736,7 +774,7 @@ def apply_option_in_popup(
     try:
         try:
             popup.wait_for_selector(
-                f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=15_000
+                f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=T_FIELD
             )
         except Exception:
             pass
@@ -759,10 +797,20 @@ def apply_option_in_popup(
 
 
 def _open_mango(pw, mango_url: str, progress: ProgressFn | None):
+    """Chrome 연결 + 목록 화면. 빠른 경로(goto) 실패 시에만 P3 절차를 쓴다."""
     import collect as p2  # noqa: WPS433
 
     _browser, page = p2.connect_browser(pw)
     url = (mango_url or "").strip() or DEFAULT_LIST_URL
+
+    try:  # 빠른 경로 — 목록 URL 직접 이동 후 검색줄 확인
+        page.goto(url, wait_until="domcontentloaded", timeout=T_NAV * 2)
+        page.wait_for_selector(f'select[name="{SITE_SELECT_NAME}"]', timeout=T_FIELD)
+        _log(progress, "망고 목록 화면 (빠른 이동)", major=True)
+        return page, url
+    except Exception:
+        pass
+
     page = p3.navigate_mango_url(page, url, progress=progress, p2=p2)
     return page, url
 
@@ -811,7 +859,7 @@ def fetch_translate_options(
             try:
                 try:
                     popup.wait_for_selector(
-                        f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=15_000
+                        f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=T_FIELD
                     )
                 except Exception:
                     pass
@@ -910,7 +958,7 @@ def run_update_collect_option(
 
                 result.updated += 1
                 _log(progress, f"  변경 완료 · 번역옵션={option}", major=True)
-                time.sleep(0.3)
+                time.sleep(GAP_ROW)
 
     except Exception as e:  # noqa: BLE001
         result.errors.append(str(e))
