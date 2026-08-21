@@ -25,6 +25,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
@@ -45,12 +46,45 @@ ProgressFn = Callable[[str], None]
 
 STOP_FLAG_PATH = Path(__file__).resolve().parent / ".option_stop"
 OPTIONS_CACHE_PATH = Path(__file__).resolve().parent / ".translate_options.json"
+SITES_CACHE_PATH = Path(__file__).resolve().parent / ".site_options.json"
 
-# 망고 수집조건수정 화면의 「번역 후 저장」 컨트롤
+# 필터 목록 화면 검색줄의 수집사이트 드롭다운
+#   <div class="searchRow"><select name="site_id" class="input_" style="width:160px"> …
+SITE_SELECT_NAME = "site_id"
+
+# 수집사이트 목록 — 망고 화면 순서 그대로 (첫 항목은 전체)
+SITE_ALL_LABEL = "-- 수집사이트 --"
+DEFAULT_SITE_OPTIONS = (
+    SITE_ALL_LABEL,
+    "4910.kr",
+    "ABCmart.a-rt.com",
+    "HIVER.co.kr",
+    "MUSINSA.com",
+    "Zara.com/de",
+)
+
+# 망고 수집조건수정 팝업의 「번역 후 저장」 컨트롤
 #   <tr id="layer_tr_limit_count">
 #     <td>번역 후 저장</td>
 #     <td><select name="translate_method" onchange="trans_change(this.value);"> …
 TRANSLATE_SELECT_NAME = "translate_method"
+
+# 첫 화면 (검색필터 목록) — 보드 「망고 URL」 초기값
+DEFAULT_LIST_URL = "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsCategory.php"
+
+# 목록 행의 수집조건수정 버튼 → 팝업창
+#   <a onclick="modify_filter('720');" class="defbtn_sm dtype6"><span>수집조건수정</span></a>
+#   팝업 URL: admin_group_modify.php?ps_mode=modify_filter&ps_fuid=720
+MODIFY_PAGE = "admin_group_modify.php"
+MODIFY_MODE = "modify_filter"
+
+# 팝업 하단 저장하기
+#   <a onclick="set_save();" class="defbtn_lar dtype2"><span>저장하기</span></a>
+SAVE_SELECTORS = (
+    'a[onclick*="set_save"]',
+    'xpath=//a[.//span[normalize-space()="저장하기"]]',
+    'xpath=//*[self::a or self::button or self::input][contains(normalize-space(.),"저장하기")]',
+)
 
 # 보드 리스트박스 목록 — 망고 화면의 실제 옵션 순서 그대로
 DEFAULT_TRANSLATE_OPTIONS = (
@@ -65,6 +99,7 @@ DEFAULT_TRANSLATE_OPTIONS = (
 LABEL_KEYWORDS = ("번역 후 저장", "번역후저장", "번역옵션", "번역")
 
 OPTION_LINE_PREFIX = "##OPTION##"
+SITE_LINE_PREFIX = "##SITE##"
 
 
 @dataclass
@@ -166,21 +201,59 @@ def save_cached_options(options: list[str]) -> None:
         pass
 
 
-def format_option_lines(options: list[str]) -> str:
+def load_cached_sites() -> list[str]:
+    """보드 수집사이트 리스트박스용."""
+    try:
+        data = json.loads(SITES_CACHE_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return list(DEFAULT_SITE_OPTIONS)
+    sites = [str(s).strip() for s in data.get("sites", []) if str(s).strip()]
+    return sites or list(DEFAULT_SITE_OPTIONS)
+
+
+def save_cached_sites(sites: list[str]) -> None:
+    payload = {"sites": [str(s).strip() for s in sites if str(s).strip()]}
+    try:
+        SITES_CACHE_PATH.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def is_all_sites(site: str) -> bool:
+    """수집사이트 '전체'(플레이스홀더) 선택인지."""
+    text = normalize(site)
+    if not text:
+        return True
+    return text == normalize(SITE_ALL_LABEL) or set(text) <= {"-"}
+
+
+def format_option_lines(options: list[str], sites: list[str] | None = None) -> str:
     """--list-options 출력 (보드가 파싱)."""
-    return "\n".join(f"{OPTION_LINE_PREFIX}{o}" for o in options)
+    lines = [f"{OPTION_LINE_PREFIX}{o}" for o in options]
+    lines += [f"{SITE_LINE_PREFIX}{s}" for s in (sites or [])]
+    return "\n".join(lines)
 
 
-def parse_option_lines(text: str) -> list[str]:
+def _parse_prefixed(text: str, prefix: str) -> list[str]:
     out: list[str] = []
     for line in (text or "").splitlines():
         line = line.strip()
-        if not line.startswith(OPTION_LINE_PREFIX):
+        if not line.startswith(prefix):
             continue
-        value = line[len(OPTION_LINE_PREFIX) :].strip()
+        value = line[len(prefix) :].strip()
         if value and value not in out:
             out.append(value)
     return out
+
+
+def parse_option_lines(text: str) -> list[str]:
+    return _parse_prefixed(text, OPTION_LINE_PREFIX)
+
+
+def parse_site_lines(text: str) -> list[str]:
+    return _parse_prefixed(text, SITE_LINE_PREFIX)
 
 
 # ── 망고 수정화면의 번역옵션 컨트롤 ──────────────────────────────
@@ -267,6 +340,97 @@ def find_translate_select(page):
     except Exception:
         pass
     return None
+
+
+def find_site_select(page):
+    """`select[name="site_id"]` — 필터 목록 화면 검색줄의 수집사이트 드롭다운."""
+    try:
+        loc = page.locator(f'select[name="{SITE_SELECT_NAME}"]').first
+        if loc.count() > 0:
+            return loc
+    except Exception:
+        pass
+    return None
+
+
+def read_site_options(page) -> list[str]:
+    """수집사이트 드롭다운의 옵션 텍스트 목록."""
+    loc = find_site_select(page)
+    if loc is None:
+        return []
+    try:
+        raw = loc.evaluate(_SELECT_OPTIONS_JS)
+    except Exception:
+        return []
+    return [str(o.get("text") or "").strip() for o in raw if str(o.get("text") or "").strip()]
+
+
+def click_search(page, *, progress: ProgressFn | None = None) -> bool:
+    """검색줄의 검색 버튼 클릭 (span.bt_type) — 실패 시 키워드칸 Enter."""
+    selectors = (
+        'xpath=//div[contains(@class,"searchRow")]//span[contains(@class,"bt_type")]'
+        "//*[self::button or self::a or self::input]",
+        'xpath=//span[contains(@class,"bt_type")]//*[contains(normalize-space(.),"검색")]',
+        'xpath=//*[self::button or self::a or self::input]'
+        '[contains(normalize-space(.),"검색") or @value="검색"]',
+    )
+    for sel in selectors:
+        try:
+            loc = page.locator(sel).first
+            if loc.count() == 0:
+                continue
+            loc.click(timeout=3_000)
+            return True
+        except Exception:
+            continue
+    try:
+        page.locator('input[name="sch_keyword"]').first.press("Enter", timeout=3_000)
+        return True
+    except Exception:
+        _log(progress, "경고: 검색 버튼을 찾지 못했습니다 (현재 목록으로 진행)", major=True)
+        return False
+
+
+def apply_site_filter(
+    page,
+    site: str,
+    *,
+    progress: ProgressFn | None = None,
+) -> bool:
+    """수집사이트 리스트박스 선택값을 목록 화면 검색조건에 적용하고 검색."""
+    if is_all_sites(site):
+        _log(progress, "수집사이트: 전체 (검색조건 미변경)", major=True)
+        return True
+
+    loc = find_site_select(page)
+    if loc is None:
+        _log(progress, "오류: 수집사이트 드롭다운 미검출", major=True)
+        return False
+
+    options = read_site_options(page)
+    target = match_option(options, site) if options else site
+    if target is None:
+        _log(
+            progress,
+            f"오류: 수집사이트 미검출 · 선택={site!r} · 망고목록={options}",
+            major=True,
+        )
+        return False
+
+    try:
+        loc.select_option(label=target, timeout=3_000)
+    except Exception as e:  # noqa: BLE001
+        _log(progress, f"오류: 수집사이트 선택 실패 · {target} · {e}", major=True)
+        return False
+
+    _log(progress, f"수집사이트: {target} — 검색 실행", major=True)
+    click_search(page, progress=progress)
+    try:
+        page.wait_for_load_state("domcontentloaded", timeout=15_000)
+    except Exception:
+        pass
+    time.sleep(1.0)
+    return True
 
 
 def detect_translate_control(page) -> TranslateControl | None:
@@ -432,18 +596,150 @@ def apply_option(
 
 
 def set_translate_option(page, option: str, *, progress: ProgressFn | None = None) -> bool:
-    """수정화면을 찾아 번역옵션을 적용."""
-    work, _kind = p3.resolve_modify_target(page)
-    if work is None:
-        _log(progress, "오류: 수정 화면(수집조건수정) 미검출", major=True)
-        return False
-
-    control = detect_translate_control(work)
+    """수정 팝업에서 번역옵션을 적용."""
+    control = detect_translate_control(page)
+    if control is None:
+        work, _kind = p3.resolve_modify_target(page)
+        control = detect_translate_control(work) if work is not None else None
     if control is None:
         _log(progress, "오류: 번역옵션 컨트롤 미검출", major=True)
         return False
 
     return apply_option(control, option, progress=progress)
+
+
+# ── 수집조건수정 팝업 (열기 → 선택 → 저장하기 → 닫기) ────────────
+
+
+def build_modify_url(list_url: str, fuid: str) -> str:
+    """목록 URL 기준으로 수집조건수정 팝업 URL 을 만든다.
+
+    팝업은 `/mall/admin/admin_group_modify.php` 로, 목록(`/mall/admin/shop/…`)보다
+    한 단계 위다. `/admin/` 을 기준점으로 잡는다.
+    """
+    parts = urlsplit(str(list_url or ""))
+    if not parts.netloc:
+        return ""
+
+    path = parts.path or ""
+    marker = "/admin/"
+    idx = path.find(marker)
+    base_dir = path[: idx + len(marker) - 1] if idx >= 0 else path.rsplit("/", 1)[0]
+
+    query = urlencode({"ps_mode": MODIFY_MODE, "ps_fuid": str(fuid)})
+    return urlunsplit((parts.scheme, parts.netloc, f"{base_dir}/{MODIFY_PAGE}", query, ""))
+
+
+def open_modify_popup(page, fuid: str, *, list_url: str = "", progress: ProgressFn | None = None):
+    """행의 [수집조건수정] 을 눌러 팝업창을 얻는다. 실패 시 팝업 URL 직접 오픈."""
+    fuid = str(fuid or "").strip()
+
+    if fuid:
+        try:
+            with page.expect_popup(timeout=8_000) as popup_info:
+                page.locator(f"a[onclick*=\"modify_filter('{fuid}')\"]").first.click(
+                    timeout=5_000
+                )
+            popup = popup_info.value
+            _log(progress, f"  수집조건수정 팝업 열림 (fuid={fuid})")
+            return popup
+        except Exception:
+            pass
+
+    url = build_modify_url(list_url, fuid) if fuid else ""
+    if not url:
+        _log(progress, f"오류: 수집조건수정 팝업을 열지 못했습니다 (fuid={fuid or '?'})", major=True)
+        return None
+
+    try:
+        popup = page.context.new_page()
+        popup.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        _log(progress, f"  수집조건수정 직접 열기 (fuid={fuid})")
+        return popup
+    except Exception as e:  # noqa: BLE001
+        _log(progress, f"오류: 팝업 열기 실패 · {e}", major=True)
+        return None
+
+
+def click_save_in_popup(popup, *, progress: ProgressFn | None = None) -> bool:
+    """팝업 하단 [저장하기] (onclick=set_save()) 클릭."""
+    for sel in SAVE_SELECTORS:
+        try:
+            loc = popup.locator(sel).first
+            if loc.count() == 0:
+                continue
+            loc.click(timeout=5_000)
+            _log(progress, "  저장하기 클릭")
+            return True
+        except Exception:
+            continue
+
+    try:  # 최후: set_save() 직접 호출
+        popup.evaluate("() => { if (typeof set_save === 'function') set_save(); }")
+        _log(progress, "  저장하기 (set_save 직접 호출)")
+        return True
+    except Exception as e:  # noqa: BLE001
+        _log(progress, f"오류: 저장하기 클릭 실패 · {e}", major=True)
+        return False
+
+
+def close_popup(popup, *, timeout_ms: int = 10_000, progress: ProgressFn | None = None) -> bool:
+    """저장 후 팝업(window.close())이 닫히기를 기다리고, 안 닫히면 닫는다."""
+    closed = False
+    try:
+        popup.wait_for_event("close", timeout=timeout_ms)
+        closed = True
+    except Exception:
+        closed = False
+
+    if not closed:
+        try:
+            if not popup.is_closed():
+                popup.close()
+        except Exception:
+            pass
+    _log(progress, "  모달 닫힘" if closed else "  모달 닫기(수동)")
+    return closed
+
+
+def apply_option_in_popup(
+    page,
+    fuid: str,
+    option: str,
+    *,
+    list_url: str = "",
+    progress: ProgressFn | None = None,
+) -> bool:
+    """수집조건수정 → 팝업 → 번역옵션 선택 → 저장하기 → 모달 닫기."""
+    popup = open_modify_popup(page, fuid, list_url=list_url, progress=progress)
+    if popup is None:
+        return False
+
+    try:
+        popup.on("dialog", lambda d: d.accept())
+    except Exception:
+        pass
+
+    try:
+        try:
+            popup.wait_for_selector(
+                f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=15_000
+            )
+        except Exception:
+            pass
+
+        if not set_translate_option(popup, option, progress=progress):
+            return False
+        if not click_save_in_popup(popup, progress=progress):
+            return False
+        close_popup(popup, progress=progress)
+        return True
+    finally:
+        try:
+            if not popup.is_closed():
+                popup.close()
+        except Exception:
+            pass
 
 
 # ── 실행 ─────────────────────────────────────────────────────────
@@ -453,7 +749,7 @@ def _open_mango(pw, mango_url: str, progress: ProgressFn | None):
     import collect as p2  # noqa: WPS433
 
     _browser, page = p2.connect_browser(pw)
-    url = (mango_url or "").strip() or p3.DEFAULT_MANGO_URL
+    url = (mango_url or "").strip() or DEFAULT_LIST_URL
     page = p3.navigate_mango_url(page, url, progress=progress, p2=p2)
     return page, url
 
@@ -462,61 +758,82 @@ def fetch_translate_options(
     *,
     mango_url: str = "",
     progress: ProgressFn | None = None,
-) -> list[str]:
-    """망고 수정화면을 한 번 열어 번역옵션 목록을 읽어온다 (보드 리스트박스용)."""
+) -> tuple[list[str], list[str]]:
+    """망고에서 (번역옵션, 수집사이트) 목록을 읽어온다 (보드 리스트박스용)."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as e:
         _log(progress, f"의존성 로드 실패: {e}", major=True)
-        return []
+        return [], []
 
     options: list[str] = []
+    sites: list[str] = []
     try:
         with sync_playwright() as pw:
             page, url = _open_mango(pw, mango_url, progress)
+
+            sites = read_site_options(page)
+            if sites:
+                _log(progress, f"수집사이트 {len(sites)}개: {sites}", major=True)
+                save_cached_sites(sites)
+            else:
+                _log(progress, "수집사이트 드롭다운 미검출", major=True)
+
             rows = [r for r in p3.list_demango_rows(page) if r.get("hasEdit")]
             if not rows:
                 _log(progress, "필터 목록에서 수정 가능한 행이 없습니다.", major=True)
-                return []
+                return [], sites
 
             first = rows[0]
-            if not p3.click_edit_on_row(
+            popup = open_modify_popup(
                 page,
-                int(first.get("index") or 0),
-                row_url=(first.get("url") or "").strip(),
-                filter_hint=(first.get("filterName") or "").strip(),
-                fuid_hint=str(first.get("fuid") or "").strip(),
+                str(first.get("fuid") or "").strip(),
+                list_url=url,
                 progress=progress,
-            ) or not p3.wait_modify_page(page):
-                _log(progress, "수집조건수정 화면을 열지 못했습니다.", major=True)
-                return []
+            )
+            if popup is None:
+                _log(progress, "수집조건수정 팝업을 열지 못했습니다.", major=True)
+                return [], sites
 
-            work, _kind = p3.resolve_modify_target(page)
-            control = detect_translate_control(work) if work is not None else None
-            if control is None:
-                _log(progress, "번역옵션 컨트롤 미검출", major=True)
-            else:
-                options = list(control.options)
-                _log(progress, f"번역옵션 {len(options)}개: {options}", major=True)
-            p3._return_to_list(page, url)
+            try:
+                try:
+                    popup.wait_for_selector(
+                        f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=15_000
+                    )
+                except Exception:
+                    pass
+                control = detect_translate_control(popup)
+                if control is None:
+                    _log(progress, "번역옵션 컨트롤 미검출", major=True)
+                else:
+                    options = list(control.options)
+                    _log(progress, f"번역옵션 {len(options)}개: {options}", major=True)
+            finally:
+                try:
+                    if not popup.is_closed():
+                        popup.close()
+                except Exception:
+                    pass
     except Exception as e:  # noqa: BLE001
         _log(progress, f"옵션 읽기 오류: {e}", major=True)
-        return []
+        return [], sites
 
     if options:
         save_cached_options(options)
-    return options
+    return options, sites
 
 
 def run_update_collect_option(
     translate_option: str,
     *,
+    collect_site: str = "",
     mango_url: str = "",
     progress: ProgressFn | None = None,
 ) -> RunResult:
     option = str(translate_option or "").strip()
     if not option:
         return RunResult(ok=False, errors=["번역옵션을 리스트에서 선택하세요."])
+    site = str(collect_site or "").strip()
 
     result = RunResult(ok=False)
     clear_stop_flag()
@@ -531,10 +848,15 @@ def run_update_collect_option(
         return result
 
     _log(progress, f"번역옵션: {option}", major=True)
+    _log(progress, f"수집사이트: {site or SITE_ALL_LABEL}", major=True)
 
     try:
         with sync_playwright() as pw:
             page, url = _open_mango(pw, mango_url, progress)
+
+            if not apply_site_filter(page, site, progress=progress):
+                result.errors.append(f"수집사이트 적용 실패 · {site}")
+                return result
 
             rows = p3.list_demango_rows(page)
             editable = [r for r in rows if r.get("hasEdit")]
@@ -562,45 +884,19 @@ def run_update_collect_option(
                     major=True,
                 )
 
-                if not p3.click_edit_on_row(
+                if not apply_option_in_popup(
                     page,
-                    row_idx,
-                    row_url=d_url,
-                    filter_hint=d_filter,
-                    fuid_hint=d_fuid,
+                    d_fuid or str(row_idx),
+                    option,
+                    list_url=url,
                     progress=progress,
                 ):
                     result.failed += 1
                     result.errors.append(f"수집조건수정 실패 · 필터={d_filter}")
                     continue
 
-                if not p3.wait_modify_page(page):
-                    result.failed += 1
-                    result.errors.append(f"수정화면 미열림 · 필터={d_filter}")
-                    p3._return_to_list(page, url)
-                    continue
-
-                if not set_translate_option(page, option, progress=progress):
-                    result.failed += 1
-                    result.errors.append(f"번역옵션 적용 실패 · 필터={d_filter}")
-                    p3._return_to_list(page, url)
-                    continue
-
-                if not p3.click_save_button(page):
-                    result.failed += 1
-                    result.errors.append(f"저장하기 실패 · 필터={d_filter}")
-                    p3._return_to_list(page, url)
-                    continue
-
-                if not p3.click_modified_confirm(page, progress=progress):
-                    result.failed += 1
-                    result.errors.append(f"확인 실패 · 필터={d_filter}")
-                    p3._return_to_list(page, url)
-                    continue
-
                 result.updated += 1
                 _log(progress, f"  변경 완료 · 번역옵션={option}", major=True)
-                p3._return_to_list(page, url)
                 time.sleep(0.3)
 
     except Exception as e:  # noqa: BLE001
@@ -624,26 +920,35 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="P3_필터단위_수집조건수정")
     parser.add_argument("--translate-option", default="", help="번역옵션 (리스트 선택값)")
     parser.add_argument(
+        "--collect-site",
+        default="",
+        help=f"수집사이트 (리스트 선택값 · 비우면 {SITE_ALL_LABEL})",
+    )
+    parser.add_argument(
         "--list-options",
         action="store_true",
-        help="망고에서 번역옵션 목록만 읽어 출력",
+        help="망고에서 번역옵션·수집사이트 목록만 읽어 출력",
     )
-    parser.add_argument("--mango-url", default="", help="필터 목록 URL (기본=P3 초기값)")
+    parser.add_argument(
+        "--mango-url", default="", help=f"필터 목록 URL (기본={DEFAULT_LIST_URL})"
+    )
     args = parser.parse_args(argv)
 
     if args.list_options:
-        options = fetch_translate_options(mango_url=args.mango_url)
-        if not options:
-            print("[오류] 번역옵션 목록을 읽지 못했습니다.", flush=True)
+        options, sites = fetch_translate_options(mango_url=args.mango_url)
+        if not options and not sites:
+            print("[오류] 목록을 읽지 못했습니다.", flush=True)
             return 1
-        print(format_option_lines(options), flush=True)
+        print(format_option_lines(options, sites), flush=True)
         return 0
 
     if not args.translate_option.strip():
         parser.error("--translate-option 또는 --list-options 가 필요합니다.")
 
     result = run_update_collect_option(
-        args.translate_option, mango_url=args.mango_url
+        args.translate_option,
+        collect_site=args.collect_site,
+        mango_url=args.mango_url,
     )
     if result.errors:
         for e in result.errors:

@@ -783,7 +783,7 @@ class BoardApp(tk.Tk):
     def _build_p3_option(self, parent: tk.Frame) -> None:
         tk.Label(
             parent,
-            text="P3_필터단위_수집조건수정 — 번역옵션 선택 → 필터 목록 순차 적용",
+            text="P3_필터단위_수집조건수정 — 수집사이트·번역옵션 선택 → 필터 목록 순차 적용",
             bg="#f1f5f9",
             font=("Malgun Gothic", 10, "bold"),
             anchor="w",
@@ -791,6 +791,26 @@ class BoardApp(tk.Tk):
 
         form = tk.LabelFrame(parent, text="입력", bg="#ffffff", padx=8, pady=6)
         form.pack(fill="x")
+
+        r0 = tk.Frame(form, bg="#ffffff")
+        r0.pack(fill="x", pady=4)
+        tk.Label(r0, text="수집사이트", width=10, anchor="nw", bg="#ffffff").pack(
+            side="left", anchor="n"
+        )
+        site_wrap = tk.Frame(r0, bg="#ffffff")
+        site_wrap.pack(side="left", fill="both", expand=True)
+        self.p3_site_list = tk.Listbox(
+            site_wrap,
+            height=6,
+            exportselection=False,
+            font=("Malgun Gothic", 9),
+            activestyle="dotbox",
+        )
+        site_sb = tk.Scrollbar(site_wrap, orient="vertical", command=self.p3_site_list.yview)
+        self.p3_site_list.configure(yscrollcommand=site_sb.set)
+        self.p3_site_list.pack(side="left", fill="both", expand=True)
+        site_sb.pack(side="right", fill="y")
+        self.p3_site_list.bind("<<ListboxSelect>>", lambda _e: self._on_p3_option_pick())
 
         r1 = tk.Frame(form, bg="#ffffff")
         r1.pack(fill="x", pady=4)
@@ -841,7 +861,7 @@ class BoardApp(tk.Tk):
         r2 = tk.Frame(form, bg="#ffffff")
         r2.pack(fill="x", pady=4)
         tk.Label(r2, text="망고 URL", width=10, anchor="w", bg="#ffffff").pack(side="left")
-        self.var_p3_option_mango_url = tk.StringVar(value=p3_update.DEFAULT_MANGO_URL)
+        self.var_p3_option_mango_url = tk.StringVar(value=p3_option.DEFAULT_LIST_URL)
         tk.Entry(r2, textvariable=self.var_p3_option_mango_url).pack(
             side="left", fill="x", expand=True
         )
@@ -895,16 +915,17 @@ class BoardApp(tk.Tk):
         self.p3_option_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
         self.p3_option_status.pack(fill="x", pady=4)
 
-        self._fill_p3_option_list(p3_option.load_cached_options())
+        self._fill_listbox(self.p3_site_list, p3_option.load_cached_sites())
+        self._fill_listbox(self.p3_option_list, p3_option.load_cached_options())
 
-    def _fill_p3_option_list(self, options: list[str]) -> None:
-        self.p3_option_list.delete(0, "end")
-        for o in options:
-            self.p3_option_list.insert("end", o)
-        if options:
-            self.p3_option_list.selection_clear(0, "end")
-            self.p3_option_list.selection_set(0)
-            self.p3_option_list.see(0)
+    def _fill_listbox(self, box: tk.Listbox, values: list[str]) -> None:
+        box.delete(0, "end")
+        for v in values:
+            box.insert("end", v)
+        if values:
+            box.selection_clear(0, "end")
+            box.selection_set(0)
+            box.see(0)
         self._on_p3_option_pick()
 
     def _selected_translate_option(self) -> str:
@@ -913,9 +934,18 @@ class BoardApp(tk.Tk):
             return ""
         return str(self.p3_option_list.get(sel[0])).strip()
 
+    def _selected_collect_site(self) -> str:
+        sel = self.p3_site_list.curselection()
+        if not sel:
+            return ""
+        return str(self.p3_site_list.get(sel[0])).strip()
+
     def _on_p3_option_pick(self) -> None:
+        site = self._selected_collect_site() or p3_option.SITE_ALL_LABEL
         picked = self._selected_translate_option()
-        self.lbl_p3_option_pick.configure(text=f"선택: {picked or '(없음)'}")
+        self.lbl_p3_option_pick.configure(
+            text=f"선택: 수집사이트={site} · 번역옵션={picked or '(없음)'}"
+        )
 
     def _p3_option_stop_flag(self) -> Path:
         return ROOT / "P3_필터단위_수집조건수정" / ".option_stop"
@@ -976,22 +1006,28 @@ class BoardApp(tk.Tk):
                 text = f"옵션 읽기 실패: {e}"
 
             options = p3_option.parse_option_lines(text)
+            sites = p3_option.parse_site_lines(text)
             log_text = text
 
             def done() -> None:
                 self._p3_option_reload_busy = False
                 self.btn_p3_option_reload.configure(state="normal")
+                skip = (p3_option.OPTION_LINE_PREFIX, p3_option.SITE_LINE_PREFIX)
                 for line in log_text.splitlines():
-                    if line.strip() and not line.startswith(p3_option.OPTION_LINE_PREFIX):
+                    if line.strip() and not line.startswith(skip):
                         self._append_p3_option_log(line)
+                if sites:
+                    self._fill_listbox(self.p3_site_list, sites)
                 if options:
-                    self._fill_p3_option_list(options)
+                    self._fill_listbox(self.p3_option_list, options)
+                if options or sites:
                     self.p3_option_status.configure(
-                        text=f"번역옵션 {len(options)}개 읽음", fg="#15803d"
+                        text=f"수집사이트 {len(sites)}개 · 번역옵션 {len(options)}개 읽음",
+                        fg="#15803d",
                     )
                 else:
                     self.p3_option_status.configure(
-                        text="번역옵션을 읽지 못했습니다 (망고 로그인·필터 목록 화면 확인)",
+                        text="목록을 읽지 못했습니다 (망고 로그인·필터 목록 화면 확인)",
                         fg="#b91c1c",
                     )
 
@@ -1016,13 +1052,20 @@ class BoardApp(tk.Tk):
         except Exception:
             pass
 
+        site = self._selected_collect_site()
         self.p3_option_log.delete("1.0", "end")
-        self.p3_option_status.configure(text=f"작업 시작 — 번역옵션: {option}", fg="#15803d")
+        self.p3_option_status.configure(
+            text=f"작업 시작 — 수집사이트: {site or p3_option.SITE_ALL_LABEL} · "
+            f"번역옵션: {option}",
+            fg="#15803d",
+        )
+
+        args = ["--translate-option", option]
+        if site and not p3_option.is_all_sites(site):
+            args.extend(["--collect-site", site])
 
         try:
-            self._p3_option_proc = self._p3_option_popen(
-                ["--translate-option", option], capture=False
-            )
+            self._p3_option_proc = self._p3_option_popen(args, capture=False)
         except Exception as e:
             messagebox.showerror("실행 실패", str(e))
             self.p3_option_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")

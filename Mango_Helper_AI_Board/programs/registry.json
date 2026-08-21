@@ -84,7 +84,7 @@
       "launcher": "run.bat",
       "board_tab": "p3_option",
       "login": "더망고 (Chrome CDP 9222)",
-      "description": "번역옵션(번역 후 저장) 리스트 선택값 일괄 적용"
+      "description": "수집사이트·번역옵션 리스트 선택값 일괄 적용 (팝업 저장하기)"
     },
     {
       "id": "p3_fitcl",

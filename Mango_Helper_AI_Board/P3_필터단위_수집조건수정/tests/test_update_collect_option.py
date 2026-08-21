@@ -71,20 +71,54 @@ class MissingLocator:
         return 0
 
 
+class FakeButton:
+    def __init__(self, present=True):
+        self.present = present
+        self.clicks = 0
+        self.presses: list[str] = []
+
+    @property
+    def first(self):
+        return self
+
+    def count(self) -> int:
+        return 1 if self.present else 0
+
+    def click(self, timeout=None):
+        if not self.present:
+            raise RuntimeError("없음")
+        self.clicks += 1
+
+    def press(self, key, timeout=None):
+        self.presses.append(key)
+
+
 class FakePage:
-    def __init__(self, select=None, scan_result=None):
+    def __init__(self, select=None, scan_result=None, site_select=None, search=None):
         self._select = select
         self._scan = scan_result
+        self._site = site_select
+        self._search = search
         self.locators: list[str] = []
+        self.waited = False
 
     def locator(self, selector):
         self.locators.append(selector)
         if self._select is not None and uco.TRANSLATE_SELECT_NAME in selector:
             return self._select
+        if self._site is not None and uco.SITE_SELECT_NAME in selector:
+            return self._site
+        if self._search is not None and (
+            "bt_type" in selector or "검색" in selector or "sch_keyword" in selector
+        ):
+            return self._search
         return MissingLocator()
 
     def evaluate(self, script, *args):
         return self._scan
+
+    def wait_for_load_state(self, state, timeout=None):
+        self.waited = True
 
 
 def _select_page(selected=0):
@@ -222,6 +256,194 @@ def test_parse_option_lines_ignores_other_output():
     assert uco.parse_option_lines("##MAIN##필터 3행\n[오류] 없음") == []
 
 
+# ── 수집사이트 리스트박스 (스크린샷: select[name=site_id]) ────────
+
+
+MANGO_SITES = [
+    "-- 수집사이트 --",
+    "4910.kr",
+    "ABCmart.a-rt.com",
+    "HIVER.co.kr",
+    "MUSINSA.com",
+    "Zara.com/de",
+]
+
+
+def test_default_sites_match_mango_screen():
+    assert list(uco.DEFAULT_SITE_OPTIONS) == MANGO_SITES
+
+
+def test_cached_sites_round_trip(monkeypatch, tmp_path):
+    monkeypatch.setattr(uco, "SITES_CACHE_PATH", tmp_path / "sites.json")
+    assert uco.load_cached_sites() == MANGO_SITES
+    uco.save_cached_sites(["MUSINSA.com"])
+    assert uco.load_cached_sites() == ["MUSINSA.com"]
+
+
+def test_is_all_sites():
+    assert uco.is_all_sites("") is True
+    assert uco.is_all_sites("-- 수집사이트 --") is True
+    assert uco.is_all_sites("MUSINSA.com") is False
+
+
+def test_read_site_options_from_select():
+    page = FakePage(site_select=FakeSelect(MANGO_SITES, ["", "1", "2", "3", "4", "5"]))
+    assert uco.read_site_options(page) == MANGO_SITES
+
+
+def test_apply_site_filter_selects_and_searches():
+    site_select = FakeSelect(MANGO_SITES, ["", "1", "2", "3", "4", "5"])
+    search = FakeButton()
+    page = FakePage(site_select=site_select, search=search)
+    logs: list[str] = []
+    assert uco.apply_site_filter(page, "MUSINSA.com", progress=logs.append) is True
+    assert site_select.selected == 4
+    assert search.clicks == 1
+    assert page.waited is True
+
+
+def test_apply_site_filter_all_skips_screen():
+    page = FakePage()
+    assert uco.apply_site_filter(page, "-- 수집사이트 --") is True
+    assert page.locators == []  # 화면을 건드리지 않음
+
+
+def test_apply_site_filter_missing_select_fails():
+    assert uco.apply_site_filter(FakePage(), "MUSINSA.com") is False
+
+
+def test_click_search_falls_back_to_enter():
+    keyword = FakeButton(present=False)
+    page = FakePage(search=keyword)
+    assert uco.click_search(page) is True
+    assert keyword.presses == ["Enter"]
+
+
+# ── 수집조건수정 팝업 (열기 → 저장하기 → 닫기) ───────────────────
+
+
+def test_default_list_url_is_first_screen():
+    assert (
+        uco.DEFAULT_LIST_URL
+        == "https://tmg1898.cafe24.com/mall/admin/shop/getGoodsCategory.php"
+    )
+
+
+def test_build_modify_url_sits_under_admin_not_shop():
+    url = uco.build_modify_url(uco.DEFAULT_LIST_URL, "720")
+    assert url == (
+        "https://tmg1898.cafe24.com/mall/admin/admin_group_modify.php"
+        "?ps_mode=modify_filter&ps_fuid=720"
+    )
+
+
+def test_build_modify_url_keeps_query_of_list_out():
+    url = uco.build_modify_url(uco.DEFAULT_LIST_URL + "?site_id=zara_de&pg=2", "13")
+    assert url.endswith("admin_group_modify.php?ps_mode=modify_filter&ps_fuid=13")
+
+
+def test_build_modify_url_needs_host():
+    assert uco.build_modify_url("", "720") == ""
+
+
+class FakePopup:
+    def __init__(self, options=MANGO_OPTIONS, save=True, closes=True):
+        self.select = FakeSelect(options, MANGO_VALUES)
+        self.save_btn = FakeButton(present=save)
+        self.closes = closes
+        self.closed = False
+        self.dialog_handler = None
+        self.waited_selector = ""
+
+    def on(self, event, handler):
+        if event == "dialog":
+            self.dialog_handler = handler
+
+    def locator(self, selector):
+        if uco.TRANSLATE_SELECT_NAME in selector:
+            return self.select
+        if "set_save" in selector or "저장하기" in selector:
+            return self.save_btn
+        return MissingLocator()
+
+    def evaluate(self, script, *args):
+        return None
+
+    def wait_for_selector(self, selector, timeout=None):
+        self.waited_selector = selector
+
+    def wait_for_event(self, event, timeout=None):
+        if not self.closes:
+            raise RuntimeError("안 닫힘")
+        self.closed = True
+
+    def is_closed(self):
+        return self.closed
+
+    def close(self):
+        self.closed = True
+
+
+class PopupHost:
+    """팝업을 돌려주는 목록 페이지 대역."""
+
+    def __init__(self, popup):
+        self.popup = popup
+
+    def expect_popup(self, timeout=None):
+        host = self
+
+        class Ctx:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            @property
+            def value(self):
+                return host.popup
+
+        return Ctx()
+
+    def locator(self, selector):
+        return FakeButton()
+
+
+def test_apply_option_in_popup_full_flow():
+    popup = FakePopup()
+    logs: list[str] = []
+    ok = uco.apply_option_in_popup(
+        PopupHost(popup), "720", "구글 번역기 사용", progress=logs.append
+    )
+    assert ok is True
+    assert popup.select.selected == 2          # 번역옵션 선택
+    assert popup.save_btn.clicks == 1          # 저장하기
+    assert popup.closed is True                # 모달 닫기
+    assert popup.dialog_handler is not None    # 저장 알림 자동 확인
+    assert uco.TRANSLATE_SELECT_NAME in popup.waited_selector
+
+
+def test_apply_option_in_popup_save_button_missing_uses_set_save():
+    popup = FakePopup(save=False)
+    calls: list[str] = []
+    popup.evaluate = lambda script, *a: calls.append(script)  # type: ignore[assignment]
+    assert uco.apply_option_in_popup(PopupHost(popup), "720", "번역안함") is True
+    assert any("set_save" in c for c in calls)
+
+
+def test_apply_option_in_popup_closes_even_if_window_stays():
+    popup = FakePopup(closes=False)
+    assert uco.apply_option_in_popup(PopupHost(popup), "720", "번역안함") is True
+    assert popup.closed is True
+
+
+def test_apply_option_in_popup_bad_option_fails_without_save():
+    popup = FakePopup()
+    assert uco.apply_option_in_popup(PopupHost(popup), "720", "파파고") is False
+    assert popup.save_btn.clicks == 0
+
+
 # ── 실행 인자 검증 ───────────────────────────────────────────────
 
 
@@ -229,3 +451,9 @@ def test_run_requires_option():
     result = uco.run_update_collect_option("   ")
     assert result.ok is False
     assert "선택" in result.errors[0]
+
+
+def test_option_lines_include_sites():
+    text = uco.format_option_lines(MANGO_OPTIONS, MANGO_SITES)
+    assert uco.parse_option_lines(text) == MANGO_OPTIONS
+    assert uco.parse_site_lines(text) == MANGO_SITES
