@@ -34,19 +34,10 @@ if (Test-Path "P2\requirements.txt") {
     Invoke-Expression "$py -m pip install -r P2\requirements.txt"
 }
 
-# 바탕화면 바로가기 (선택)
-$desktop = [Environment]::GetFolderPath("Desktop")
-$shortcut = Join-Path $desktop "망고보드.lnk"
-try {
-    $WshShell = New-Object -ComObject WScript.Shell
-    $lnk = $WshShell.CreateShortcut($shortcut)
-    $lnk.TargetPath = Join-Path $Root "run.bat"
-    $lnk.WorkingDirectory = $Root
-    $lnk.Description = "망고보드 Mango_Helper_AI_Board"
-    $lnk.Save()
-    Write-Host "[OK] 바탕화면 바로가기: $shortcut" -ForegroundColor Green
-} catch {
-    Write-Host "[안내] 바로가기 생성 생략: $_" -ForegroundColor Yellow
+# 바탕화면 아이콘 — 생성 로직은 board/desktop_icon.py 하나로만 유지
+Invoke-Expression "$py board\desktop_icon.py"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "[안내] 바탕화면 아이콘은 나중에 .\망고보드_바탕화면아이콘.bat 로 만들 수 있습니다" -ForegroundColor Yellow
 }
 
 Write-Host ""

@@ -98,6 +98,14 @@ def test_launch_build_command_by_suffix(tmp_path):
     assert launch.build_command(tmp_path / "a.bat", [])[:2] == ["cmd", "/c"]
 
 
+def test_installers_delegate_icon_creation():
+    """바로가기 생성 구현이 갈라지지 않도록 — 설치 스크립트는 desktop_icon.py 만 호출."""
+    for name in ("scripts/install-all.ps1", "scripts/setup-pc.ps1"):
+        text = (ROOT / name).read_text(encoding="utf-8")
+        assert "desktop_icon.py" in text, f"{name} 이 아이콘 생성을 위임하지 않음"
+        assert "CreateShortcut" not in text, f"{name} 에 별도 바로가기 생성 구현 남음"
+
+
 def test_registry_has_desktop_icon_entry():
     data = launch.load_registry()
     entry = next(p for p in data["programs"] if p["id"] == "desktop_icon")

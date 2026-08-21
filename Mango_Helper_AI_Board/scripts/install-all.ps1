@@ -211,22 +211,10 @@ Write-Host "  [OK] pip install 완료" -ForegroundColor Green
 # 6) 바로가기 + 검증
 Write-Step 6 $total "바로가기 생성 · 동작 확인"
 
-$desktop = [Environment]::GetFolderPath("Desktop")
-foreach ($pair in @(
-    @{ Name = "망고보드.lnk"; Target = "run.bat" },
-    @{ Name = "망고보드_한번에설치.lnk"; Target = "망고보드_한번에설치.bat" }
-)) {
-    try {
-        $WshShell = New-Object -ComObject WScript.Shell
-        $lnk = $WshShell.CreateShortcut((Join-Path $desktop $pair.Name))
-        $lnk.TargetPath = Join-Path $Root $pair.Target
-        $lnk.WorkingDirectory = $Root
-        $lnk.Description = "망고보드 Mango_Helper_AI_Board"
-        $lnk.Save()
-        Write-Host "  바탕화면: $($pair.Name)" -ForegroundColor Green
-    } catch {
-        Write-Host "  [안내] 바로가기 생략 ($($pair.Name)): $_" -ForegroundColor Yellow
-    }
+# 바탕화면 아이콘 — 생성 로직은 board/desktop_icon.py 하나로만 유지
+Invoke-Expression "$py board\desktop_icon.py"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  [안내] 바탕화면 아이콘 생성 실패 — .\망고보드_바탕화면아이콘.bat 로 다시 시도" -ForegroundColor Yellow
 }
 
 # smoke test
