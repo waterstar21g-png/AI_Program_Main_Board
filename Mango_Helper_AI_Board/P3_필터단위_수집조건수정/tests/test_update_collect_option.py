@@ -76,6 +76,7 @@ class FakeButton:
         self.present = present
         self.clicks = 0
         self.presses: list[str] = []
+        self.selectors: list[str] = []
 
     @property
     def first(self):
@@ -111,6 +112,7 @@ class FakePage:
         if self._search is not None and (
             "bt_type" in selector or "검색" in selector or "sch_keyword" in selector
         ):
+            self._search.selectors.append(selector)
             return self._search
         return MissingLocator()
 
@@ -310,6 +312,16 @@ def test_apply_site_filter_all_skips_screen():
 
 def test_apply_site_filter_missing_select_fails():
     assert uco.apply_site_filter(FakePage(), "MUSINSA.com") is False
+
+
+def test_click_search_uses_select_condition_button_first():
+    search = FakeButton()
+    page = FakePage(search=search)
+    logs: list[str] = []
+    assert uco.click_search(page, progress=logs.append) is True
+    assert uco.SEARCH_BUTTON_LABEL in search.selectors[0]
+    assert search.clicks == 1
+    assert any(uco.SEARCH_BUTTON_LABEL in l for l in logs)
 
 
 def test_click_search_falls_back_to_enter():

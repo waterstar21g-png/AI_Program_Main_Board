@@ -52,6 +52,9 @@ SITES_CACHE_PATH = Path(__file__).resolve().parent / ".site_options.json"
 #   <div class="searchRow"><select name="site_id" class="input_" style="width:160px"> …
 SITE_SELECT_NAME = "site_id"
 
+# 수집사이트 선택 후 누르는 버튼
+SEARCH_BUTTON_LABEL = "선택조건으로 검색하기"
+
 # 수집사이트 목록 — 망고 화면 순서 그대로 (첫 항목은 전체)
 SITE_ALL_LABEL = "-- 수집사이트 --"
 DEFAULT_SITE_OPTIONS = (
@@ -366,25 +369,35 @@ def read_site_options(page) -> list[str]:
 
 
 def click_search(page, *, progress: ProgressFn | None = None) -> bool:
-    """검색줄의 검색 버튼 클릭 (span.bt_type) — 실패 시 키워드칸 Enter."""
+    """수집사이트 선택 후 **[선택조건으로 검색하기]** 클릭 — 실패 시 폴백."""
     selectors = (
+        # 1순위: 실제 버튼 라벨
+        f'xpath=//*[self::a or self::button or self::input]'
+        f'[contains(normalize-space(.),"{SEARCH_BUTTON_LABEL}")'
+        f' or @value="{SEARCH_BUTTON_LABEL}"]',
+        f'xpath=//span[contains(normalize-space(.),"{SEARCH_BUTTON_LABEL}")]',
+        # 폴백: 검색줄 버튼 · '검색' 이 들어간 버튼
         'xpath=//div[contains(@class,"searchRow")]//span[contains(@class,"bt_type")]'
         "//*[self::button or self::a or self::input]",
-        'xpath=//span[contains(@class,"bt_type")]//*[contains(normalize-space(.),"검색")]',
-        'xpath=//*[self::button or self::a or self::input]'
+        'xpath=//*[self::a or self::button or self::input]'
         '[contains(normalize-space(.),"검색") or @value="검색"]',
     )
-    for sel in selectors:
+    for i, sel in enumerate(selectors, start=1):
         try:
             loc = page.locator(sel).first
             if loc.count() == 0:
                 continue
             loc.click(timeout=3_000)
+            _log(
+                progress,
+                f"  [{SEARCH_BUTTON_LABEL}] 클릭" if i <= 2 else "  검색 버튼 클릭(폴백)",
+            )
             return True
         except Exception:
             continue
     try:
         page.locator('input[name="sch_keyword"]').first.press("Enter", timeout=3_000)
+        _log(progress, "  검색 실행(키워드칸 Enter)")
         return True
     except Exception:
         _log(progress, "경고: 검색 버튼을 찾지 못했습니다 (현재 목록으로 진행)", major=True)
