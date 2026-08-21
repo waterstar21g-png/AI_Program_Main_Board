@@ -12,6 +12,7 @@ out/
 My_Project/
 **/__pycache__/
 **/*.pyc
+.venv/
 P2/.chrome-profile/
 P2/run-logs/
 P1_ZARA_DE/run-logs/
