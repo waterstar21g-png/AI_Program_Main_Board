@@ -91,6 +91,65 @@ def test_build_powershell_points_at_run_bat(tmp_path):
         assert str(t) in script
 
 
+def test_build_powershell_pins_first_target(tmp_path):
+    lnk = tmp_path / "망고보드.lnk"
+    script = desktop_icon.build_powershell(ROOT, [lnk])
+    assert "User Pinned\\TaskBar" in script
+    assert "Shell.Application" in script
+    assert "$verb.DoIt()" in script
+    assert "GetFolderPath('Programs')" in script  # 시작메뉴 등록
+    assert desktop_icon.PIN_VERB_PATTERN in script
+
+
+def test_build_powershell_can_skip_pinning(tmp_path):
+    script = desktop_icon.build_powershell(ROOT, [tmp_path / "망고보드.lnk"], pin=False)
+    assert "Shell.Application" not in script
+    assert "CreateShortcut" in script
+
+
+def test_pin_verb_pattern_covers_korean_and_english():
+    import re
+
+    pat = re.compile(desktop_icon.PIN_VERB_PATTERN)
+    assert pat.search("작업 표시줄에 고정")
+    assert pat.search("작업표시줄에 고정")
+    assert pat.search("Pin to taskbar")
+
+
+def test_create_reports_pinned(monkeypatch, tmp_path):
+    (tmp_path / "run.bat").write_text("@echo off\n", encoding="utf-8")
+    lnk = tmp_path / "망고보드.lnk"
+    monkeypatch.setattr(desktop_icon, "is_windows", lambda: True)
+    monkeypatch.setattr(desktop_icon, "shortcut_paths", lambda *a, **k: [lnk])
+
+    class Proc:
+        stdout = f"OK {lnk}\nPIN {lnk}\n".encode("utf-8")
+        stderr = b""
+
+    monkeypatch.setattr(desktop_icon.subprocess, "run", lambda *a, **k: Proc())
+    result = desktop_icon.create(tmp_path)
+    assert result["ok"] is True
+    assert result["pinned"] == [str(lnk)]
+    assert "작업표시줄에 고정했습니다" in result["message"]
+
+
+def test_create_explains_when_pin_blocked(monkeypatch, tmp_path):
+    (tmp_path / "run.bat").write_text("@echo off\n", encoding="utf-8")
+    lnk = tmp_path / "망고보드.lnk"
+    monkeypatch.setattr(desktop_icon, "is_windows", lambda: True)
+    monkeypatch.setattr(desktop_icon, "shortcut_paths", lambda *a, **k: [lnk])
+
+    class Proc:
+        stdout = f"OK {lnk}\nPINVERB none\n".encode("utf-8")
+        stderr = b""
+
+    monkeypatch.setattr(desktop_icon.subprocess, "run", lambda *a, **k: Proc())
+    result = desktop_icon.create(tmp_path)
+    assert result["ok"] is True
+    assert result["pinned"] == []
+    assert "우클릭" in result["message"]
+
+
 def test_build_powershell_escapes_single_quote(tmp_path):
     odd = tmp_path / "it's" / "망고보드.lnk"
     script = desktop_icon.build_powershell(ROOT, [odd])

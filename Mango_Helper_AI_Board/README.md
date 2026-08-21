@@ -1,4 +1,4 @@
-# 망고보드 (mango board) **v1.6.1**
+# 망고보드 (mango board) **v1.6.2**
 
 > **공식 저장소명:** `Mango_Helper_AI_Board`  
 > **PC 한 페이지 가이드:** **[PC_클론가이드.md](PC_클론가이드.md)** · 상세: **[PC_SETUP.md](PC_SETUP.md)**
@@ -72,7 +72,9 @@
   (OneDrive·한글 「바탕 화면」 리디렉션 포함). 여러 폴더에 중복 생성하지 않습니다.
 - 여러 바탕화면 후보 + 프로젝트 폴더 사본까지 전부 만들려면
   `py -3 board\desktop_icon.py --all`.
-- 작업표시줄에 두려면 바탕화면 아이콘 **우클릭 → [작업표시줄에 고정]**.
+- **작업표시줄 고정까지 자동 시도**합니다 (핀 폴더 복사 + 셸 고정 verb + 시작메뉴 등록).
+  Windows 가 자동고정을 막으면 메시지로 알려주고, 아이콘 우클릭 → [작업 표시줄에 고정]
+  으로 바로 하실 수 있게 시작메뉴에도 등록해 둡니다. 고정 없이 만들려면 `--no-pin`.
 - 생성 로직은 `board/desktop_icon.py` (표준 라이브러리만). `.lnk` 저장만 Windows
   COM(`WScript.Shell`) 에 위임하며, PowerShell 을 `-EncodedCommand` 로 호출해
   한글 경로·이름이 깨지지 않습니다.
