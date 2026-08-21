@@ -359,13 +359,15 @@ def test_build_modify_url_needs_host():
 
 
 class FakePopup:
-    def __init__(self, options=MANGO_OPTIONS, save=True, closes=True):
+    def __init__(self, options=MANGO_OPTIONS, save=True, closes=True, close_btn=True):
         self.select = FakeSelect(options, MANGO_VALUES)
         self.save_btn = FakeButton(present=save)
+        self.close_btn = FakeButton(present=close_btn)
         self.closes = closes
         self.closed = False
         self.dialog_handler = None
         self.waited_selector = ""
+        self.order: list[str] = []
 
     def on(self, event, handler):
         if event == "dialog":
@@ -373,9 +375,14 @@ class FakePopup:
 
     def locator(self, selector):
         if uco.TRANSLATE_SELECT_NAME in selector:
+            self.order.append("select")
             return self.select
         if "set_save" in selector or "저장하기" in selector:
+            self.order.append("save")
             return self.save_btn
+        if "window.close" in selector or "닫기" in selector or "dtype6" in selector:
+            self.order.append("close")
+            return self.close_btn
         return MissingLocator()
 
     def evaluate(self, script, *args):
@@ -448,6 +455,46 @@ def test_apply_option_in_popup_closes_even_if_window_stays():
     popup = FakePopup(closes=False)
     assert uco.apply_option_in_popup(PopupHost(popup), "720", "번역안함") is True
     assert popup.closed is True
+
+
+def test_close_button_is_clicked_right_after_save():
+    """저장하기 → 바로 옆 [닫기] 클릭 (onclick=window.close())."""
+    popup = FakePopup()
+    logs: list[str] = []
+    assert uco.apply_option_in_popup(
+        PopupHost(popup), "720", "번역안함", progress=logs.append
+    ) is True
+    assert popup.close_btn.clicks == 1
+    # 순서 보장: 번역옵션 선택 → 저장하기 → 닫기
+    first = {name: popup.order.index(name) for name in ("select", "save", "close")}
+    assert first["select"] < first["save"] < first["close"]
+    assert any("닫기 클릭" in l for l in logs)
+
+
+def test_close_falls_back_to_window_close_call():
+    popup = FakePopup(close_btn=False)
+    calls: list[str] = []
+    popup.evaluate = lambda script, *a: calls.append(script)  # type: ignore[assignment]
+    assert uco.close_popup(popup) is True
+    assert any("window.close" in c for c in calls)
+
+
+def test_close_selectors_match_mango_dom():
+    """<a onclick="window.close();" class="defbtn_lar dtype6"><span>닫기</span></a>"""
+    joined = " ".join(uco.CLOSE_SELECTORS)
+    assert "window.close" in joined
+    assert "defbtn_lar" in joined and "dtype6" in joined
+    assert "닫기" in joined
+
+
+def test_step_timeouts_are_fast():
+    """단계별 대기를 10배 축소 (컴퓨터 속도)."""
+    assert uco.T_CLICK <= 1_500
+    assert uco.T_FIELD <= 2_000
+    assert uco.T_READ <= 200
+    assert uco.T_CLOSE <= 1_500
+    assert uco.GAP_ROW <= 0.05
+    assert uco.GAP_SEARCH <= 0.2
 
 
 def test_apply_option_in_popup_bad_option_fails_without_save():
