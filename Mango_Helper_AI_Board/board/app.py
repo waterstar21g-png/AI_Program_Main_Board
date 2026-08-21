@@ -35,6 +35,9 @@ def _load_py_module(mod_name: str, folder: str, filename: str) -> ModuleType:
 p3_update = _load_py_module("p3_update_filters", "P3_필터_갱신", "update_filters.py")
 p1_policy = _load_py_module("p1_apply_policy", "P1_필터단위_마진정책적용", "apply_policy.py")
 p2_count = _load_py_module("p2_update_product_count", "P2_필터단위_상품수변경", "update_product_count.py")
+p3_option = _load_py_module(
+    "p3_update_collect_option", "P3_필터단위_수집조건수정", "update_collect_option.py"
+)
 p3_fitcl = _load_py_module("p3_fitcl_detail", "P3_핏클상세페이지", "fitcl_detail.py")
 
 from library import (  # noqa: E402
@@ -101,6 +104,8 @@ class BoardApp(tk.Tk):
         self._p2_count_proc: subprocess.Popen | None = None
         self._p2_proc: subprocess.Popen | None = None
         self._p3_proc: subprocess.Popen | None = None
+        self._p3_option_proc: subprocess.Popen | None = None
+        self._p3_option_reload_busy = False
         self._p3_fitcl_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
         self._merge_update_busy = False
@@ -183,6 +188,16 @@ class BoardApp(tk.Tk):
         )
         self.btn_p3.pack(fill="x", padx=6, pady=6)
 
+        self.btn_p3_option = tk.Button(
+            side,
+            text="P3_필터단위\n수집조건수정",
+            command=lambda: self._show("p3_option"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p3_option.pack(fill="x", padx=6, pady=6)
+
         self.btn_p3_fitcl = tk.Button(
             side,
             text="P3_핏클\n상세페이지",
@@ -248,11 +263,13 @@ class BoardApp(tk.Tk):
         self.frame_p2_count = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p2 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self.frame_p3_option = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3_fitcl = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self._build_p1(self.frame_p1)
         self._build_p2_count(self.frame_p2_count)
         self._build_p2(self.frame_p2)
         self._build_p3(self.frame_p3)
+        self._build_p3_option(self.frame_p3_option)
         self._build_p3_fitcl(self.frame_p3_fitcl)
 
     def _show(self, which: str) -> None:
@@ -260,11 +277,13 @@ class BoardApp(tk.Tk):
         self.frame_p2_count.pack_forget()
         self.frame_p2.pack_forget()
         self.frame_p3.pack_forget()
+        self.frame_p3_option.pack_forget()
         self.frame_p3_fitcl.pack_forget()
         self.btn_p1.configure(bg="#ececec")
         self.btn_p2_count.configure(bg="#ececec")
         self.btn_p2.configure(bg="#ececec")
         self.btn_p3.configure(bg="#ececec")
+        self.btn_p3_option.configure(bg="#ececec")
         self.btn_p3_fitcl.configure(bg="#ececec")
         if which == "p1":
             self.frame_p1.pack(fill="both", expand=True)
@@ -275,6 +294,9 @@ class BoardApp(tk.Tk):
         elif which == "p3":
             self.frame_p3.pack(fill="both", expand=True)
             self.btn_p3.configure(bg="#dbeafe")
+        elif which == "p3_option":
+            self.frame_p3_option.pack(fill="both", expand=True)
+            self.btn_p3_option.configure(bg="#dbeafe")
         elif which == "p3_fitcl":
             self.frame_p3_fitcl.pack(fill="both", expand=True)
             self.btn_p3_fitcl.configure(bg="#dbeafe")
@@ -788,6 +810,313 @@ class BoardApp(tk.Tk):
             self.after(
                 0,
                 lambda: self.p2_count_status.configure(
+                    text=f"종료 (exit={code})", fg="#b91c1c"
+                ),
+            )
+
+    # ── P3_필터단위_수집조건수정 ───────────────────────────────────
+    def _build_p3_option(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P3_필터단위_수집조건수정 — 번역옵션 선택 → 필터 목록 순차 적용",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        form = tk.LabelFrame(parent, text="입력", bg="#ffffff", padx=8, pady=6)
+        form.pack(fill="x")
+
+        r1 = tk.Frame(form, bg="#ffffff")
+        r1.pack(fill="x", pady=4)
+        tk.Label(r1, text="번역옵션", width=10, anchor="nw", bg="#ffffff").pack(
+            side="left", anchor="n"
+        )
+        list_wrap = tk.Frame(r1, bg="#ffffff")
+        list_wrap.pack(side="left", fill="both", expand=True)
+        self.p3_option_list = tk.Listbox(
+            list_wrap,
+            height=6,
+            exportselection=False,
+            font=("Malgun Gothic", 9),
+            activestyle="dotbox",
+        )
+        opt_sb = tk.Scrollbar(list_wrap, orient="vertical", command=self.p3_option_list.yview)
+        self.p3_option_list.configure(yscrollcommand=opt_sb.set)
+        self.p3_option_list.pack(side="left", fill="both", expand=True)
+        opt_sb.pack(side="right", fill="y")
+        self.p3_option_list.bind(
+            "<<ListboxSelect>>", lambda _e: self._on_p3_option_pick()
+        )
+
+        side_btns = tk.Frame(r1, bg="#ffffff")
+        side_btns.pack(side="left", padx=6, anchor="n")
+        self.btn_p3_option_reload = tk.Button(
+            side_btns,
+            text="망고에서\n옵션 읽기",
+            command=self._refresh_p3_option_choices,
+            bg="#0f766e",
+            fg="white",
+            font=("Malgun Gothic", 8, "bold"),
+            padx=6,
+            pady=4,
+        )
+        self.btn_p3_option_reload.pack(fill="x")
+
+        self.lbl_p3_option_pick = tk.Label(
+            form,
+            text="선택: (없음)",
+            bg="#ffffff",
+            fg="#0f172a",
+            font=("Malgun Gothic", 9, "bold"),
+            anchor="w",
+        )
+        self.lbl_p3_option_pick.pack(fill="x", pady=(2, 0))
+
+        r2 = tk.Frame(form, bg="#ffffff")
+        r2.pack(fill="x", pady=4)
+        tk.Label(r2, text="망고 URL", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p3_option_mango_url = tk.StringVar(value=p3_update.DEFAULT_MANGO_URL)
+        tk.Entry(r2, textvariable=self.var_p3_option_mango_url).pack(
+            side="left", fill="x", expand=True
+        )
+        tk.Label(
+            form,
+            text="(비우면 Chrome에 열린 필터 목록 화면 사용 · 목록이 실제와 다르면 [망고에서 옵션 읽기])",
+            bg="#ffffff",
+            fg="#64748b",
+            font=("Malgun Gothic", 8),
+            anchor="w",
+        ).pack(fill="x")
+
+        actions = tk.Frame(parent, bg="#f1f5f9")
+        actions.pack(fill="x", pady=8)
+        tk.Button(
+            actions,
+            text="작업시작",
+            command=self._run_p3_option,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="작업중단",
+            command=self._stop_p3_option,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left", padx=6)
+
+        log_frame = tk.LabelFrame(parent, text="실행 로그", bg="#ffffff", padx=6, pady=4)
+        log_frame.pack(fill="both", expand=True)
+        self.p3_option_log = tk.Text(
+            log_frame,
+            height=16,
+            font=("Consolas", 9),
+            wrap="word",
+            bg="#0f172a",
+            fg="#e2e8f0",
+        )
+        p3_option_sb = tk.Scrollbar(log_frame, command=self.p3_option_log.yview)
+        self.p3_option_log.configure(yscrollcommand=p3_option_sb.set)
+        self.p3_option_log.pack(side="left", fill="both", expand=True)
+        p3_option_sb.pack(side="right", fill="y")
+
+        self.p3_option_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
+        self.p3_option_status.pack(fill="x", pady=4)
+
+        self._fill_p3_option_list(p3_option.load_cached_options())
+
+    def _fill_p3_option_list(self, options: list[str]) -> None:
+        self.p3_option_list.delete(0, "end")
+        for o in options:
+            self.p3_option_list.insert("end", o)
+        if options:
+            self.p3_option_list.selection_clear(0, "end")
+            self.p3_option_list.selection_set(0)
+            self.p3_option_list.see(0)
+        self._on_p3_option_pick()
+
+    def _selected_translate_option(self) -> str:
+        sel = self.p3_option_list.curselection()
+        if not sel:
+            return ""
+        return str(self.p3_option_list.get(sel[0])).strip()
+
+    def _on_p3_option_pick(self) -> None:
+        picked = self._selected_translate_option()
+        self.lbl_p3_option_pick.configure(text=f"선택: {picked or '(없음)'}")
+
+    def _p3_option_stop_flag(self) -> Path:
+        return ROOT / "P3_필터단위_수집조건수정" / ".option_stop"
+
+    def _append_p3_option_log(self, line: str) -> None:
+        text = (line or "").strip()
+        if text.startswith("##MAIN##"):
+            text = text[8:]
+        self.p3_option_log.insert("end", text + "\n")
+        self.p3_option_log.see("end")
+
+    def _p3_option_script(self) -> Path:
+        return ROOT / "P3_필터단위_수집조건수정" / "update_collect_option.py"
+
+    def _p3_option_popen(self, extra_args: list[str], *, capture: bool) -> subprocess.Popen:
+        args = [sys.executable, str(self._p3_option_script()), *extra_args]
+        mango = self.var_p3_option_mango_url.get().strip()
+        if mango:
+            args.extend(["--mango-url", mango])
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        return subprocess.Popen(
+            args,
+            cwd=str(ROOT / "P3_필터단위_수집조건수정"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=False,
+            bufsize=0,
+            env=env,
+            creationflags=creationflags,
+        )
+
+    def _refresh_p3_option_choices(self) -> None:
+        """망고 수집조건수정 화면에서 번역옵션 목록을 읽어 리스트박스를 채운다."""
+        if getattr(self, "_p3_option_reload_busy", False):
+            messagebox.showinfo("안내", "옵션을 읽는 중입니다.")
+            return
+        if not self._p3_option_script().is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{self._p3_option_script()}")
+            return
+
+        self._p3_option_reload_busy = True
+        self.btn_p3_option_reload.configure(state="disabled")
+        self.p3_option_status.configure(text="망고에서 번역옵션 읽는 중…", fg="#b45309")
+
+        def worker() -> None:
+            text = ""
+            try:
+                proc = self._p3_option_popen(["--list-options"], capture=True)
+                raw = proc.stdout.read() if proc.stdout else b""
+                proc.wait()
+                text = self._decode_log_bytes(raw)
+            except Exception as e:  # noqa: BLE001
+                text = f"옵션 읽기 실패: {e}"
+
+            options = p3_option.parse_option_lines(text)
+            log_text = text
+
+            def done() -> None:
+                self._p3_option_reload_busy = False
+                self.btn_p3_option_reload.configure(state="normal")
+                for line in log_text.splitlines():
+                    if line.strip() and not line.startswith(p3_option.OPTION_LINE_PREFIX):
+                        self._append_p3_option_log(line)
+                if options:
+                    self._fill_p3_option_list(options)
+                    self.p3_option_status.configure(
+                        text=f"번역옵션 {len(options)}개 읽음", fg="#15803d"
+                    )
+                else:
+                    self.p3_option_status.configure(
+                        text="번역옵션을 읽지 못했습니다 (망고 로그인·필터 목록 화면 확인)",
+                        fg="#b91c1c",
+                    )
+
+            self.after(0, done)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_p3_option(self) -> None:
+        option = self._selected_translate_option()
+        if not option:
+            messagebox.showinfo("안내", "번역옵션을 리스트에서 선택하세요.")
+            return
+        if self._p3_option_proc and self._p3_option_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
+            return
+        if not self._p3_option_script().is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{self._p3_option_script()}")
+            return
+
+        try:
+            self._p3_option_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+        self.p3_option_log.delete("1.0", "end")
+        self.p3_option_status.configure(text=f"작업 시작 — 번역옵션: {option}", fg="#15803d")
+
+        try:
+            self._p3_option_proc = self._p3_option_popen(
+                ["--translate-option", option], capture=False
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p3_option_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p3_option_proc, args=(self._p3_option_proc,), daemon=True
+        ).start()
+
+    def _stop_p3_option(self) -> None:
+        proc = self._p3_option_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 작업이 없습니다.")
+            return
+        try:
+            self._p3_option_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p3_option_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
+            return
+        self.p3_option_status.configure(text="작업중단 요청 중…", fg="#b45309")
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    def _watch_p3_option_proc(self, proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stdout is not None
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self.after(0, lambda t=text: self._append_p3_option_log(t))
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self.after(0, lambda t=text: self._append_p3_option_log(t))
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p3_option_status.configure(
+                    text=f"로그 수신 오류: {e}", fg="#b91c1c"
+                ),
+            )
+        code = proc.wait()
+        if code == 0:
+            self.after(
+                0, lambda: self.p3_option_status.configure(text="작업 완료", fg="#15803d")
+            )
+        else:
+            self.after(
+                0,
+                lambda: self.p3_option_status.configure(
                     text=f"종료 (exit={code})", fg="#b91c1c"
                 ),
             )

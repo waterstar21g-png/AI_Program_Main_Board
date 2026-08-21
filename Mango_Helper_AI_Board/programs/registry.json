@@ -77,6 +77,16 @@
       "description": "검색필터 저장상품수 갱신"
     },
     {
+      "id": "p3_option",
+      "name": "P3_필터단위_수집조건수정",
+      "folder": "P3_필터단위_수집조건수정",
+      "script": "update_collect_option.py",
+      "launcher": "run.bat",
+      "board_tab": "p3_option",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "번역옵션(번역 후 저장) 리스트 선택값 일괄 적용"
+    },
+    {
       "id": "p3_fitcl",
       "name": "P3_핏클상세페이지",
       "folder": "P3_핏클상세페이지",
