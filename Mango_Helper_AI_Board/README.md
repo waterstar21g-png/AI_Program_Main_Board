@@ -1,4 +1,4 @@
-# 망고보드 (mango board) **v1.7.0**
+# 망고보드 (mango board) **v1.7.1**
 
 > **공식 저장소명:** `Mango_Helper_AI_Board`  
 > **PC 한 페이지 가이드:** **[PC_클론가이드.md](PC_클론가이드.md)** · 상세: **[PC_SETUP.md](PC_SETUP.md)**
@@ -126,7 +126,8 @@ D:\My_Project\Mango_Helper_AI_Board
 | [Mango_Helper_AI_Board](https://github.com/waterstar21g-png/Mango_Helper_AI_Board) | **망고보드 독립 repo (목표)** |
 | [AI_Program_Main_Board](https://github.com/waterstar21g-png/AI_Program_Main_Board) | 부모 repo · `main` 의 `Mango_Helper_AI_Board/` 폴더 |
 
-독립 repo 생성: `GITHUB_SETUP.md` · `scripts\publish-standalone.ps1`
+독립 repo 에 소스 올리기: **`망고보드_독립저장소올리기.bat`** 더블클릭
+(폴더 상태 자동 판별 — 독립 클론 / 단독 폴더 / AI보드 하위) · 상세 `GITHUB_SETUP.md`
 
 ## 구조
 
