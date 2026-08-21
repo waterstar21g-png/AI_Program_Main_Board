@@ -103,7 +103,9 @@ T_CLICK = 1_500  # 버튼 클릭 대기 (ms)
 T_FIELD = 2_000  # 입력/드롭다운 등장 대기 (ms)
 T_READ = 200  # 현재값 읽기 (ms)
 T_CLOSE = 800  # 팝업 닫힘 대기 (ms)
-T_NAV = 5_000  # 페이지 이동 대기 (ms)
+T_NAV = 5_000  # 목록 화면 이동 대기 (ms)
+T_POPUP = 300  # 수집조건수정 팝업 열기·렌더 대기 (ms) — 요건: 0.3초
+POPUP_TRIES = 4  # 0.3초 단위로 최대 4회 (요소가 뜨면 즉시 진행)
 GAP_ROW = 0.02  # 행 간 간격 (초)
 GAP_SEARCH = 0.15  # 검색 후 목록 정착 (초)
 
@@ -667,7 +669,7 @@ def open_modify_popup(page, fuid: str, *, list_url: str = "", progress: Progress
 
     if fuid:
         try:
-            with page.expect_popup(timeout=T_NAV) as popup_info:
+            with page.expect_popup(timeout=T_POPUP) as popup_info:
                 page.locator(f"a[onclick*=\"modify_filter('{fuid}')\"]").first.click(timeout=T_CLICK)
             popup = popup_info.value
             _log(progress, f"  수집조건수정 팝업 열림 (fuid={fuid})")
@@ -682,12 +684,25 @@ def open_modify_popup(page, fuid: str, *, list_url: str = "", progress: Progress
 
     try:
         popup = page.context.new_page()
-        popup.goto(url, wait_until="domcontentloaded", timeout=T_NAV)
+        popup.goto(url, wait_until="domcontentloaded", timeout=T_POPUP)
         _log(progress, f"  수집조건수정 직접 열기 (fuid={fuid})")
         return popup
     except Exception as e:  # noqa: BLE001
         _log(progress, f"오류: 팝업 열기 실패 · {e}", major=True)
         return None
+
+
+def wait_translate_select(popup, *, progress: ProgressFn | None = None) -> bool:
+    """팝업의 번역옵션 드롭다운 등장 대기 — 0.3초 단위. 뜨는 즉시 진행."""
+    sel = f'select[name="{TRANSLATE_SELECT_NAME}"]'
+    for attempt in range(1, POPUP_TRIES + 1):
+        try:
+            popup.wait_for_selector(sel, timeout=T_POPUP)
+            return True
+        except Exception:
+            if attempt == 1:
+                _log(progress, f"  팝업 렌더 {T_POPUP}ms 초과 — 재시도")
+    return False
 
 
 def click_save_in_popup(popup, *, progress: ProgressFn | None = None) -> bool:
@@ -772,12 +787,8 @@ def apply_option_in_popup(
         pass
 
     try:
-        try:
-            popup.wait_for_selector(
-                f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=T_FIELD
-            )
-        except Exception:
-            pass
+        if not wait_translate_select(popup, progress=progress):
+            _log(progress, "  경고: 번역옵션 드롭다운 지연 — 그대로 시도", major=True)
 
         if not set_translate_option(popup, option, progress=progress):
             return False
@@ -857,12 +868,7 @@ def fetch_translate_options(
                 return [], sites
 
             try:
-                try:
-                    popup.wait_for_selector(
-                        f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=T_FIELD
-                    )
-                except Exception:
-                    pass
+                wait_translate_select(popup, progress=progress)
                 control = detect_translate_control(popup)
                 if control is None:
                     _log(progress, "번역옵션 컨트롤 미검출", major=True)

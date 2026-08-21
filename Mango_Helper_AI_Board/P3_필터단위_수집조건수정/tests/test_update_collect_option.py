@@ -497,6 +497,34 @@ def test_step_timeouts_are_fast():
     assert uco.GAP_SEARCH <= 0.2
 
 
+def test_popup_budget_is_300ms():
+    """요건: 팝업 열기·렌더 대기 0.3초."""
+    assert uco.T_POPUP == 300
+
+
+class SlowPopup(FakePopup):
+    """첫 0.3초에 안 뜨는 팝업 — 재시도로 성공."""
+
+    def __init__(self):
+        super().__init__()
+        self.waits = 0
+
+    def wait_for_selector(self, selector, timeout=None):
+        self.waits += 1
+        assert timeout == uco.T_POPUP
+        if self.waits == 1:
+            raise RuntimeError("아직 안 뜸")
+        self.waited_selector = selector
+
+
+def test_slow_popup_retries_once_then_proceeds():
+    popup = SlowPopup()
+    logs: list[str] = []
+    assert uco.wait_translate_select(popup, progress=logs.append) is True
+    assert popup.waits == 2
+    assert any("재시도" in l for l in logs)
+
+
 def test_apply_option_in_popup_bad_option_fails_without_save():
     popup = FakePopup()
     assert uco.apply_option_in_popup(PopupHost(popup), "720", "파파고") is False
