@@ -1172,7 +1172,7 @@ class BoardApp(tk.Tk):
         wrap.pack(side="left", fill="both", expand=True)
         self.p5_market_list = tk.Listbox(
             wrap,
-            height=5,
+            height=7,
             exportselection=False,
             font=("Malgun Gothic", 9),
             activestyle="dotbox",
@@ -1181,10 +1181,11 @@ class BoardApp(tk.Tk):
         self.p5_market_list.configure(yscrollcommand=sb.set)
         self.p5_market_list.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
-        self._p5_market_codes = list(p5_category.MARKETS.keys())
-        for code in self._p5_market_codes:
+        self._p5_market_codes = [p5_category.ALL_MARKETS, *p5_category.MARKETS.keys()]
+        self.p5_market_list.insert("end", "전체 마켓 일괄  (ALL)")
+        for code in list(p5_category.MARKETS.keys()):
             self.p5_market_list.insert("end", f"{p5_category.MARKETS[code]}  ({code})")
-        self.p5_market_list.selection_set(0)
+        self.p5_market_list.selection_set(1)  # 기본: 옥션2.0
 
         r1 = tk.Frame(form, bg="#ffffff")
         r1.pack(fill="x", pady=4)
@@ -1311,7 +1312,10 @@ class BoardApp(tk.Tk):
 
         self.p5_log.delete("1.0", "end")
         self.p5_status.configure(
-            text=f"추출 시작 — {p5_category.MARKETS.get(market, market)}", fg="#15803d"
+            text="추출 시작 — "
+            + ("전체 마켓" if market == p5_category.ALL_MARKETS
+               else p5_category.MARKETS.get(market, market)),
+            fg="#15803d",
         )
 
         creationflags = 0

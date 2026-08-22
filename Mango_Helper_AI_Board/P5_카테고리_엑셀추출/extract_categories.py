@@ -53,13 +53,15 @@ DEFAULT_URL = (
 
 # 마켓 코드 → 화면 표기 (admin_category_set.php 의 mapping_category_<코드>)
 MARKETS: dict[str, str] = {
-    "AUC20": "옥션2.0",
-    "GMK20": "지마켓2.0",
-    "11ST": "11번가",
-    "IPST": "인터파크",
-    "WMP": "위메프",
+    "AUC20": "옥션2.0",       # tr#mapping_category_AUC20
+    "11ST": "11번가",          # tr#mapping_category_11ST
+    "GMK20": "G마켓2.0",       # tr#mapping_category_GMK20
+    "SMART": "스마트스토어",   # tr#mapping_category_SMART
+    "COUP": "쿠팡",            # tr#mapping_category_COUP
+    "LTON": "롯데ON",          # tr#mapping_category_LTON
 }
 DEFAULT_MARKET = "AUC20"
+ALL_MARKETS = "ALL"  # 전체 마켓 일괄 추출
 
 # 카테고리분류표 양식
 LEVELS = 6
@@ -172,7 +174,8 @@ def deepest_level(options: Iterable[str]) -> int:
 
 def default_excel_path(market: str, when: datetime | None = None) -> Path:
     stamp = (when or datetime.now()).strftime("%Y%m%d_%H%M%S")
-    label = MARKETS.get(market, market)
+    code = (market or "").strip().upper()
+    label = "전체마켓" if code == ALL_MARKETS else MARKETS.get(code, code)
     return OUTPUT_DIR / f"카테고리분류표_{label}_{stamp}.xlsx"
 
 
@@ -223,6 +226,17 @@ def list_select_id(market: str) -> str:
     return f"openmarket_category_search_list_{market}"
 
 
+def list_select_ids(market: str) -> list[str]:
+    """마켓별 목록 select — 화면에 따라 list_ / list2_ 중 채워지는 쪽이 다르다.
+
+    11번가·롯데ON 처럼 둘 다 존재하고 보이는 쪽이 서로 다른 경우가 있어 모두 읽는다.
+    """
+    return [
+        f"openmarket_category_search_list_{market}",
+        f"openmarket_category_search_list2_{market}",
+    ]
+
+
 def click_all_categories(page, market: str, *, progress: ProgressFn | None = None) -> bool:
     for sel in all_view_selectors(market):
         try:
@@ -247,21 +261,27 @@ def click_all_categories(page, market: str, *, progress: ProgressFn | None = Non
 
 
 _OPTIONS_JS = """
-(id) => {
-  const el = document.getElementById(id);
-  if (!el) return null;
-  return Array.from(el.options).map(o => (o.textContent || '').trim());
+(ids) => {
+  const out = [];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    const texts = Array.from(el.options).map(o => (o.textContent || '').trim());
+    if (texts.length > out.length) out.length = 0, out.push(...texts);
+  }
+  return out;
 }
 """
 
 
-def read_option_texts(page, market: str, *, timeout_ms: int = T_LIST) -> list[str]:
+def read_option_texts(page, market: str, *, timeout_ms: int | None = None) -> list[str]:
     """리스트박스 옵션이 채워질 때까지 기다렸다가 전부 읽는다."""
-    deadline = time.monotonic() + timeout_ms / 1000
+    budget = T_LIST if timeout_ms is None else timeout_ms
+    deadline = time.monotonic() + budget / 1000
     best: list[str] = []
     while True:
         try:
-            texts = page.evaluate(_OPTIONS_JS, list_select_id(market)) or []
+            texts = page.evaluate(_OPTIONS_JS, list_select_ids(market)) or []
         except Exception:
             texts = []
         real = [t for t in texts if not is_placeholder(t)]
@@ -275,6 +295,25 @@ def read_option_texts(page, market: str, *, timeout_ms: int = T_LIST) -> list[st
             time.sleep(0.3)
 
 
+def markets_to_run(market: str) -> list[str]:
+    """`ALL` 이면 전체 마켓, 아니면 하나."""
+    code = (market or DEFAULT_MARKET).strip().upper()
+    if code == ALL_MARKETS:
+        return list(MARKETS.keys())
+    return [code]
+
+
+def extract_one(page, market: str, *, progress: ProgressFn | None = None) -> list[str]:
+    """한 마켓 — [전체카테고리] 클릭 → 목록 옵션 읽기."""
+    label = MARKETS.get(market, market)
+    _log(progress, f"{label} ({market}) — 전체카테고리 조회", major=True)
+    if not click_all_categories(page, market, progress=progress):
+        return []
+    options = read_option_texts(page, market)
+    _log(progress, f"  {label} 카테고리 {len(options)}건", major=True)
+    return options
+
+
 def run_extract(
     *,
     market: str = DEFAULT_MARKET,
@@ -283,6 +322,7 @@ def run_extract(
     progress: ProgressFn | None = None,
 ) -> RunResult:
     market = (market or DEFAULT_MARKET).strip().upper()
+    codes = markets_to_run(market)
     result = RunResult(ok=False, market=market)
     clear_stop_flag()
 
@@ -295,22 +335,34 @@ def run_extract(
         return result
 
     target = (url or "").strip() or DEFAULT_URL
-    _log(progress, f"카테고리 추출 — {MARKETS.get(market, market)} ({market})", major=True)
+    _log(
+        progress,
+        "카테고리 추출 — " + ", ".join(f"{MARKETS.get(c, c)}({c})" for c in codes),
+        major=True,
+    )
     _log(progress, f"접근 URL={target}")
 
-    options: list[str] = []
+    rows: list[dict] = []
+    per_market: dict[str, int] = {}
+    deepest = 0
     try:
         with sync_playwright() as pw:
             _browser, page = p2.connect_browser(pw)
             page.goto(target, wait_until="domcontentloaded", timeout=60_000)
             _log(progress, "카테고리 매핑 화면 표시", major=True)
 
-            if not click_all_categories(page, market, progress=progress):
-                result.errors.append("전체카테고리 클릭 실패")
-                return result
-
-            options = read_option_texts(page, market)
-            _log(progress, f"카테고리 목록 {len(options)}건 읽음", major=True)
+            for code in codes:
+                if stop_requested():
+                    _log(progress, "사용자 중단", major=True)
+                    break
+                options = extract_one(page, code, progress=progress)
+                if not options:
+                    result.errors.append(f"{MARKETS.get(code, code)} 목록 비어 있음")
+                    continue
+                market_rows = build_rows(options, MARKETS.get(code, code))
+                rows.extend(market_rows)
+                per_market[code] = len(market_rows)
+                deepest = max(deepest, deepest_level(options))
     except Exception as e:  # noqa: BLE001
         result.errors.append(str(e))
         _log(progress, f"실행 오류: {e}", major=True)
@@ -318,14 +370,14 @@ def run_extract(
     finally:
         clear_stop_flag()
 
-    if not options:
-        result.errors.append("카테고리 목록이 비어 있습니다 (전체카테고리 로딩 확인).")
+    if not rows:
+        if not result.errors:
+            result.errors.append("카테고리 목록이 비어 있습니다 (전체카테고리 로딩 확인).")
         _log(progress, result.errors[0], major=True)
         return result
 
-    rows = build_rows(options, MARKETS.get(market, market))
     result.total = len(rows)
-    result.deepest = deepest_level(options)
+    result.deepest = deepest
 
     path = Path(out_path) if out_path else default_excel_path(market)
     try:
@@ -337,6 +389,8 @@ def run_extract(
 
     result.excel_path = str(saved)
     result.ok = True
+    for code, cnt in per_market.items():
+        _log(progress, f"  {MARKETS.get(code, code)}: {cnt}행")
     _log(progress, f"엑셀 저장 완료 · {result.total}행 · 최대 {result.deepest}단계", major=True)
     _log(progress, f"  {saved}", major=True)
     return result
@@ -381,7 +435,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--market",
         default=DEFAULT_MARKET,
-        help=f"마켓 코드 ({' / '.join(f'{k}={v}' for k, v in MARKETS.items())})",
+        help=(
+            "마켓 코드 ("
+            + " / ".join(f"{k}={v}" for k, v in MARKETS.items())
+            + f" / {ALL_MARKETS}=전체)"
+        ),
     )
     parser.add_argument("--url", default="", help=f"접근 URL (기본={DEFAULT_URL})")
     parser.add_argument("--out", default="", help="엑셀 저장 경로 (기본=output 폴더)")

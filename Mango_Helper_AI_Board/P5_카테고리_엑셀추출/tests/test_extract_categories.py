@@ -134,9 +134,131 @@ def test_default_url_is_category_set_page():
     )
 
 
-def test_markets_include_auction20():
-    assert ec.MARKETS["AUC20"] == "옥션2.0"
+def test_markets_match_screenshots():
+    """스크린샷 1~10 의 tr#mapping_category_<코드> 와 표기."""
+    assert ec.MARKETS == {
+        "AUC20": "옥션2.0",
+        "11ST": "11번가",
+        "GMK20": "G마켓2.0",
+        "SMART": "스마트스토어",
+        "COUP": "쿠팡",
+        "LTON": "롯데ON",
+    }
     assert ec.DEFAULT_MARKET == "AUC20"
+
+
+def test_all_view_selector_per_market():
+    for code in ec.MARKETS:
+        joined = " ".join(ec.all_view_selectors(code))
+        assert f"search_category('{code}'" in joined
+        assert f"mapping_category_{code}" in joined
+        assert "allview" in joined
+
+
+def test_list_select_ids_cover_both_variants():
+    """11번가·롯데ON 은 list_ / list2_ 중 보이는 쪽이 다르다."""
+    ids = ec.list_select_ids("11ST")
+    assert ids == [
+        "openmarket_category_search_list_11ST",
+        "openmarket_category_search_list2_11ST",
+    ]
+
+
+def test_markets_to_run_all():
+    assert ec.markets_to_run("ALL") == list(ec.MARKETS.keys())
+    assert ec.markets_to_run("coup") == ["COUP"]
+    assert ec.markets_to_run("") == ["AUC20"]
+
+
+def test_default_excel_path_for_all_markets():
+    from datetime import datetime
+
+    p = ec.default_excel_path("ALL", datetime(2026, 8, 22, 11, 50, 0))
+    assert p.name == "카테고리분류표_전체마켓_20260822_115000.xlsx"
+
+
+class DualSelectPage:
+    """list_ 는 비어 있고 list2_ 에만 목록이 있는 화면 (11번가 형태)."""
+
+    def __init__(self, options):
+        self.options = list(options)
+        self.script_ids = None
+
+    def evaluate(self, script, *args):
+        self.script_ids = args[0] if args else None
+        # JS 동작 모사 — 두 id 중 더 긴 목록 채택
+        return self.options
+
+    def wait_for_timeout(self, ms):
+        return None
+
+
+def test_read_options_asks_both_select_ids():
+    page = DualSelectPage(SAMPLE)
+    texts = ec.read_option_texts(page, "LTON")
+    assert len(texts) == 5
+    assert page.script_ids == ec.list_select_ids("LTON")
+
+
+class MarketLoopPage:
+    """마켓별로 서로 다른 목록을 주는 화면 — ALL 추출 확인용."""
+
+    def __init__(self):
+        self.clicked: list[str] = []
+        self.current = ""
+
+    def goto(self, url, **kwargs):
+        return None
+
+    def locator(self, selector):
+        for code in ec.MARKETS:
+            if f"search_category('{code}'" in selector:
+                self.current = code
+                return _ClickOnce(self, code)
+        return _Missing()
+
+    def evaluate(self, script, *args):
+        if "search_category" in script:
+            return None
+        return [f"{ec.MARKETS[self.current]}대분류 > 중분류"]
+
+    def wait_for_timeout(self, ms):
+        return None
+
+
+class _ClickOnce:
+    def __init__(self, page, code):
+        self.page = page
+        self.code = code
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def click(self, timeout=None):
+        self.page.clicked.append(self.code)
+
+
+class _Missing:
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 0
+
+
+def test_extract_one_clicks_and_reads(monkeypatch):
+    monkeypatch.setattr(ec, "T_LIST", 300)  # 1건만 오는 목록에서 대기 단축
+    page = MarketLoopPage()
+    logs: list[str] = []
+    options = ec.extract_one(page, "SMART", progress=logs.append)
+    assert page.clicked == ["SMART"]
+    assert options == ["스마트스토어대분류 > 중분류"]
+    assert any("스마트스토어" in l for l in logs)
 
 
 class FakePage:

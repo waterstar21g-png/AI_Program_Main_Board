@@ -28,13 +28,19 @@ https://tmg1898.cafe24.com/mall/admin/admin_category_set.php?tm=F&ps_ftid=790
 
 ## 마켓 코드
 
-| 코드 | 표기 |
-|------|------|
-| `AUC20` | 옥션2.0 (기본) |
-| `GMK20` | 지마켓2.0 |
-| `11ST` | 11번가 |
-| `IPST` | 인터파크 |
-| `WMP` | 위메프 |
+| 코드 | 표기 | 화면 행 |
+|------|------|---------|
+| `AUC20` | 옥션2.0 (기본) | `tr#mapping_category_AUC20` |
+| `11ST` | 11번가 | `tr#mapping_category_11ST` |
+| `GMK20` | G마켓2.0 | `tr#mapping_category_GMK20` |
+| `SMART` | 스마트스토어 | `tr#mapping_category_SMART` |
+| `COUP` | 쿠팡 | `tr#mapping_category_COUP` |
+| `LTON` | 롯데ON | `tr#mapping_category_LTON` |
+| `ALL` | **전체 마켓 일괄** | 위 6개를 순서대로 |
+
+마켓마다 목록 select 이 `openmarket_category_search_list_<코드>` 와
+`openmarket_category_search_list2_<코드>` 두 벌 있고 보이는 쪽이 다릅니다
+(11번가·롯데ON). 둘 다 읽어 **항목이 많은 쪽**을 사용합니다.
 
 ## 출력
 
@@ -43,8 +49,9 @@ https://tmg1898.cafe24.com/mall/admin/admin_category_set.php?tm=F&ps_ftid=790
 ## CLI
 
 ```powershell
-python extract_categories.py
-python extract_categories.py --market GMK20
+python extract_categories.py                    # 옥션2.0
+python extract_categories.py --market ALL       # 6개 마켓 한 파일로
+python extract_categories.py --market LTON
 python extract_categories.py --out D:\out\분류표.xlsx
 python extract_categories.py --from-text 목록.txt   # 브라우저 없이 텍스트 → 엑셀
 ```
