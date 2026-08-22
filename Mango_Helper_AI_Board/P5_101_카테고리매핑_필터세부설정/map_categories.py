@@ -106,6 +106,7 @@ BOTH = "둘다"  # 두 구분 모두 매핑
 # 상품고시정보 팝업 — show_hide('#mapping_notify_<코드>')
 NOTIFY_ID = "mapping_notify_{market}"
 NOTIFY_RETRIES = 3  # 상품고시정보 팝업이 계속 뜨면 다른 카테고리로 재시도하는 횟수
+MAP_RETRIES = 3  # ★요건: 매핑 실패 시 다른 카테고리로 최대 3회 추가 시도
 
 # ★요건: 작업 행 범위 — <작업 시작 부터> ~ <작업 종료 까지> (1부터, 양끝 포함)
 DEFAULT_ROW_FROM = 1
@@ -813,6 +814,41 @@ def close_popup(popup) -> None:
 
 
 def map_one_market(
+    popup,
+    market: str,
+    filter_name: str,
+    categories: Sequence[str],
+    *,
+    variant: str = "",
+    exclude: Sequence[str] = (),
+    retries: int = MAP_RETRIES,
+    progress: ProgressFn | None = None,
+) -> MappedItem:
+    """실패하면 다른 카테고리로 최대 `retries` 회 추가 시도한다."""
+    tried = list(exclude or [])
+    last = MappedItem(market, "", 0.0, False, "시도 없음")
+    for attempt in range(1, max(1, retries) + 1):
+        last = _map_once(
+            popup,
+            market,
+            filter_name,
+            categories,
+            variant=variant,
+            exclude=tried,
+            progress=progress,
+        )
+        if last.ok or not last.category:
+            return last
+        tried.append(last.category)
+        _log(
+            progress,
+            f"  {MARKETS.get(market, market)}: {last.reason} — 다른 카테고리로 재시도"
+            f" ({attempt}/{max(1, retries)})",
+        )
+    return last
+
+
+def _map_once(
     popup,
     market: str,
     filter_name: str,

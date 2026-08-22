@@ -49,10 +49,11 @@ def test_best_category_picks_expected():
     assert score >= mc.MIN_SCORE
 
 
-def test_best_category_returns_empty_when_unrelated():
+def test_best_category_always_returns_one():
+    """★요건: 무관해 보여도 가장 가까운 카테고리 하나는 반드시 지정한다."""
     cat, score = mc.best_category("자동차 타이어 공기압 센서", AUCTION)
-    assert cat == ""
-    assert score < mc.MIN_SCORE
+    assert cat in AUCTION
+    assert score > 0
 
 
 def test_search_keyword_is_leaf():
@@ -224,11 +225,28 @@ def test_map_one_market_without_excel_is_skipped():
 
 
 def test_map_one_market_no_search_result(monkeypatch):
-    monkeypatch.setattr(mc, "T_LIST", 300)
+    monkeypatch.setattr(mc, "T_LIST", 200)
     popup = FakePopup([])
-    item = mc.map_one_market(popup, "AUC20", "남성 비니", AUCTION)
+    item = mc.map_one_market(popup, "AUC20", "남성 비니", AUCTION, retries=1)
     assert item.ok is False
     assert item.reason == "검색 결과 없음"
+
+
+def test_map_retries_three_times_with_other_categories(monkeypatch):
+    """★요건: 실패하면 다른 카테고리로 최대 3회 추가 시도."""
+    monkeypatch.setattr(mc, "T_LIST", 100)
+    tried: list[str] = []
+
+    def fake_once(popup, market, name, cats, *, variant="", exclude=(), progress=None):
+        cat, _ = mc.best_category_with_step(name, cats, exclude=exclude)
+        tried.append(cat)
+        return mc.MappedItem(market, cat, 1.0, False, "목록 선택 실패")
+
+    monkeypatch.setattr(mc, "_map_once", fake_once)
+    item = mc.map_one_market(FakePopup([]), "AUC20", "남성 비니", AUCTION)
+    assert item.ok is False
+    assert len(tried) == mc.MAP_RETRIES == 3
+    assert len(set(tried)) == 3   # 매번 다른 카테고리
 
 
 # ── 목록 행 파싱 ─────────────────────────────────────────────────

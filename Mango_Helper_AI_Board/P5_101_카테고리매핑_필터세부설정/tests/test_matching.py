@@ -124,10 +124,35 @@ def test_mid_name_matching_precedes_generic():
     assert step.startswith("2-2)")
 
 
-def test_no_match_returns_empty():
+def test_always_picks_one_when_rules_fail():
+    """★요건: 규칙으로 못 찾아도 가장 가까운 하나를 반드시 지정한다."""
     cat, step = mt.find_category("아름트리-무신사-남성-모자-버킷햇", ["식품 > 과일 > 사과"])
-    assert cat == ""
-    assert step == "미검출"
+    assert cat == "식품 > 과일 > 사과"
+    assert step.startswith("3) 최근접")
+
+
+def test_force_off_returns_empty():
+    cat, step = mt.find_category(
+        "아름트리-무신사-남성-모자-버킷햇", ["식품 > 과일 > 사과"], force=False
+    )
+    assert cat == "" and step == "미검출"
+
+
+def test_nearest_prefers_same_gender():
+    cats = ["잡화 > 여성 > 기타소품", "잡화 > 남성 > 기타소품"]
+    cat, _ = mt.find_category("아름트리-무신사-남성-소품-핸드워머", cats)
+    assert cat == "잡화 > 남성 > 기타소품"
+
+
+def test_nearest_uses_material_and_purpose():
+    cats = ["아웃도어 > 등산 > 등산용품", "생활 > 주방 > 컵"]
+    cat, step = mt.find_category("아름트리-무신사-남성-용품-등산스틱", cats)
+    assert cat == "아웃도어 > 등산 > 등산용품"
+
+
+def test_leaf_of_helper():
+    assert mt.leaf_of("A > B > C") == "C"
+    assert mt.leaf_of("") == ""
 
 
 def test_empty_excel():

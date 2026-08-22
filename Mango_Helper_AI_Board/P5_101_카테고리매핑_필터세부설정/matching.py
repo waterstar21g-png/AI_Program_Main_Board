@@ -51,6 +51,22 @@ ACCESSORY_WORDS = ("선글라스", "안경테", "모자", "햇", "손수건", "�
 
 _SPLIT = re.compile(r"[\s/·,()\[\]|]+")
 
+# 최근접 판단 보조 — 성별 · 소재 · 용도/활용
+GENDER_WORDS = {
+    "남성": ("남성", "남자", "맨즈", "men"),
+    "여성": ("여성", "여자", "우먼", "women"),
+    "공용": ("공용", "유니섹스", "남녀"),
+    "아동": ("아동", "키즈", "주니어", "베이비"),
+}
+MATERIAL_WORDS = (
+    "가죽", "레더", "니트", "데님", "면", "코튼", "울", "린넨", "퍼", "메쉬",
+    "고어텍스", "나일론", "폴리", "스웨이드", "캔버스", "실리콘", "메탈",
+)
+PURPOSE_WORDS = (
+    "등산", "캠핑", "스포츠", "러닝", "골프", "수영", "요가", "낚시", "자전거",
+    "웨딩", "정장", "캐주얼", "홈웨어", "방한", "여름", "겨울", "레인", "트레킹",
+)
+
 
 def normalize(text: str) -> str:
     return "".join(str(text or "").split()).lower()
@@ -58,6 +74,12 @@ def normalize(text: str) -> str:
 
 def split_levels(path: str) -> list[str]:
     return [p.strip() for p in str(path or "").split(">") if p.strip()]
+
+
+def leaf_of(path: str) -> str:
+    """경로의 마지막 단계."""
+    levels = split_levels(path)
+    return levels[-1] if levels else ""
 
 
 def _halves(word: str) -> list[str]:
@@ -208,10 +230,98 @@ def match_by_levels(paths: Sequence[str], parsed: ParsedFilter) -> str:
     return pick_best(hits, parsed)
 
 
+def _bigrams(text: str) -> set[str]:
+    s = normalize(text)
+    return {s[i : i + 2] for i in range(len(s) - 1)} if len(s) > 1 else {s} if s else set()
+
+
+def _overlap(a: str, b: str) -> float:
+    ga, gb = _bigrams(a), _bigrams(b)
+    if not ga or not gb:
+        return 0.0
+    return len(ga & gb) / max(len(ga), len(gb))
+
+
+def _words_in(text: str, words: Iterable[str]) -> set[str]:
+    low = normalize(text)
+    return {w for w in words if normalize(w) in low}
+
+
+def gender_of(text: str) -> str:
+    low = normalize(text)
+    for gender, words in GENDER_WORDS.items():
+        if any(normalize(w) in low for w in words):
+            return gender
+    return ""
+
+
+def nearest_score(parsed: "ParsedFilter", path: str) -> float:
+    """소재·용도·성별·활용을 종합한 근접도 (0~1). 규칙 탐색이 실패했을 때 사용."""
+    leaf = leaf_of(path)
+    names = [n for n in (parsed.mid, *parsed.lows) if n]
+
+    # 이름 유사도 — 하위·중위 조각과 리프/경로의 글자 겹침
+    name_hit = 0.0
+    for name in names:
+        name_hit = max(name_hit, _overlap(name, leaf), 0.6 * _overlap(name, path))
+
+    # 성별
+    gender = gender_of(parsed.raw)
+    gender_hit = 0.0
+    if gender:
+        pg = gender_of(path)
+        if pg == gender:
+            gender_hit = 1.0
+        elif pg:
+            gender_hit = -0.5  # 다른 성별이면 감점
+
+    # 소재 · 용도/활용
+    mats = _words_in(parsed.raw, MATERIAL_WORDS)
+    purposes = _words_in(parsed.raw, PURPOSE_WORDS)
+    attr_hit = 0.0
+    if mats:
+        attr_hit += 0.5 * len(_words_in(path, mats)) / len(mats)
+    if purposes:
+        attr_hit += 0.5 * len(_words_in(path, purposes)) / len(purposes)
+
+    # 포괄 카테고리 보너스 (품목 성격에 맞는 곳)
+    generic_hit = 0.0
+    for generic in GENERIC_BY_KIND.get(kind_of(parsed), ()):
+        if path_hit(path, generic):
+            generic_hit = 0.3
+            break
+
+    score = 0.55 * name_hit + 0.2 * max(gender_hit, 0.0) + 0.15 * attr_hit + generic_hit
+    if gender_hit < 0:
+        score += 0.2 * gender_hit  # 성별 불일치 감점
+    return max(0.0, min(1.0, score))
+
+
+def nearest_category(name: str, paths: Sequence[str]) -> tuple[str, float]:
+    """규칙으로 못 찾았을 때 — **반드시 하나**를 고른다 (가장 가까운 것)."""
+    parsed = parse_filter_name(name)
+    best, best_score = "", -1.0
+    for path in paths:
+        if not str(path or "").strip():
+            continue
+        score = nearest_score(parsed, path)
+        if score > best_score or (score == best_score and best and len(path) < len(best)):
+            best, best_score = path, score
+    return best, max(best_score, 0.0)
+
+
 def find_category(
-    name: str, paths: Sequence[str], *, exclude: Sequence[str] = ()
+    name: str,
+    paths: Sequence[str],
+    *,
+    exclude: Sequence[str] = (),
+    force: bool = True,
 ) -> tuple[str, str]:
-    """최적 카테고리와 그 근거 단계. `exclude` 는 이미 시도한 카테고리."""
+    """최적 카테고리와 그 근거 단계.
+
+    `exclude` 는 이미 시도한 카테고리. `force=True`(기본) 면 규칙으로 못 찾아도
+    소재·용도·성별·활용을 종합해 **가장 가까운 하나를 반드시** 고른다.
+    """
     parsed = parse_filter_name(name)
     skip = {normalize(e) for e in (exclude or []) if str(e or "").strip()}
     paths = [
@@ -267,4 +377,8 @@ def find_category(
         target = narrowed or generic
         return pick_best(target, parsed), f"2-4) 포괄({kind})"
 
+    if force:
+        nearest, score = nearest_category(name, paths)
+        if nearest:
+            return nearest, f"3) 최근접 지정 ({score:.2f})"
     return "", "미검출"
