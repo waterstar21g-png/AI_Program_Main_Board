@@ -72,10 +72,20 @@ EXCLUDED_MARKETS: dict[str, str] = {
     "PLAYAUTO": "플레이오토(EMP)",
 }
 
+# 마켓별 카테고리 구분 라디오 (없으면 단일)
+#   <label><input type="radio" name="openmarket_seller_type2_11ST"
+#     onclick="change_category_list(...,'11ST', this);"><span>해외카테고리</span></label>
+VARIANT_RADIO_NAME = "openmarket_seller_type2_{market}"
+MARKET_VARIANTS: dict[str, tuple[str, ...]] = {
+    "11ST": ("해외카테고리", "국내카테고리"),
+    "LTON": ("해외직구 카테고리", "일반카테고리"),
+}
+SINGLE_VARIANT = ""  # 구분이 없는 마켓
+
 # 카테고리분류표 양식
 LEVELS = 6
 LEVEL_HEADERS = [f"{i}단계" for i in range(1, LEVELS + 1)]
-HEADERS = ["마켓", *LEVEL_HEADERS, "전체경로"]
+HEADERS = ["마켓", "구분", *LEVEL_HEADERS, "전체경로"]
 
 PATH_SEPARATORS = (">", "&gt;", "》", "＞")
 
@@ -137,7 +147,7 @@ def is_placeholder(text: str) -> bool:
     return any(k in t for k in ("선택해주세요", "선택하세요", "카테고리검색"))
 
 
-def to_row(path: list[str], market: str) -> dict:
+def to_row(path: list[str], market: str, variant: str = SINGLE_VARIANT) -> dict:
     """경로 → 분류표 한 행. 6단계보다 깊으면 나머지를 6단계에 합친다."""
     cells = list(path[: LEVELS - 1])
     rest = path[LEVELS - 1 :]
@@ -145,13 +155,15 @@ def to_row(path: list[str], market: str) -> dict:
     cells.append(last)
     cells += [""] * (LEVELS - len(cells))
 
-    row = {"마켓": market, "전체경로": " > ".join(path)}
+    row = {"마켓": market, "구분": variant, "전체경로": " > ".join(path)}
     for header, value in zip(LEVEL_HEADERS, cells):
         row[header] = value
     return row
 
 
-def build_rows(options: Iterable[str], market: str) -> list[dict]:
+def build_rows(
+    options: Iterable[str], market: str, variant: str = SINGLE_VARIANT
+) -> list[dict]:
     """옵션 텍스트 목록 → 분류표 행 목록 (중복·안내문구 제거, 순서 유지)."""
     rows: list[dict] = []
     seen: set[str] = set()
@@ -165,7 +177,7 @@ def build_rows(options: Iterable[str], market: str) -> list[dict]:
         if key in seen:
             continue
         seen.add(key)
-        rows.append(to_row(path, market))
+        rows.append(to_row(path, market, variant))
     return rows
 
 
@@ -209,7 +221,7 @@ def write_excel(rows: list[dict], path: Path) -> Path:
     for row in rows:
         ws.append([row.get(h, "") for h in HEADERS])
 
-    widths = [10, 22, 22, 22, 22, 22, 26, 60]
+    widths = [10, 14, 22, 22, 22, 22, 22, 26, 60]
     for idx, width in enumerate(widths[: len(HEADERS)], start=1):
         ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = width
     ws.freeze_panes = "A2"
@@ -244,6 +256,49 @@ def list_select_ids(market: str) -> list[str]:
         f"openmarket_category_search_list_{market}",
         f"openmarket_category_search_list2_{market}",
     ]
+
+
+def variants_of(market: str) -> tuple[str, ...]:
+    """마켓의 카테고리 구분 목록 (없으면 단일)."""
+    return MARKET_VARIANTS.get(market, (SINGLE_VARIANT,))
+
+
+def variant_radio_selectors(market: str, variant: str) -> tuple[str, ...]:
+    """구분 라디오 — 같은 label 안의 span 텍스트로 찾는다."""
+    name = VARIANT_RADIO_NAME.format(market=market)
+    return (
+        f'xpath=//label[.//span[contains(normalize-space(.),"{variant}")]]'
+        f'//input[@type="radio" and @name="{name}"]',
+        f'xpath=//input[@type="radio" and @name="{name}"]'
+        f'[following-sibling::span[contains(normalize-space(.),"{variant}")]]',
+        f'xpath=//tr[@id="mapping_category_{market}"]'
+        f'//label[.//span[contains(normalize-space(.),"{variant}")]]//input[@type="radio"]',
+    )
+
+
+def select_variant(page, market: str, variant: str, *, progress: ProgressFn | None = None) -> bool:
+    """카테고리 구분(해외/국내 등) 라디오를 선택하고 목록 교체를 기다린다."""
+    if not variant:
+        return True
+    for sel in variant_radio_selectors(market, variant):
+        try:
+            loc = page.locator(sel).first
+            if loc.count() == 0:
+                continue
+            try:
+                loc.check(timeout=T_CLICK)
+            except Exception:
+                loc.click(timeout=T_CLICK)
+            _log(progress, f"  구분 선택: {variant}")
+            try:
+                page.wait_for_timeout(400)  # change_category_list 반영
+            except Exception:
+                time.sleep(0.4)
+            return True
+        except Exception:
+            continue
+    _log(progress, f"오류: 구분 라디오 미검출 · {variant}", major=True)
+    return False
 
 
 def click_all_categories(page, market: str, *, progress: ProgressFn | None = None) -> bool:
@@ -311,14 +366,19 @@ def markets_to_run(market: str) -> list[str]:
     return [c for c in codes if c not in EXCLUDED_MARKETS]
 
 
-def extract_one(page, market: str, *, progress: ProgressFn | None = None) -> list[str]:
-    """한 마켓 — [전체카테고리] 클릭 → 목록 옵션 읽기."""
+def extract_one(
+    page, market: str, *, variant: str = SINGLE_VARIANT, progress: ProgressFn | None = None
+) -> list[str]:
+    """한 마켓(+구분) — 구분 라디오 → [전체카테고리] → 목록 옵션 읽기."""
     label = MARKETS.get(market, market)
-    _log(progress, f"{label} ({market}) — 전체카테고리 조회", major=True)
+    title = f"{label} ({market})" + (f" · {variant}" if variant else "")
+    _log(progress, f"{title} — 전체카테고리 조회", major=True)
+    if not select_variant(page, market, variant, progress=progress):
+        return []
     if not click_all_categories(page, market, progress=progress):
         return []
     options = read_option_texts(page, market)
-    _log(progress, f"  {label} 카테고리 {len(options)}건", major=True)
+    _log(progress, f"  {title} 카테고리 {len(options)}건", major=True)
     return options
 
 
@@ -369,14 +429,26 @@ def run_extract(
                 if stop_requested():
                     _log(progress, "사용자 중단", major=True)
                     break
-                options = extract_one(page, code, progress=progress)
-                if not options:
-                    result.errors.append(f"{MARKETS.get(code, code)} 목록 비어 있음")
-                    continue
-                market_rows = build_rows(options, MARKETS.get(code, code))
-                rows.extend(market_rows)
-                per_market[code] = len(market_rows)
-                deepest = max(deepest, deepest_level(options))
+                for variant in variants_of(code):
+                    if stop_requested():
+                        break
+                    options = extract_one(
+                        page, code, variant=variant, progress=progress
+                    )
+                    tag = f"{code}·{variant}" if variant else code
+                    if not options:
+                        result.errors.append(
+                            f"{MARKETS.get(code, code)}"
+                            + (f" {variant}" if variant else "")
+                            + " 목록 비어 있음"
+                        )
+                        continue
+                    market_rows = build_rows(
+                        options, MARKETS.get(code, code), variant
+                    )
+                    rows.extend(market_rows)
+                    per_market[tag] = len(market_rows)
+                    deepest = max(deepest, deepest_level(options))
     except Exception as e:  # noqa: BLE001
         result.errors.append(str(e))
         _log(progress, f"실행 오류: {e}", major=True)
@@ -403,8 +475,10 @@ def run_extract(
 
     result.excel_path = str(saved)
     result.ok = True
-    for code, cnt in per_market.items():
-        _log(progress, f"  {MARKETS.get(code, code)}: {cnt}행")
+    for tag, cnt in per_market.items():
+        code, _, variant = tag.partition("·")
+        name = MARKETS.get(code, code) + (f" {variant}" if variant else "")
+        _log(progress, f"  {name}: {cnt}행")
     _log(progress, f"엑셀 저장 완료 · {result.total}행 · 최대 {result.deepest}단계", major=True)
     _log(progress, f"  {saved}", major=True)
     return result

@@ -44,6 +44,7 @@ def test_placeholder_detection():
 def test_to_row_fills_six_levels():
     row = ec.to_row(["A", "B", "C"], "옥션2.0")
     assert row["마켓"] == "옥션2.0"
+    assert row["구분"] == ""
     assert row["1단계"] == "A" and row["2단계"] == "B" and row["3단계"] == "C"
     assert row["4단계"] == "" and row["6단계"] == ""
     assert row["전체경로"] == "A > B > C"
@@ -66,6 +67,7 @@ def test_build_rows_skips_placeholder_and_duplicates():
 def test_headers_are_category_table_form():
     assert ec.HEADERS == [
         "마켓",
+        "구분",
         "1단계",
         "2단계",
         "3단계",
@@ -91,7 +93,7 @@ def test_write_excel_roundtrip(tmp_path):
     ws = load_workbook(out).active
     assert [c.value for c in ws[1]] == ec.HEADERS
     assert ws.max_row == len(rows) + 1
-    assert ws.cell(row=2, column=2).value == "e쿠폰/모바일상품권"
+    assert ws.cell(row=2, column=3).value == "e쿠폰/모바일상품권"  # 마켓·구분 다음
     assert ws.freeze_panes == "A2"
 
 
@@ -317,3 +319,113 @@ def test_all_run_skips_excluded_markets():
 
 def test_excluded_market_requested_directly_is_dropped():
     assert ec.markets_to_run("SHOPEE") == []
+
+
+# ── 카테고리 구분 (11번가 해외/국내 · 롯데ON 해외직구/일반) ────────
+
+
+def test_variants_of_markets():
+    assert ec.variants_of("11ST") == ("해외카테고리", "국내카테고리")
+    assert ec.variants_of("LTON") == ("해외직구 카테고리", "일반카테고리")
+    assert ec.variants_of("AUC20") == ("",)  # 구분 없음
+
+
+def test_variant_radio_selectors_match_screenshot_dom():
+    sels = ec.variant_radio_selectors("11ST", "국내카테고리")
+    joined = " ".join(sels)
+    assert 'openmarket_seller_type2_11ST' in joined
+    assert "국내카테고리" in joined
+    assert "mapping_category_11ST" in joined
+
+
+def test_build_rows_tags_variant():
+    rows = ec.build_rows(SAMPLE, "11번가", "해외카테고리")
+    assert all(r["구분"] == "해외카테고리" for r in rows)
+    assert rows[0]["마켓"] == "11번가"
+
+
+class VariantPage:
+    """구분 라디오 + 전체카테고리 + 구분별 목록을 주는 화면."""
+
+    def __init__(self, market="11ST"):
+        self.market = market
+        self.checked: list[str] = []
+        self.clicked_all = 0
+        self.current = ""
+
+    def locator(self, selector):
+        for variant in ec.MARKET_VARIANTS[self.market]:
+            if variant in selector and "radio" in selector:
+                return _Radio(self, variant)
+        if "search_category" in selector or "전체카테고리" in selector:
+            return _AllBtn(self)
+        return _Missing()
+
+    def evaluate(self, script, *args):
+        return [f"{self.current} 대분류 > 중분류", f"{self.current} 대분류 > 중분류2"]
+
+    def wait_for_timeout(self, ms):
+        return None
+
+
+class _Radio:
+    def __init__(self, page, variant):
+        self.page = page
+        self.variant = variant
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def check(self, timeout=None):
+        self.page.checked.append(self.variant)
+        self.page.current = self.variant
+
+
+class _AllBtn:
+    def __init__(self, page):
+        self.page = page
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def click(self, timeout=None):
+        self.page.clicked_all += 1
+
+
+def test_extract_one_selects_variant_first():
+    page = VariantPage("11ST")
+    logs: list[str] = []
+    options = ec.extract_one(page, "11ST", variant="국내카테고리", progress=logs.append)
+    assert page.checked == ["국내카테고리"]
+    assert page.clicked_all == 1
+    assert options and all("국내카테고리" in o for o in options)
+    assert any("구분 선택: 국내카테고리" in l for l in logs)
+
+
+def test_extract_one_without_variant_skips_radio():
+    page = VariantPage("11ST")
+    ec.extract_one(page, "AUC20", progress=None)
+    assert page.checked == []          # 라디오 건드리지 않음
+    assert page.clicked_all == 1
+
+
+def test_missing_variant_radio_is_reported():
+    logs: list[str] = []
+    assert ec.select_variant(_MissingPage(), "11ST", "해외카테고리", progress=logs.append) is False
+    assert any("구분 라디오 미검출" in l for l in logs)
+
+
+class _MissingPage:
+    def locator(self, selector):
+        return _Missing()
+
+    def wait_for_timeout(self, ms):
+        return None
