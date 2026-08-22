@@ -49,6 +49,9 @@ for _p in (P2_DIR, P5_DIR):
     if str(_p) not in sys.path:
         sys.path.insert(0, str(_p))
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import matching  # noqa: E402
+
 ProgressFn = Callable[[str], None]
 
 HERE = Path(__file__).resolve().parent
@@ -252,10 +255,10 @@ def similarity(filter_name: str, category_path: str) -> float:
     return min(1.0, 0.5 * path_hit + 0.5 * leaf_hit + bonus)
 
 
-def best_category(
+def similarity_best(
     filter_name: str, categories: Sequence[str], *, min_score: float = MIN_SCORE
 ) -> tuple[str, float]:
-    """필터이름에 가장 잘 맞는 카테고리 (없으면 ('', 점수))."""
+    """토큰 유사도만으로 고르는 보조 경로 (결과 목록 선택 등)."""
     best = ""
     best_score = 0.0
     for cat in categories:
@@ -265,6 +268,31 @@ def best_category(
     if best_score < min_score:
         return "", best_score
     return best, best_score
+
+
+def best_category(
+    filter_name: str, categories: Sequence[str], *, min_score: float = MIN_SCORE
+) -> tuple[str, float]:
+    """★요건 순서(matching.find_category)로 최적 카테고리를 고른다.
+
+    1) 단계 일치 → 2-1) 상위→중위→하위 → 2-2) 중위 전체 → 2-3) 하위 전체
+    → 2-4) 품목별 포괄. 못 찾으면 유사도 폴백.
+    """
+    cat, _step = matching.find_category(filter_name, list(categories))
+    if cat:
+        return cat, 1.0
+    return similarity_best(filter_name, categories, min_score=min_score)
+
+
+def best_category_with_step(
+    filter_name: str, categories: Sequence[str]
+) -> tuple[str, str]:
+    """최적 카테고리 + 어느 단계에서 찾았는지."""
+    cat, step = matching.find_category(filter_name, list(categories))
+    if cat:
+        return cat, step
+    cat, score = similarity_best(filter_name, categories)
+    return cat, (f"유사도 {score:.2f}" if cat else "미검출")
 
 
 def search_keyword_for(category_path: str) -> str:
@@ -285,7 +313,7 @@ def pick_option(options: Sequence[str], category_path: str) -> str:
     for opt in options:
         if leaf and norm(leaf_of(opt)) == norm(leaf):
             return opt
-    best, score = best_category(target, list(options), min_score=0.0)
+    best, score = similarity_best(target, list(options), min_score=0.0)
     return best if score > 0 else ""
 
 
@@ -592,10 +620,12 @@ def map_one_market(
     if not categories:
         return MappedItem(market, "", 0.0, False, "엑셀 자료 없음")
 
-    category, score = best_category(filter_name, categories)
+    category, step = best_category_with_step(filter_name, categories)
+    score = 1.0 if category else 0.0
     if not category:
-        _log(progress, f"  {label}: 매칭 실패 (최고점 {score:.2f})")
-        return MappedItem(market, "", score, False, "유사 카테고리 없음")
+        _log(progress, f"  {label}: 매칭 실패 ({step})")
+        return MappedItem(market, "", 0.0, False, "유사 카테고리 없음")
+    _log(progress, f"  {label}: 최적 카테고리 = {category}  [{step}]")
 
     keyword = search_keyword_for(category)
     box = market_search_input(popup, market)
@@ -617,8 +647,8 @@ def map_one_market(
     if not picked or not choose_option(popup, market, picked, select_id=select_id):
         return MappedItem(market, category, score, False, "목록 선택 실패")
 
-    _log(progress, f"  {label}: {picked}  (점수 {score:.2f})")
-    return MappedItem(market, picked, score, True, "")
+    _log(progress, f"  {label}: 선택 완료 → {picked}")
+    return MappedItem(market, picked, score, True, step)
 
 
 def map_one_row(
@@ -756,11 +786,9 @@ def run_dry(
     for name in filter_names:
         row = {"filter": name, "items": []}
         for code, cats in excels.items():
-            cat, score = best_category(name, cats)
-            row["items"].append(
-                {"market": code, "category": cat, "score": round(score, 3)}
-            )
-            _log(progress, f"{name} · {MARKETS.get(code, code)} → {cat or '(없음)'} ({score:.2f})")
+            cat, step = best_category_with_step(name, cats)
+            row["items"].append({"market": code, "category": cat, "step": step})
+            _log(progress, f"{name} · {MARKETS.get(code, code)} → {cat or '(없음)'} [{step}]")
         out.append(row)
     return out
 
