@@ -121,7 +121,7 @@ def test_mid_name_matching_precedes_generic():
     cats = ["신발잡화 > 기타", "식품 > 과일"]
     cat, step = mt.find_category("아름트리-무신사-남성-신발-스니커즈", cats)
     assert cat == "신발잡화 > 기타"
-    assert step.startswith("2-2)")
+    assert step.startswith("2-3)")   # 하위(스니커즈) 없음 → 중위(신발)
 
 
 def test_always_picks_one_when_rules_fail():
@@ -334,3 +334,72 @@ def test_nearest_fallback_also_respects_gender():
     cat, step = mt.find_category("아름트리-무신사-여성-소품-핸드워머", cats)
     assert cat == "생활 > 주방 > 컵"      # 남성 경로는 제외
     assert step.startswith("3) 최근접")
+
+
+# ── 품목 계열 배타 · 검색 순서 (요건 2026-08-22 16:31) ────────────
+
+CLASS_EXCEL = [
+    "패션의류 > 남성 > 하의 > 팬츠",
+    "패션잡화 > 남성 > 신발 > 스니커즈",
+    "패션잡화 > 남성 > 시계",
+    "패션잡화 > 남성 > 선글라스",
+    "패션잡화 > 남성 > 기타소품",
+]
+
+
+def test_clothing_filter_never_picks_shoes():
+    cat, step = mt.find_category("아름트리-무신사-남성-의류-팬츠", CLASS_EXCEL)
+    assert "신발" not in cat
+    assert cat == "패션의류 > 남성 > 하의 > 팬츠"
+    assert "계열=의류" in step
+
+
+def test_shoes_filter_never_picks_clothing():
+    cat, _ = mt.find_category("아름트리-무신사-남성-신발-스니커즈", CLASS_EXCEL)
+    assert cat == "패션잡화 > 남성 > 신발 > 스니커즈"
+
+
+def test_sunglasses_never_picks_watch():
+    cat, _ = mt.find_category("아름트리-무신사-남성-소품-선글라스", CLASS_EXCEL)
+    assert "시계" not in cat
+    assert cat == "패션잡화 > 남성 > 선글라스"
+
+
+def test_class_falls_back_to_generic_when_missing():
+    """의류·신발 계열이 없으면 잡화 계열에서 고른다."""
+    cats = ["패션잡화 > 남성 > 기타소품", "생활 > 주방 > 컵"]
+    cat, step = mt.find_category("아름트리-무신사-남성-신발-스니커즈", cats)
+    assert cat == "패션잡화 > 남성 > 기타소품"
+
+
+def test_class_helpers():
+    assert mt.class_of("아름트리-무신사-남성-신발-스니커즈") == "신발"
+    assert mt.class_of("아름트리-무신사-남성-소품-선글라스") == "선글라스"
+    assert mt.class_of("아름트리-무신사-남성-소품-핸드워머") == ""
+    assert mt.path_class("패션잡화 > 남성 > 시계") == "시계"
+    assert mt.is_generic_path("패션잡화 > 남성 > 기타") is True
+
+
+def test_strip_other_classes_keeps_generic_and_unknown():
+    cats = ["A > 신발 > 스니커즈", "B > 의류 > 팬츠", "패션잡화 > 기타", "C > 알수없음"]
+    kept = mt.strip_other_classes(cats, "의류")
+    assert "A > 신발 > 스니커즈" not in kept
+    assert "B > 의류 > 팬츠" in kept
+    assert "패션잡화 > 기타" in kept          # 잡화는 폴백용으로 남긴다
+    assert "C > 알수없음" in kept             # 계열 불명도 남긴다
+
+
+def test_search_order_low_first_then_mid():
+    """★규칙4: 전체 재검색 단계에서 하위(1차) → 중위(2차) 순서."""
+    # 상위·중위로는 못 좁히는 자료 — 하위(비니)만 걸린다
+    cats = ["아웃도어 > 등산 > 비니", "생활 > 주방 > 컵"]
+    cat, step = mt.find_category("아름트리-무신사-남성-모자-비니", cats)
+    assert cat == "아웃도어 > 등산 > 비니"
+    assert step.startswith("2-2) 하위 전체")
+
+
+def test_mid_used_when_low_absent():
+    cats = ["패션 > 모자 > 기타", "생활 > 주방 > 컵"]
+    cat, step = mt.find_category("아름트리-무신사-남성-모자-비니", cats)
+    assert cat == "패션 > 모자 > 기타"
+    assert "중위" in step or "2-1" in step

@@ -60,6 +60,22 @@ CLOTHING_PREFERRED: tuple[str, ...] = (
     "여성의류",
 )
 
+# ★품목 계열 — 계열이 다르면 서로 선택하지 않는다 (의류↔신발, 선글라스↔시계 …)
+CLASS_WORDS: dict[str, tuple[str, ...]] = {
+    "의류": (
+        "의류", "패션의류", "상의", "하의", "아우터", "티셔츠", "셔츠", "니트", "코트",
+        "자켓", "재킷", "팬츠", "바지", "청바지", "원피스", "스커트", "정장", "点퍼",
+    ),
+    "신발": ("신발", "슈즈", "운동화", "스니커즈", "구두", "부츠", "샌들", "슬리퍼", "신발잡화"),
+    "모자": ("모자", "캡", "비니", "버킷햇", "벙거지", "햇", "방한모"),
+    "선글라스": ("선글라스", "안경", "아이웨어", "안경테"),
+    "시계": ("시계", "워치", "손목시계"),
+    "가방": ("가방", "백팩", "크로스백", "토트백", "숄더백", "지갑"),
+    "액세서리": ("액세서리", "주얼리", "목걸이", "귀걸이", "반지", "팔찌", "브로치"),
+}
+GENERIC_CLASS = "잡화"
+GENERIC_CLASS_WORDS = ("잡화", "소품", "패션잡화", "의류잡화", "패션의류잡화")
+
 ACCESSORY_WORDS = ("선글라스", "안경테", "모자", "햇", "손수건", "비니", "캡", "버킷", "바라클라바")
 
 _SPLIT = re.compile(r"[\s/·,()\[\]|]+")
@@ -409,6 +425,42 @@ def violates_gender(path: str, filter_name: str) -> bool:
     return any(path_hit(path, o) for o in opposite_of(gender))
 
 
+def class_of(text: str) -> str:
+    """필터명이 속한 품목 계열 (없으면 '')."""
+    low = normalize(text)
+    best, best_pos = "", 10**6
+    for cls, words in CLASS_WORDS.items():
+        for w in words:
+            pos = low.find(normalize(w))
+            if pos >= 0 and pos < best_pos:
+                best, best_pos = cls, pos
+    return best
+
+
+def path_class(path: str) -> str:
+    """카테고리 경로가 드러내는 품목 계열 (없으면 '')."""
+    return class_of(path)
+
+
+def is_generic_path(path: str) -> bool:
+    return any(path_hit(path, w) for w in GENERIC_CLASS_WORDS)
+
+
+def strip_other_classes(paths: Sequence[str], cls: str) -> list[str]:
+    """★규칙: 다른 계열(의류↔신발, 선글라스↔시계 …) 카테고리는 제외.
+
+    계열이 드러나지 않는 경로와 잡화 계열 경로는 남긴다 (규칙3 폴백용).
+    """
+    if not cls:
+        return list(paths)
+    out: list[str] = []
+    for p in paths:
+        pc = path_class(p)
+        if not pc or pc == cls or is_generic_path(p):
+            out.append(p)
+    return out
+
+
 def gender_paths(paths: Sequence[str], gender: str) -> list[str]:
     """★규칙2: 성별이 구분된 필터면 그 성별 카테고리 안에서만 고른다.
 
@@ -467,6 +519,19 @@ def constrain(paths: Sequence[str], parsed: "ParsedFilter") -> tuple[list[str], 
         if narrowed:
             pool = narrowed
             notes.append(f"성별={gender}")
+
+    cls = class_of(parsed.raw)
+    if cls:
+        narrowed = strip_other_classes(pool, cls)
+        same = [p for p in narrowed if path_class(p) == cls]
+        if same:
+            pool, note = same, f"계열={cls}"
+        elif narrowed:
+            pool, note = narrowed, f"계열={cls}→잡화폴백"
+        else:
+            note = ""
+        if note:
+            notes.append(note)
 
     words = item_words_of(parsed)
     if words:
@@ -544,18 +609,18 @@ def find_category(
             if not parsed.lows:
                 return pick_best(narrowed, parsed), step + tag
 
-    # 2-2) 중위 이름으로 전체 재검색
+    # 2-2) ★하위(1차) 이름으로 전체 재검색
+    low_hits = filter_paths(paths, expand_synonyms(parsed.lows))
+    if low_hits:
+        mid_hits = filter_paths(low_hits, parsed.mids)
+        if mid_hits:
+            return pick_best(mid_hits, parsed), "2-2) 하위 전체 → 중위" + tag
+        return pick_best(low_hits, parsed), "2-2) 하위 전체" + tag
+
+    # 2-3) 중위(2차) 이름으로 전체 재검색
     mid_hits = filter_paths(paths, parsed.mids)
     if mid_hits:
-        low_hits = filter_paths(mid_hits, parsed.lows)
-        if low_hits:
-            return pick_best(low_hits, parsed), "2-2) 중위 전체 → 하위" + tag
-        return pick_best(mid_hits, parsed), "2-2) 중위 전체" + tag
-
-    # 2-3) 하위 이름으로 전체 재검색
-    low_hits = filter_paths(paths, parsed.lows)
-    if low_hits:
-        return pick_best(low_hits, parsed), "2-3) 하위 전체" + tag
+        return pick_best(mid_hits, parsed), "2-3) 중위 전체" + tag
 
     # 2-4) 품목별 포괄 카테고리
     kind = kind_of(parsed)

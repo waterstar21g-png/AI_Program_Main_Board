@@ -742,8 +742,8 @@ def test_synonym_helps_nearest_pick():
     """AI 보조 — 바라클라바 ↔ 방한모 같은 표현 차이를 메운다."""
     cats = ["패션잡화 > 남성 > 방한모", "생활 > 주방 > 컵"]
     cat, step = mc.best_category_with_step("아름트리-무신사-남성-모자-바라클라바", cats)
-    assert cat == "패션잡화 > 남성 > 방한모"
-    assert step.startswith("3) 최근접")
+    assert cat == "패션잡화 > 남성 > 방한모"   # 바라클라바 ↔ 방한모 동의어
+    assert step.startswith(("2-2) 하위", "3) 최근접"))
 
 
 def test_mapped_category_is_within_excel(monkeypatch):
