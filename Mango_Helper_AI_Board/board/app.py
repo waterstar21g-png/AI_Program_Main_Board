@@ -1456,13 +1456,6 @@ class BoardApp(tk.Tk):
             font=("Malgun Gothic", 8),
         ).pack(side="left", padx=6)
 
-        tk.Label(r0, text="작업 행 범위", width=11, anchor="e", bg="#ffffff").pack(side="left")
-        self.var_p5m_from = tk.StringVar(value=str(p5_mapping.DEFAULT_ROW_FROM))
-        tk.Entry(r0, textvariable=self.var_p5m_from, width=5).pack(side="left", padx=(4, 2))
-        tk.Label(r0, text="부터", bg="#ffffff").pack(side="left")
-        self.var_p5m_to = tk.StringVar(value=str(p5_mapping.DEFAULT_ROW_TO))
-        tk.Entry(r0, textvariable=self.var_p5m_to, width=5).pack(side="left", padx=(6, 2))
-        tk.Label(r0, text="까지", bg="#ffffff").pack(side="left")
 
         rv = tk.Frame(form, bg="#ffffff")
         rv.pack(fill="x", pady=3)
@@ -1516,6 +1509,23 @@ class BoardApp(tk.Tk):
         tk.Label(r2, text="목록 URL", width=13, anchor="w", bg="#ffffff").pack(side="left")
         self.var_p5m_url = tk.StringVar(value=p5_mapping.DEFAULT_LIST_URL)
         tk.Entry(r2, textvariable=self.var_p5m_url).pack(side="left", fill="x", expand=True)
+
+        r3 = tk.Frame(form, bg="#ffffff")
+        r3.pack(fill="x", pady=3)
+        tk.Label(r3, text="작업 행 범위", width=13, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5m_from = tk.StringVar(value=str(p5_mapping.DEFAULT_ROW_FROM))
+        tk.Entry(r3, textvariable=self.var_p5m_from, width=6).pack(side="left")
+        tk.Label(r3, text="부터", bg="#ffffff").pack(side="left", padx=(4, 10))
+        self.var_p5m_to = tk.StringVar(value=str(p5_mapping.DEFAULT_ROW_TO))
+        tk.Entry(r3, textvariable=self.var_p5m_to, width=6).pack(side="left")
+        tk.Label(r3, text="까지", bg="#ffffff").pack(side="left", padx=(4, 10))
+        tk.Label(
+            r3,
+            text="※ 위 「목록 URL」 검색결과의 행 번호 기준 (1부터, 양끝 포함)",
+            bg="#ffffff",
+            fg="#64748b",
+            font=("Malgun Gothic", 8),
+        ).pack(side="left")
 
         actions = tk.Frame(parent, bg="#f1f5f9")
         actions.pack(fill="x", pady=8)
