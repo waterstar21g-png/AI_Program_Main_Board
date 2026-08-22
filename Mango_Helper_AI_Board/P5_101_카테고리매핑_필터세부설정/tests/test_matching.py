@@ -178,3 +178,33 @@ def test_pick_best_prefers_more_specific():
     paths = ["패션의류잡화 > 남성", "패션의류잡화 > 남성 > 모자 > 버킷햇"]
     parsed = mt.parse_filter_name("아름트리-무신사-남성-모자-버킷햇")
     assert mt.pick_best(paths, parsed) == "패션의류잡화 > 남성 > 모자 > 버킷햇"
+
+
+# ── 엑셀 범위 보장 (요건 2026-08-22 15:45) ────────────────────────
+
+
+def test_result_is_always_from_excel_list():
+    """어떤 필터명이 와도 결과는 엑셀 목록 안의 값이어야 한다."""
+    names = [
+        "아름트리-무신사-남성-모자-버킷/사파리 햇",
+        "아름트리-무신사-여성-소품-선글라스/안경테",
+        "아름트리-무신사-남성-신발-스니커즈",
+        "자동차 타이어 공기압 센서",
+        "",
+    ]
+    for name in names:
+        cat, _step = mt.find_category(name, EXCEL)
+        assert cat == "" or cat in EXCEL, f"{name} → {cat}"
+
+
+def test_is_from_and_ensure_from():
+    assert mt.is_from(EXCEL, EXCEL[0]) is True
+    assert mt.is_from(EXCEL, "패션의류잡화 > 남성 > 모자 > 없는것") is False
+    assert mt.is_from(EXCEL, "") is False
+
+    fixed = mt.ensure_from(EXCEL, "지어낸 > 카테고리", "아름트리-무신사-남성-모자-비니")
+    assert fixed in EXCEL
+
+
+def test_ensure_from_keeps_valid_value():
+    assert mt.ensure_from(EXCEL, EXCEL[1], "무엇이든") == EXCEL[1]

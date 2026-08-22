@@ -713,3 +713,28 @@ def test_synonym_helps_nearest_pick():
     cat, step = mc.best_category_with_step("아름트리-무신사-남성-모자-바라클라바", cats)
     assert cat == "패션잡화 > 남성 > 방한모"
     assert step.startswith("3) 최근접")
+
+
+def test_mapped_category_is_within_excel(monkeypatch):
+    """map_one_market 이 고른 최적 카테고리는 엑셀 목록 안의 값이다."""
+    target = "패션의류잡화 > 남성 > 남성잡화 > 모자 > 비니"
+    excel = [target, "패션의류잡화 > 여성 > 모자 > 캡모자"]
+    popup = FakePopup([target, "다른 > 사이트 > 항목"])
+    item = mc.map_one_market(popup, "AUC20", "아름트리-무신사-남성-모자-비니", excel)
+    assert item.ok is True
+    assert item.category in excel or item.category == target
+
+
+def test_out_of_range_category_is_corrected(monkeypatch):
+    """혹시 목록 밖 값이 나오면 엑셀 안 값으로 교정한다."""
+    excel = ["패션의류잡화 > 남성 > 모자 > 비니"]
+    monkeypatch.setattr(
+        mc, "best_category_with_step", lambda *a, **k: ("지어낸 > 카테고리", "테스트")
+    )
+    logs: list[str] = []
+    popup = FakePopup(["패션의류잡화 > 남성 > 모자 > 비니"])
+    item = mc._map_once(
+        popup, "AUC20", "아름트리-무신사-남성-모자-비니", excel, progress=logs.append
+    )
+    assert item.category in excel
+    assert any("엑셀 범위 밖" in l for l in logs)

@@ -351,6 +351,22 @@ def nearest_category(name: str, paths: Sequence[str]) -> tuple[str, float]:
     return best, max(best_score, 0.0)
 
 
+def is_from(paths: Sequence[str], category: str) -> bool:
+    """고른 카테고리가 엑셀 목록 안의 값인지."""
+    if not category:
+        return False
+    want = normalize(category)
+    return any(normalize(p) == want for p in paths)
+
+
+def ensure_from(paths: Sequence[str], category: str, name: str = "") -> str:
+    """엑셀 범위 밖이면 목록 안에서 가장 가까운 것으로 되돌린다."""
+    if is_from(paths, category):
+        return category
+    fallback, _score = nearest_category(name or category, paths)
+    return fallback
+
+
 def find_category(
     name: str,
     paths: Sequence[str],

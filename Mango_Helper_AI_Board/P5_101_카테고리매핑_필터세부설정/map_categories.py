@@ -868,11 +868,18 @@ def _map_once(
         return MappedItem(market, "", 0.0, False, f"구분({variant}) 선택 실패")
 
     category, step = best_category_with_step(filter_name, categories, exclude=exclude)
+
+    # ★요건: 최적 카테고리는 **반드시 엑셀 목록 안의 값**이어야 한다
+    if category and not matching.is_from(categories, category):
+        fixed = matching.ensure_from(categories, category, filter_name)
+        _log(progress, f"  {label}: 엑셀 범위 밖 → 목록 내 값으로 교정 ({fixed})")
+        category, step = fixed, step + " · 엑셀범위 교정"
+
     score = 1.0 if category else 0.0
     if not category:
         _log(progress, f"  {label}: 매칭 실패 ({step})")
         return MappedItem(market, "", 0.0, False, "유사 카테고리 없음")
-    _log(progress, f"  {label}: 최적 카테고리 = {category}  [{step}]")
+    _log(progress, f"  {label}: 최적 카테고리(엑셀) = {category}  [{step}]")
 
     keyword = search_keyword_for(category)
     box = market_search_input(popup, market)
@@ -890,6 +897,7 @@ def _map_once(
     if not options:
         return MappedItem(market, category, score, False, "검색 결과 없음")
 
+    # 결과 목록에서는 **엑셀 카테고리** 를 기준으로 고른다 (필터명 아님)
     picked = pick_option(options, category)
     if not picked or not choose_option(popup, market, picked, select_id=select_id):
         return MappedItem(market, category, score, False, "목록 선택 실패")
