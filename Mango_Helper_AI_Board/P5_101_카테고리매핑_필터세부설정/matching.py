@@ -62,6 +62,28 @@ MATERIAL_WORDS = (
     "가죽", "레더", "니트", "데님", "면", "코튼", "울", "린넨", "퍼", "메쉬",
     "고어텍스", "나일론", "폴리", "스웨이드", "캔버스", "실리콘", "메탈",
 )
+# 품목 동의어 — 필터명 표현과 마켓 카테고리 표현의 차이를 메운다
+ITEM_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "비니": ("비니", "니트모자", "털모자", "방한모"),
+    "바라클라바": ("바라클라바", "방한모", "발라클라바", "마스크모자"),
+    "버킷햇": ("버킷햇", "벙거지", "버킷", "사파리햇"),
+    "캡모자": ("캡모자", "볼캡", "야구모자", "캡"),
+    "선글라스": ("선글라스", "썬글라스", "아이웨어"),
+    "안경테": ("안경테", "안경", "아이웨어"),
+    "스니커즈": ("스니커즈", "운동화", "캔버스화"),
+    "슬리퍼": ("슬리퍼", "샌들", "쪼리"),
+    "가방": ("가방", "백팩", "크로스백", "토트백"),
+    "지갑": ("지갑", "카드지갑", "머니클립"),
+    "목도리": ("목도리", "머플러", "스카프"),
+    "장갑": ("장갑", "글러브", "핸드워머"),
+    "양말": ("양말", "삭스"),
+    "벨트": ("벨트", "허리띠"),
+    "니트": ("니트", "스웨터", "가디건"),
+    "티셔츠": ("티셔츠", "반팔", "긴팔", "티"),
+    "바지": ("바지", "팬츠", "슬랙스", "청바지", "데님"),
+    "코트": ("코트", "아우터", "자켓", "재킷", "점퍼"),
+}
+
 PURPOSE_WORDS = (
     "등산", "캠핑", "스포츠", "러닝", "골프", "수영", "요가", "낚시", "자전거",
     "웨딩", "정장", "캐주얼", "홈웨어", "방한", "여름", "겨울", "레인", "트레킹",
@@ -255,14 +277,33 @@ def gender_of(text: str) -> str:
     return ""
 
 
-def nearest_score(parsed: "ParsedFilter", path: str) -> float:
-    """소재·용도·성별·활용을 종합한 근접도 (0~1). 규칙 탐색이 실패했을 때 사용."""
-    leaf = leaf_of(path)
-    names = [n for n in (parsed.mid, *parsed.lows) if n]
+def expand_synonyms(names: Sequence[str]) -> list[str]:
+    """품목 동의어까지 넓힌 후보 이름."""
+    out: list[str] = []
+    for name in names:
+        n = str(name or "").strip()
+        if not n or n in out:
+            continue
+        out.append(n)
+        low = normalize(n)
+        for key, words in ITEM_SYNONYMS.items():
+            if normalize(key) in low or any(normalize(w) in low for w in words):
+                for w in words:
+                    if w not in out:
+                        out.append(w)
+    return out
 
-    # 이름 유사도 — 하위·중위 조각과 리프/경로의 글자 겹침
+
+def nearest_score(parsed: "ParsedFilter", path: str) -> float:
+    """소재·용도·성별·활용·동의어를 종합한 근접도 (0~1)."""
+    leaf = leaf_of(path)
+    names = expand_synonyms([n for n in (parsed.mid, *parsed.lows) if n])
+
+    # 이름 유사도 — 하위·중위(동의어 포함) 조각과 리프/경로의 글자 겹침
     name_hit = 0.0
     for name in names:
+        if level_hit(leaf, name):
+            name_hit = max(name_hit, 0.95)
         name_hit = max(name_hit, _overlap(name, leaf), 0.6 * _overlap(name, path))
 
     # 성별

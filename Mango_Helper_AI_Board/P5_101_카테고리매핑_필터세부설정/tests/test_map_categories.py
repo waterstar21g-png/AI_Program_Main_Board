@@ -663,3 +663,53 @@ def test_exclude_picks_next_category():
     )
     assert first == "패션의류잡화 > 남성 > 모자 > 버킷햇"
     assert second == "패션의류잡화 > 남성 > 모자 > 캡모자"
+
+
+# ── 저장 후 재검증 · 미매핑 재시도 (요건 2026-08-22 15:33) ─────────
+
+
+class StatePopup:
+    """마켓별 매핑 상태(hidden 값)를 돌려주는 팝업."""
+
+    def __init__(self, state):
+        self.state = dict(state)
+
+    def evaluate(self, script, *args):
+        if "openmarket_cm_category_" in script:
+            codes = args[0] if args else []
+            return {c: self.state.get(c, {"code": "", "name": ""}) for c in codes}
+        return None
+
+
+def test_mapped_state_and_unmapped_detection():
+    popup = StatePopup(
+        {
+            "AUC20": {"code": "123", "name": "패션 > 모자"},
+            "COUP": {"code": "", "name": ""},
+            "LTON": {"code": "", "name": "롯데 > 모자"},   # 이름만 있어도 매핑으로 본다
+        }
+    )
+    codes = ["AUC20", "COUP", "LTON"]
+    assert mc.mapped_state(popup, codes)["AUC20"]["code"] == "123"
+    assert mc.unmapped_markets(popup, codes) == ["COUP"]
+
+
+def test_unmapped_markets_empty_when_state_unavailable():
+    class Broken:
+        def evaluate(self, *a, **k):
+            raise RuntimeError("no")
+
+    assert mc.unmapped_markets(Broken(), ["AUC20"]) == []
+
+
+def test_verify_rounds_constant():
+    assert mc.VERIFY_ROUNDS == 3
+    assert mc.MAP_RETRIES == 3
+
+
+def test_synonym_helps_nearest_pick():
+    """AI 보조 — 바라클라바 ↔ 방한모 같은 표현 차이를 메운다."""
+    cats = ["패션잡화 > 남성 > 방한모", "생활 > 주방 > 컵"]
+    cat, step = mc.best_category_with_step("아름트리-무신사-남성-모자-바라클라바", cats)
+    assert cat == "패션잡화 > 남성 > 방한모"
+    assert step.startswith("3) 최근접")

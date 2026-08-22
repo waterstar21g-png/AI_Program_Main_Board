@@ -107,6 +107,7 @@ BOTH = "둘다"  # 두 구분 모두 매핑
 NOTIFY_ID = "mapping_notify_{market}"
 NOTIFY_RETRIES = 3  # 상품고시정보 팝업이 계속 뜨면 다른 카테고리로 재시도하는 횟수
 MAP_RETRIES = 3  # ★요건: 매핑 실패 시 다른 카테고리로 최대 3회 추가 시도
+VERIFY_ROUNDS = 3  # ★요건: 저장 후 재검증 — 미매핑 마켓이 있으면 최대 3회 재시도
 
 # ★요건: 작업 행 범위 — <작업 시작 부터> ~ <작업 종료 까지> (1부터, 양끝 포함)
 DEFAULT_ROW_FROM = 1
@@ -897,6 +898,44 @@ def _map_once(
     return MappedItem(market, picked, score, True, step)
 
 
+MAPPED_STATE_JS = """
+(codes) => {
+  const out = {};
+  for (const code of codes) {
+    const idEl = document.getElementById('openmarket_cm_category_' + code);
+    const nameEl = document.getElementsByName('openmarket_cm_category_name_' + code)[0];
+    out[code] = {
+      code: idEl ? (idEl.value || '').trim() : '',
+      name: nameEl ? (nameEl.value || '').trim() : '',
+    };
+  }
+  return out;
+}
+"""
+
+
+def mapped_state(popup, codes: Sequence[str]) -> dict[str, dict]:
+    """마켓별 매핑 결과 (hidden 값) — 저장 후 재검증용."""
+    try:
+        data = popup.evaluate(MAPPED_STATE_JS, list(codes)) or {}
+    except Exception:
+        return {}
+    return {str(k): dict(v or {}) for k, v in data.items()}
+
+
+def unmapped_markets(popup, codes: Sequence[str]) -> list[str]:
+    """카테고리가 비어 있는 마켓 목록."""
+    state = mapped_state(popup, codes)
+    if not state:
+        return []
+    out: list[str] = []
+    for code in codes:
+        info = state.get(code) or {}
+        if not (info.get("code") or info.get("name")):
+            out.append(code)
+    return out
+
+
 def map_one_row(
     page,
     row: RowInfo,
@@ -973,7 +1012,50 @@ def map_one_row(
                 record["variant"] = variant
                 detail["items"].append(record)
                 time.sleep(GAP)
+
         click_config_save(popup, progress=progress)
+
+        # ★요건: 저장 후 재검증 — 미매핑 마켓이 있으면 최대 3회 다시 매핑
+        for round_no in range(1, VERIFY_ROUNDS + 1):
+            missing = unmapped_markets(popup, codes)
+            if not missing:
+                if round_no > 1:
+                    _log(progress, "  재검증 — 전 마켓 매핑 확인", major=True)
+                break
+            names = " · ".join(MARKETS.get(m, m) for m in missing)
+            _log(
+                progress,
+                f"  재검증 {round_no}/{VERIFY_ROUNDS} — 미매핑: {names}",
+                major=True,
+            )
+            for market in missing:
+                if stop_requested():
+                    break
+                variant = variants_for(market, (variant_choice or {}).get(market, ""))[0]
+                retry = map_one_market(
+                    popup,
+                    market,
+                    row.filter_name,
+                    excels.get(market, []),
+                    variant=variant,
+                    progress=progress,
+                )
+                record = dict(retry.__dict__)
+                record["variant"] = variant
+                record["retry_round"] = round_no
+                detail["items"].append(record)
+            click_config_save(popup, progress=progress)
+            time.sleep(GAP)
+        else:
+            left = unmapped_markets(popup, codes)
+            if left:
+                detail["unmapped"] = left
+                _log(
+                    progress,
+                    "  경고: 재검증 3회 후에도 미매핑 — "
+                    + " · ".join(MARKETS.get(m, m) for m in left),
+                    major=True,
+                )
     finally:
         close_popup(popup)
     return detail
