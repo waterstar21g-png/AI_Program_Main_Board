@@ -103,7 +103,10 @@ T_CLICK = 1_500  # 버튼 클릭 대기 (ms)
 T_FIELD = 2_000  # 입력/드롭다운 등장 대기 (ms)
 T_READ = 200  # 현재값 읽기 (ms)
 T_CLOSE = 800  # 팝업 닫힘 대기 (ms)
-T_NAV = 5_000  # 페이지 이동 대기 (ms)
+T_NAV = 5_000  # 목록 화면 이동 대기 (ms)
+T_POPUP = 1_000  # 팝업 렌더 대기 (ms)
+T_SITE = 5_000  # 수집사이트 드롭다운 대기 (ms) — 요건: 5초
+POPUP_TRIES = 3  # 1초 단위로 최대 3회 (요소가 뜨면 즉시 진행)
 GAP_ROW = 0.02  # 행 간 간격 (초)
 GAP_SEARCH = 0.15  # 검색 후 목록 정착 (초)
 
@@ -363,20 +366,147 @@ def find_translate_select(page):
     return None
 
 
-def find_site_select(page):
-    """`select[name="site_id"]` — 필터 목록 화면 검색줄의 수집사이트 드롭다운."""
+def contexts(page) -> list:
+    """페이지 + 모든 프레임 (망고 화면이 프레임을 쓰는 경우 대응)."""
+    out = [page]
     try:
-        loc = page.locator(f'select[name="{SITE_SELECT_NAME}"]').first
-        if loc.count() > 0:
-            return loc
+        for f in page.frames:
+            if f is not page and f not in out:
+                out.append(f)
     except Exception:
         pass
+    return out
+
+
+_DIAG_JS = """
+() => ({
+  url: location.href,
+  title: document.title,
+  selects: Array.from(document.querySelectorAll('select'))
+    .map(e => (e.name || e.id || '(무명)')),
+  buttons: Array.from(document.querySelectorAll('a,button,input[type=button],input[type=submit]'))
+    .map(e => ((e.innerText || e.value || '').trim()))
+    .filter(t => t && t.length <= 30)
+    .slice(0, 25),
+  frames: window.frames.length,
+})
+"""
+
+
+def all_pages(page) -> list:
+    """같은 브라우저의 모든 탭 (망고는 탭을 여러 개 쓴다)."""
+    try:
+        pages = list(page.context.pages)
+    except Exception:
+        return [page]
+    if page not in pages:
+        pages.insert(0, page)
+    return pages
+
+
+def diagnose(page, *, progress: ProgressFn | None = None) -> list[dict]:
+    """탭·프레임별 URL·select 이름·버튼 라벨을 로그에 찍는다 (원인 파악용)."""
+    reports: list[dict] = []
+    for i, pg in enumerate(all_pages(page), start=1):
+        for j, ctx in enumerate(contexts(pg), start=1):
+            try:
+                info = ctx.evaluate(_DIAG_JS)
+            except Exception as e:  # noqa: BLE001
+                _log(progress, f"  [진단] 탭{i}-프레임{j}: 읽기 실패 ({e})", major=True)
+                continue
+            info["tab"] = i
+            info["frame"] = j
+            reports.append(info)
+            _log(
+                progress,
+                f"  [진단] 탭{i}-프레임{j} url={str(info.get('url'))[:90]}"
+                f" · select={info.get('selects')}"
+                f" · 버튼={info.get('buttons')}",
+                major=True,
+            )
+    return reports
+
+
+def dump_selects(page, *, progress: ProgressFn | None = None) -> list[str]:
+    """모든 탭·프레임의 select name/id 목록."""
+    found: list[str] = []
+    for info in diagnose(page, progress=progress):
+        found.extend(str(n) for n in (info.get("selects") or []))
+    return found
+
+
+def pick_list_page(page, *, progress: ProgressFn | None = None):
+    """수집사이트 드롭다운이 있는 탭을 고른다 (다른 탭을 보고 있던 문제 대응)."""
+    pages = all_pages(page)
+    for pg in pages:
+        for ctx in contexts(pg):
+            try:
+                if ctx.locator(f'select[name="{SITE_SELECT_NAME}"]').first.count() > 0:
+                    if pg is not page:
+                        _log(progress, "  목록 화면 탭으로 전환", major=True)
+                    return pg
+            except Exception:
+                continue
+    for pg in pages:  # URL 로 판단
+        try:
+            if "getGoodsCategory" in (pg.url or ""):
+                if pg is not page:
+                    _log(progress, "  목록 URL 탭으로 전환", major=True)
+                return pg
+        except Exception:
+            continue
+    return page
+
+
+def find_site_select(page):
+    """`select[name="site_id"]` — 필터 목록 검색줄의 수집사이트 드롭다운.
+
+    프레임 안에 있을 수 있고, name 이 바뀌었을 수도 있어 옵션 텍스트로도 찾는다.
+    """
+    for ctx in contexts(page):
+        try:
+            loc = ctx.locator(f'select[name="{SITE_SELECT_NAME}"]').first
+            if loc.count() > 0:
+                return loc
+        except Exception:
+            continue
+
+    # 폴백: 「수집사이트」 옵션을 가진 select
+    for ctx in contexts(page):
+        try:
+            loc = ctx.locator(
+                'xpath=//select[.//option[contains(normalize-space(.),"수집사이트")]]'
+            ).first
+            if loc.count() > 0:
+                return loc
+        except Exception:
+            continue
     return None
+
+
+def wait_site_select(page, *, progress: ProgressFn | None = None):
+    """수집사이트 드롭다운 대기 — 모든 탭·프레임을 5초까지 훑는다 (뜨면 즉시)."""
+    deadline = time.monotonic() + T_SITE / 1000
+    logged = False
+    while True:
+        for pg in all_pages(page):
+            loc = find_site_select(pg)
+            if loc is not None:
+                return loc
+        if time.monotonic() >= deadline:
+            return None
+        if not logged:
+            _log(progress, f"  수집사이트 드롭다운 대기 {T_SITE}ms …")
+            logged = True
+        try:
+            page.wait_for_timeout(250)
+        except Exception:
+            time.sleep(0.25)
 
 
 def read_site_options(page) -> list[str]:
     """수집사이트 드롭다운의 옵션 텍스트 목록."""
-    loc = find_site_select(page)
+    loc = wait_site_select(page)
     if loc is None:
         return []
     try:
@@ -400,15 +530,18 @@ def click_search(page, *, progress: ProgressFn | None = None) -> bool:
         'xpath=//*[self::a or self::button or self::input]'
         '[contains(normalize-space(.),"검색") or @value="검색"]',
     )
-    for i, sel in enumerate(selectors, start=1):
+    attempts = [(ctx, s) for s in selectors for ctx in contexts(page)]
+    for i, (ctx, sel) in enumerate(attempts, start=1):
         try:
-            loc = page.locator(sel).first
+            loc = ctx.locator(sel).first
             if loc.count() == 0:
                 continue
             loc.click(timeout=T_CLICK)
             _log(
                 progress,
-                f"  [{SEARCH_BUTTON_LABEL}] 클릭" if i <= 2 else "  검색 버튼 클릭(폴백)",
+                f"  [{SEARCH_BUTTON_LABEL}] 클릭"
+                if i <= 2 * len(contexts(page))
+                else "  검색 버튼 클릭(폴백)",
             )
             return True
         except Exception:
@@ -433,9 +566,11 @@ def apply_site_filter(
         _log(progress, "수집사이트: 전체 (검색조건 미변경)", major=True)
         return True
 
-    loc = find_site_select(page)
+    page = pick_list_page(page, progress=progress)
+    loc = wait_site_select(page, progress=progress)
     if loc is None:
         _log(progress, "오류: 수집사이트 드롭다운 미검출", major=True)
+        dump_selects(page, progress=progress)
         return False
 
     options = read_site_options(page)
@@ -667,7 +802,7 @@ def open_modify_popup(page, fuid: str, *, list_url: str = "", progress: Progress
 
     if fuid:
         try:
-            with page.expect_popup(timeout=T_NAV) as popup_info:
+            with page.expect_popup(timeout=T_POPUP) as popup_info:
                 page.locator(f"a[onclick*=\"modify_filter('{fuid}')\"]").first.click(timeout=T_CLICK)
             popup = popup_info.value
             _log(progress, f"  수집조건수정 팝업 열림 (fuid={fuid})")
@@ -682,12 +817,25 @@ def open_modify_popup(page, fuid: str, *, list_url: str = "", progress: Progress
 
     try:
         popup = page.context.new_page()
-        popup.goto(url, wait_until="domcontentloaded", timeout=T_NAV)
+        popup.goto(url, wait_until="domcontentloaded", timeout=T_POPUP)
         _log(progress, f"  수집조건수정 직접 열기 (fuid={fuid})")
         return popup
     except Exception as e:  # noqa: BLE001
         _log(progress, f"오류: 팝업 열기 실패 · {e}", major=True)
         return None
+
+
+def wait_translate_select(popup, *, progress: ProgressFn | None = None) -> bool:
+    """팝업의 번역옵션 드롭다운 등장 대기 — 0.3초 단위. 뜨는 즉시 진행."""
+    sel = f'select[name="{TRANSLATE_SELECT_NAME}"]'
+    for attempt in range(1, POPUP_TRIES + 1):
+        try:
+            popup.wait_for_selector(sel, timeout=T_POPUP)
+            return True
+        except Exception:
+            if attempt == 1:
+                _log(progress, f"  팝업 렌더 {T_POPUP}ms 초과 — 재시도")
+    return False
 
 
 def click_save_in_popup(popup, *, progress: ProgressFn | None = None) -> bool:
@@ -772,12 +920,8 @@ def apply_option_in_popup(
         pass
 
     try:
-        try:
-            popup.wait_for_selector(
-                f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=T_FIELD
-            )
-        except Exception:
-            pass
+        if not wait_translate_select(popup, progress=progress):
+            _log(progress, "  경고: 번역옵션 드롭다운 지연 — 그대로 시도", major=True)
 
         if not set_translate_option(popup, option, progress=progress):
             return False
@@ -857,12 +1001,7 @@ def fetch_translate_options(
                 return [], sites
 
             try:
-                try:
-                    popup.wait_for_selector(
-                        f'select[name="{TRANSLATE_SELECT_NAME}"]', timeout=T_FIELD
-                    )
-                except Exception:
-                    pass
+                wait_translate_select(popup, progress=progress)
                 control = detect_translate_control(popup)
                 if control is None:
                     _log(progress, "번역옵션 컨트롤 미검출", major=True)
@@ -915,6 +1054,7 @@ def run_update_collect_option(
         with sync_playwright() as pw:
             page, url = _open_mango(pw, mango_url, progress)
 
+            page = pick_list_page(page, progress=progress)
             if not apply_site_filter(page, site, progress=progress):
                 result.errors.append(f"수집사이트 적용 실패 · {site}")
                 return result

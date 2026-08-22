@@ -95,6 +95,36 @@
       "board_tab": "p3_fitcl",
       "login": "FitCL fitcl.ai (Chrome CDP 9222)",
       "description": "모델컷 10장 + 디테일컷 5장 추출"
+    },
+    {
+      "id": "p5_category",
+      "name": "P5_카테고리_엑셀추출",
+      "folder": "P5_카테고리_엑셀추출",
+      "script": "extract_categories.py",
+      "launcher": "run.bat",
+      "board_tab": "p5",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "오픈마켓 전체카테고리 → 1~6단계 분류표 엑셀"
+    },
+    {
+      "id": "p5_101_mapping",
+      "name": "P5_101_카테고리매핑_필터세부설정",
+      "folder": "P5_101_카테고리매핑_필터세부설정",
+      "script": "map_categories.py",
+      "launcher": "run.bat",
+      "board_tab": "p5_101",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "체크된 필터마다 마켓 카테고리 자동 매핑 (엑셀 기준)"
+    },
+    {
+      "id": "p3_delete_filter",
+      "name": "P3_필터단위_설정수정_검색필터설정삭제",
+      "folder": "P3_필터단위_설정수정_검색필터설정삭제",
+      "script": "delete_filter_settings.py",
+      "launcher": "run.bat",
+      "board_tab": "p3_delete",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "지정 행 범위의 검색필터 설정 일괄 삭제 (되돌릴 수 없음)"
     }
   ]
 }
