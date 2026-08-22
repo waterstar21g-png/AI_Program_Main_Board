@@ -374,9 +374,11 @@ class VariantPage:
 
 
 class _Radio:
-    def __init__(self, page, variant):
+    def __init__(self, page, variant, checked=False):
         self.page = page
         self.variant = variant
+        self.checked_state = checked
+        self.clicks = 0
 
     @property
     def first(self):
@@ -384,6 +386,14 @@ class _Radio:
 
     def count(self):
         return 1
+
+    def is_checked(self, timeout=None):
+        return self.checked_state
+
+    def click(self, timeout=None, force=False):
+        self.clicks += 1
+        self.page.checked.append(self.variant)
+        self.page.current = self.variant
 
     def check(self, timeout=None):
         self.page.checked.append(self.variant)
@@ -412,7 +422,7 @@ def test_extract_one_selects_variant_first():
     assert page.checked == ["국내카테고리"]
     assert page.clicked_all == 1
     assert options and all("국내카테고리" in o for o in options)
-    assert any("구분 선택: 국내카테고리" in l for l in logs)
+    assert any("구분 체크: 국내카테고리" in l for l in logs)
 
 
 def test_extract_one_without_variant_skips_radio():
@@ -584,3 +594,23 @@ def test_read_reports_stale_when_never_changes(monkeypatch):
     got = ec.read_option_texts(Frozen(), "LTON", avoid=ec.fingerprint(same), progress=logs.append)
     assert got == same  # 그래도 데이터는 넘긴다
     assert any("이전 구분과 동일" in l for l in logs)
+
+
+def test_already_checked_radio_is_clicked_again():
+    """기본 체크된 구분도 클릭해 change_category_list 를 실행시킨다."""
+
+    class PreCheckedPage(VariantPage):
+        def __init__(self):
+            super().__init__("LTON")
+            self.radio = _Radio(self, "일반카테고리", checked=True)
+
+        def locator(self, selector):
+            if "일반카테고리" in selector and "radio" in selector:
+                return self.radio
+            return super().locator(selector)
+
+    page = PreCheckedPage()
+    logs: list[str] = []
+    assert ec.select_variant(page, "LTON", "일반카테고리", progress=logs.append) is True
+    assert page.radio.clicks == 1                       # 클릭으로 onclick 발생
+    assert any("재클릭" in l for l in logs)

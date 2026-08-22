@@ -56,8 +56,10 @@ CLI 에서 `--ftid 721` 로 지정하면 됩니다.
 | 11번가 | 해외카테고리 / 국내카테고리 | `input[name="openmarket_seller_type2_11ST"]` |
 | 롯데ON | 해외직구 카테고리 / 일반카테고리(국내) | `input[name="openmarket_seller_type2_LTON"]` |
 
-라디오는 같은 `label` 안의 `span` 텍스트로 찾고, 클릭하면 `change_category_list(...)`
-가 목록을 교체하므로 잠시 기다린 뒤 [전체카테고리] 를 누릅니다.
+라디오는 같은 `label` 안의 `span` 텍스트로 찾아 **항상 클릭**합니다. 이미 체크된
+구분(롯데ON 일반카테고리·11번가 해외카테고리)은 `check()` 로는 아무 일도 일어나지
+않아 `onclick="change_category_list(...)"` 이 실행되지 않기 때문입니다. 클릭 후 목록
+교체를 기다린 다음 [전체카테고리] 를 누릅니다.
 
 ### 구현 제외 (요건)
 

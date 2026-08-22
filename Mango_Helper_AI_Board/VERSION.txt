@@ -1,3 +1,9 @@
+버전 1.9.3 (Python 보드)
+업데이트: 구분 라디오를 항상 클릭해 체크.
+1) 이미 체크된 라디오는 check() 가 no-op 이라 onclick=change_category_list 가
+   실행되지 않았다. 이제 force 클릭으로 항상 실행시키고, 기본 선택이었으면
+   로그에 '(기본 선택 → 재클릭)' 을 남긴다.
+
 버전 1.9.2 (Python 보드)
 업데이트: 롯데ON 일반카테고리 누락 수정.
 1) 원인 — 두 select(list_/list2_)이 같은 name 에 display 로만 전환되는데,

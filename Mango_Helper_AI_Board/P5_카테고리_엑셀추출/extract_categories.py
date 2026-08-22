@@ -288,7 +288,12 @@ def variant_radio_selectors(market: str, variant: str) -> tuple[str, ...]:
 
 
 def select_variant(page, market: str, variant: str, *, progress: ProgressFn | None = None) -> bool:
-    """카테고리 구분(해외/국내 등) 라디오를 선택하고 목록 교체를 기다린다."""
+    """카테고리 구분 라디오를 **클릭**해 체크하고 목록 교체를 기다린다.
+
+    이미 체크된 라디오는 `check()` 가 아무 동작도 하지 않아
+    `onclick="change_category_list(...)"` 이 실행되지 않는다. 그래서 항상 클릭한다
+    (롯데ON 일반카테고리·11번가 해외카테고리처럼 기본 체크된 구분이 있다).
+    """
     if not variant:
         return True
     for sel in variant_radio_selectors(market, variant):
@@ -296,11 +301,30 @@ def select_variant(page, market: str, variant: str, *, progress: ProgressFn | No
             loc = page.locator(sel).first
             if loc.count() == 0:
                 continue
+
+            already = False
             try:
-                loc.check(timeout=T_CLICK)
+                already = bool(loc.is_checked(timeout=500))
             except Exception:
-                loc.click(timeout=T_CLICK)
-            _log(progress, f"  구분 선택: {variant}")
+                already = False
+
+            clicked = False
+            try:
+                loc.click(timeout=T_CLICK, force=True)  # onclick 강제 실행
+                clicked = True
+            except Exception:
+                try:
+                    loc.check(timeout=T_CLICK)
+                    clicked = True
+                except Exception:
+                    clicked = False
+            if not clicked:
+                continue
+
+            _log(
+                progress,
+                f"  구분 체크: {variant}" + (" (기본 선택 → 재클릭)" if already else ""),
+            )
             try:
                 page.wait_for_timeout(400)  # change_category_list 반영
             except Exception:
