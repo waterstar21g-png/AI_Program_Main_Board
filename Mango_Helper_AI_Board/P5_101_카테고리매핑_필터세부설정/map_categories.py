@@ -450,11 +450,63 @@ LIST_ROWS_JS = r"""
 """
 
 
-def list_rows(page) -> list[RowInfo]:
+LIST_DIAG_JS = r"""
+() => {
+  const anchors = Array.from(document.querySelectorAll('a[onclick]'));
+  const mapping = anchors.filter(a => (a.getAttribute('onclick') || '').includes('market_mapping_new'));
+  return {
+    url: location.href,
+    table: !!document.querySelector('table#search_category'),
+    rows: document.querySelectorAll('tr').length,
+    checkboxes: document.querySelectorAll('input[type="checkbox"]').length,
+    mappingLinks: mapping.length,
+    sample: mapping.slice(0, 3).map(a => (a.getAttribute('onclick') || '').slice(0, 60)),
+  };
+}
+"""
+
+
+def contexts(page) -> list:
+    """페이지 + 프레임 (목록이 프레임 안에 있을 수 있다)."""
+    out = [page]
     try:
-        data = page.evaluate(LIST_ROWS_JS) or []
+        for f in page.frames:
+            if f is not page and f not in out:
+                out.append(f)
     except Exception:
-        data = []
+        pass
+    return out
+
+
+def diagnose_list(page, *, progress: ProgressFn | None = None) -> None:
+    """행을 못 찾을 때 화면 상태를 로그로 남긴다."""
+    for i, ctx in enumerate(contexts(page), start=1):
+        try:
+            info = ctx.evaluate(LIST_DIAG_JS)
+        except Exception as e:  # noqa: BLE001
+            _log(progress, f"  [진단] 프레임{i}: 읽기 실패 ({e})", major=True)
+            continue
+        _log(
+            progress,
+            f"  [진단] 프레임{i} url={str(info.get('url'))[:80]}"
+            f" · tr={info.get('rows')} · 체크박스={info.get('checkboxes')}"
+            f" · 설정수정링크={info.get('mappingLinks')}"
+            f" · search_category={info.get('table')}"
+            f" · 예시={info.get('sample')}",
+            major=True,
+        )
+
+
+def list_rows(page) -> list[RowInfo]:
+    data = []
+    for ctx in contexts(page):
+        try:
+            found = ctx.evaluate(LIST_ROWS_JS) or []
+        except Exception:
+            found = []
+        if found:
+            data = found
+            break
     rows: list[RowInfo] = []
     for d in data:
         rows.append(
@@ -789,17 +841,21 @@ def run_mapping(
             click_search_filter(page, progress=progress)
 
             # ★검색 결과 목록에 한해 수행 (선택조건으로 검색하기 이후 화면)
-            found = [r for r in list_rows(page) if r.checked and r.ftid]
+            #   체크 여부와 무관하게 **행 범위**로만 대상을 정한다 (요건 2026-08-22 15:03)
+            found = [r for r in list_rows(page) if r.ftid]
             if not found:
-                result.errors.append("체크된 행이 없습니다.")
+                result.errors.append("작업 대상 행이 없습니다 (검색 결과 확인).")
                 _log(progress, result.errors[0], major=True)
+                diagnose_list(page, progress=progress)
                 return result
 
             rows = slice_rows(found, start, end)
             result.rows = len(rows)
+            checked = sum(1 for r in found if r.checked)
             _log(
                 progress,
-                f"체크된 행 {len(found)}건 중 **{start}~{end}행** → {len(rows)}건 수행",
+                f"검색 결과 {len(found)}행 중 **{start}~{end}행** → {len(rows)}건 수행"
+                f" (체크 {checked}건 · 체크 무관 진행)",
                 major=True,
             )
             if not rows:

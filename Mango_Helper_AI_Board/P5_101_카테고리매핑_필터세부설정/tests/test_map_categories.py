@@ -237,8 +237,12 @@ def test_map_one_market_no_search_result(monkeypatch):
 class RowsPage:
     def __init__(self, rows):
         self.rows = rows
+        self.frames = [self]
 
     def evaluate(self, script, *args):
+        if "location.href" in script:
+            return {"url": "u", "table": True, "rows": 3, "checkboxes": 0,
+                    "mappingLinks": len(self.rows), "sample": []}
         return self.rows
 
 
@@ -340,9 +344,12 @@ def test_run_rejects_other_sites():
 
 
 def test_row_range_applies(monkeypatch):
-    """체크된 행이 많아도 [부터]~[까지] 범위만 처리한다."""
+    """체크 여부와 무관하게 [부터]~[까지] 범위만 처리한다."""
     seen: list[str] = []
-    rows = [mc.RowInfo(index=i, ftid=str(700 + i), filter_name=f"f{i}") for i in range(10)]
+    rows = [
+        mc.RowInfo(index=i, ftid=str(700 + i), filter_name=f"f{i}", checked=(i % 2 == 0))
+        for i in range(10)
+    ]
 
     monkeypatch.setattr(mc, "list_rows", lambda page: rows)
     monkeypatch.setattr(mc, "select_site", lambda *a, **k: True)
@@ -411,7 +418,7 @@ def test_invalid_row_range_falls_back_to_default(monkeypatch):
     result = mc.run_mapping(
         site_id="MUSINSA.com", excels={"AUC20": AUCTION}, row_from=0, row_to=-2
     )
-    assert "체크된 행이 없습니다." in result.errors[0]  # 기본값(1~5)으로 진행하다 행 없음
+    assert "작업 대상 행이 없습니다" in result.errors[0]  # 기본값(1~5)으로 진행하다 행 없음
 
 
 # ── 작업 범위 · 수집사이트 제한 (요건 2026-08-22 14:46/14:49) ─────
@@ -447,3 +454,71 @@ def test_slice_rows_is_inclusive_and_one_based():
     assert mc.slice_rows(rows, 2, 4) == list("BCD")
     assert mc.slice_rows(rows, 6, 99) == list("FG")
     assert mc.slice_rows(rows, 10, 12) == []
+
+
+def test_unchecked_rows_are_processed(monkeypatch):
+    """체크가 하나도 없어도 범위 안의 행을 처리한다 (요건 2026-08-22 15:03)."""
+    seen: list[str] = []
+    rows = [
+        mc.RowInfo(index=i, ftid=str(800 + i), filter_name=f"g{i}", checked=False)
+        for i in range(4)
+    ]
+    monkeypatch.setattr(mc, "list_rows", lambda page: rows)
+    monkeypatch.setattr(mc, "select_site", lambda *a, **k: True)
+    monkeypatch.setattr(mc, "click_search_filter", lambda *a, **k: True)
+    monkeypatch.setattr(
+        mc,
+        "map_one_row",
+        lambda page, row, excels, **k: seen.append(row.ftid)
+        or {"ftid": row.ftid, "items": [{"ok": True}]},
+    )
+
+    class FakeP2:
+        @staticmethod
+        def connect_browser(pw):
+            return None, type("P", (), {"goto": lambda self, *a, **k: None})()
+
+    class FakePW:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setitem(sys.modules, "collect", FakeP2)
+    monkeypatch.setitem(
+        sys.modules, "playwright.sync_api", type("M", (), {"sync_playwright": lambda: FakePW()})
+    )
+
+    result = mc.run_mapping(
+        site_id="MUSINSA.com", excels={"AUC20": AUCTION}, row_from=1, row_to=2
+    )
+    assert seen == ["800", "801"]
+    assert result.rows == 2
+
+
+class FramedRowsPage:
+    """목록이 하위 프레임에 있는 화면."""
+
+    def __init__(self, rows):
+        self.inner = RowsPage(rows)
+        self.frames = [self, self.inner]
+
+    def evaluate(self, script, *args):
+        if "location.href" in script:
+            return {"url": "outer", "table": False, "rows": 0, "checkboxes": 0,
+                    "mappingLinks": 0, "sample": []}
+        return []
+
+
+def test_list_rows_searches_frames():
+    page = FramedRowsPage([{"index": 0, "ftid": "900", "filterName": "f", "checked": False}])
+    rows = mc.list_rows(page)
+    assert [r.ftid for r in rows] == ["900"]
+
+
+def test_diagnose_list_logs_counts():
+    page = RowsPage([{"index": 0, "ftid": "900", "filterName": "f", "checked": False}])
+    logs: list[str] = []
+    mc.diagnose_list(page, progress=logs.append)
+    assert any("설정수정링크" in l for l in logs)

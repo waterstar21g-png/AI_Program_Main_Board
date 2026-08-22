@@ -13,7 +13,7 @@ https://tmg1898.cafe24.com/mall/admin/admin_group.php?pmode=filter_delete&...&ft
 | 항목 | 값 |
 |------|-----|
 | 수집사이트 | **musinsa.com 한정** — 다른 사이트는 검증 완료 후 개방 (선택 시 실행 거부) |
-| 작업 대상 | **[선택조건으로 검색하기] 결과 목록**의 체크된 행만 |
+| 작업 대상 | **[선택조건으로 검색하기] 결과 목록** — 체크 여부와 무관하게 행 범위로만 지정 |
 | 작업 행 범위 | **[부터] ~ [까지]** (1부터, 양끝 포함 · 기본 **1 ~ 5**) |
 
 ## 초기 1회
@@ -26,7 +26,7 @@ https://tmg1898.cafe24.com/mall/admin/admin_group.php?pmode=filter_delete&...&ft
 
 | 단계 | 동작 | 근거 |
 |------|------|------|
-| 0 | 체크된 행 정보 읽기 | `table#search_category` 의 체크박스 |
+| 0 | 행 정보 읽기 (체크 무관) | `table#search_category` · 프레임 안이면 프레임까지 탐색 |
 | 1 | 필터이름(수정가능) 읽기 | 행의 텍스트 input |
 | 2·3 | 필터세부설정 → **[설정수정]** | `onclick="market_mapping_new('<ftid>')"` |
 | 4 | 팝업 | `admin_category_set.php?tm=F&ps_ftid=<ftid>` |
