@@ -337,32 +337,72 @@ def click_all_categories(page, market: str, *, progress: ProgressFn | None = Non
 
 _OPTIONS_JS = """
 (ids) => {
-  const out = [];
-  for (const id of ids) {
-    const el = document.getElementById(id);
-    if (!el) continue;
-    const texts = Array.from(el.options).map(o => (o.textContent || '').trim());
-    if (texts.length > out.length) out.length = 0, out.push(...texts);
-  }
-  return out;
+  const texts = (el) => Array.from(el.options).map(o => (o.textContent || '').trim());
+  const isVisible = (el) => {
+    const st = window.getComputedStyle(el);
+    if (st.display === 'none' || st.visibility === 'hidden') return false;
+    return el.offsetParent !== null || st.display === 'inline-block';
+  };
+  const cands = ids.map(id => document.getElementById(id)).filter(Boolean);
+  const pick = (list) => {
+    let best = [];
+    let bestId = '';
+    for (const el of list) {
+      const t = texts(el);
+      if (t.length > best.length) { best = t; bestId = el.id || ''; }
+    }
+    return {texts: best, id: bestId};
+  };
+  // 보이는 select 우선 (구분 전환 시 숨은 select 에 이전 목록이 남아 있다)
+  const visible = pick(cands.filter(isVisible));
+  if (visible.texts.length) return visible;
+  return pick(cands);
 }
 """
 
 
-def read_option_texts(page, market: str, *, timeout_ms: int | None = None) -> list[str]:
-    """리스트박스 옵션이 채워질 때까지 기다렸다가 전부 읽는다."""
+def fingerprint(options: Iterable[str]) -> str:
+    """목록이 실제로 바뀌었는지 판단할 지문."""
+    items = [o for o in options if not is_placeholder(o)]
+    return f"{len(items)}:{items[0] if items else ''}:{items[-1] if items else ''}"
+
+
+def read_option_texts(
+    page,
+    market: str,
+    *,
+    timeout_ms: int | None = None,
+    avoid: str = "",
+    progress: ProgressFn | None = None,
+) -> list[str]:
+    """보이는 리스트박스의 옵션을 읽는다.
+
+    `avoid` (이전 구분의 지문) 와 같으면 목록이 아직 교체되지 않은 것으로 보고
+    바뀔 때까지 기다린다 — 구분 전환 시 이전 목록을 그대로 읽는 문제 방지.
+    """
     budget = T_LIST if timeout_ms is None else timeout_ms
     deadline = time.monotonic() + budget / 1000
     best: list[str] = []
+    best_id = ""
     while True:
         try:
-            texts = page.evaluate(_OPTIONS_JS, list_select_ids(market)) or []
+            info = page.evaluate(_OPTIONS_JS, list_select_ids(market)) or {}
         except Exception:
-            texts = []
+            info = {}
+        texts = list(info.get("texts") or []) if isinstance(info, dict) else list(info or [])
+        sel_id = str(info.get("id") or "") if isinstance(info, dict) else ""
         real = [t for t in texts if not is_placeholder(t)]
+
         if len(real) > len(best):
-            best = real
-        if len(real) > 1 or time.monotonic() >= deadline or stop_requested():
+            best, best_id = real, sel_id
+
+        stale = bool(avoid) and fingerprint(real) == avoid
+        done = bool(real) and not stale
+        if done or time.monotonic() >= deadline or stop_requested():
+            if best_id:
+                _log(progress, f"  목록 select={best_id} · {len(best)}건")
+            if stale and best_id:
+                _log(progress, "  경고: 목록이 이전 구분과 동일 — 교체 지연 가능", major=True)
             return best
         try:
             page.wait_for_timeout(300)
@@ -378,7 +418,12 @@ def markets_to_run(market: str) -> list[str]:
 
 
 def extract_one(
-    page, market: str, *, variant: str = SINGLE_VARIANT, progress: ProgressFn | None = None
+    page,
+    market: str,
+    *,
+    variant: str = SINGLE_VARIANT,
+    avoid: str = "",
+    progress: ProgressFn | None = None,
 ) -> list[str]:
     """한 마켓(+구분) — 구분 라디오 → [전체카테고리] → 목록 옵션 읽기."""
     label = MARKETS.get(market, market)
@@ -388,7 +433,7 @@ def extract_one(
         return []
     if not click_all_categories(page, market, progress=progress):
         return []
-    options = read_option_texts(page, market)
+    options = read_option_texts(page, market, avoid=avoid, progress=progress)
     _log(progress, f"  {title} 카테고리 {len(options)}건", major=True)
     return options
 
@@ -481,12 +526,14 @@ def run_extract(
                 if stop_requested():
                     _log(progress, "사용자 중단", major=True)
                     break
+                prev_fp = ""
                 for variant in variants_of(code):
                     if stop_requested():
                         break
                     options = extract_one(
-                        page, code, variant=variant, progress=progress
+                        page, code, variant=variant, avoid=prev_fp, progress=progress
                     )
+                    prev_fp = fingerprint(options)
                     tag = f"{code}·{variant}" if variant else code
                     if not options:
                         result.errors.append(

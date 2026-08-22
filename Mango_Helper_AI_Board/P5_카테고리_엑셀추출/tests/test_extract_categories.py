@@ -188,8 +188,7 @@ class DualSelectPage:
 
     def evaluate(self, script, *args):
         self.script_ids = args[0] if args else None
-        # JS 동작 모사 — 두 id 중 더 긴 목록 채택
-        return self.options
+        return {"texts": self.options, "id": "openmarket_category_search_list2_LTON"}
 
     def wait_for_timeout(self, ms):
         return None
@@ -222,7 +221,10 @@ class MarketLoopPage:
     def evaluate(self, script, *args):
         if "search_category" in script:
             return None
-        return [f"{ec.MARKETS[self.current]}대분류 > 중분류"]
+        return {
+            "texts": [f"{ec.MARKETS[self.current]}대분류 > 중분류"],
+            "id": f"openmarket_category_search_list_{self.current}",
+        }
 
     def wait_for_timeout(self, ms):
         return None
@@ -362,7 +364,10 @@ class VariantPage:
         return _Missing()
 
     def evaluate(self, script, *args):
-        return [f"{self.current} 대분류 > 중분류", f"{self.current} 대분류 > 중분류2"]
+        return {
+            "texts": [f"{self.current} 대분류 > 중분류", f"{self.current} 대분류 > 중분류2"],
+            "id": "openmarket_category_search_list_LTON",
+        }
 
     def wait_for_timeout(self, ms):
         return None
@@ -507,3 +512,75 @@ def test_build_category_url_with_ftid():
 def test_category_page_constant():
     assert ec.CATEGORY_PAGE == "admin_category_set.php"
     assert ec.CATEGORY_PAGE in ec.DEFAULT_URL
+
+
+# ── 롯데ON 일반카테고리 누락 방지 (보이는 select · 교체 대기) ──────
+
+
+def test_options_js_prefers_visible_select():
+    """숨은 select 에 이전 구분 목록이 남아 있어도 보이는 쪽을 읽는다."""
+    js = ec._OPTIONS_JS
+    assert "getComputedStyle" in js
+    assert "display === 'none'" in js
+    assert "offsetParent" in js
+
+
+def test_fingerprint_detects_same_list():
+    a = ["A > B", "A > C"]
+    assert ec.fingerprint(a) == ec.fingerprint(list(a))
+    assert ec.fingerprint(a) != ec.fingerprint(["X > Y"])
+    assert ec.fingerprint(["- 카테고리를 선택해주세요 -"]) == ec.fingerprint([])
+
+
+class StaleThenFreshPage:
+    """구분 전환 직후엔 이전 목록이 남아 있고, 잠시 뒤 새 목록으로 바뀌는 화면."""
+
+    def __init__(self, stale, fresh):
+        self.stale = list(stale)
+        self.fresh = list(fresh)
+        self.reads = 0
+        self.waits = 0
+
+    def evaluate(self, script, *args):
+        self.reads += 1
+        texts = self.stale if self.reads < 3 else self.fresh
+        return {"texts": texts, "id": "openmarket_category_search_list_LTON"}
+
+    def wait_for_timeout(self, ms):
+        self.waits += 1
+
+
+def test_read_waits_until_list_changes_after_variant_switch():
+    stale = ["해외직구 대분류 > 중분류"]
+    fresh = ["일반 대분류 > 중분류", "일반 대분류 > 중분류2"]
+    page = StaleThenFreshPage(stale, fresh)
+    logs: list[str] = []
+
+    got = ec.read_option_texts(
+        page, "LTON", avoid=ec.fingerprint(stale), progress=logs.append
+    )
+    assert got == fresh          # 이전 구분 목록을 그대로 반환하지 않는다
+    assert page.waits >= 1
+    assert any("select=" in l for l in logs)
+
+
+def test_read_without_avoid_returns_first_list():
+    page = StaleThenFreshPage(["A > B"], ["C > D"])
+    assert ec.read_option_texts(page, "LTON") == ["A > B"]
+
+
+def test_read_reports_stale_when_never_changes(monkeypatch):
+    monkeypatch.setattr(ec, "T_LIST", 400)
+    same = ["A > B"]
+
+    class Frozen:
+        def evaluate(self, script, *args):
+            return {"texts": same, "id": "openmarket_category_search_list_LTON"}
+
+        def wait_for_timeout(self, ms):
+            return None
+
+    logs: list[str] = []
+    got = ec.read_option_texts(Frozen(), "LTON", avoid=ec.fingerprint(same), progress=logs.append)
+    assert got == same  # 그래도 데이터는 넘긴다
+    assert any("이전 구분과 동일" in l for l in logs)
