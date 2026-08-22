@@ -113,7 +113,7 @@ def test_step_2_4_generic_for_shoes():
     cats = ["신발잡화 > 기타", "식품 > 과일"]
     cat, step = mt.find_category("아름트리-무신사-남성-슈즈-스니커즈", cats)
     assert cat == "신발잡화 > 기타"
-    assert step == "2-4) 포괄(신발)"
+    assert step.startswith("2-4) 포괄(신발)")   # 뒤에 적용 규칙 태그가 붙을 수 있다
 
 
 def test_mid_name_matching_precedes_generic():
@@ -208,3 +208,79 @@ def test_is_from_and_ensure_from():
 
 def test_ensure_from_keeps_valid_value():
     assert mt.ensure_from(EXCEL, EXCEL[1], "무엇이든") == EXCEL[1]
+
+
+# ── 선택 규칙 2·3·4 (요건 2026-08-22 15:53) ───────────────────────
+
+RULE_EXCEL = [
+    "패션의류 > 남성 > 하의 > 팬츠",
+    "패션의류 > 여성 > 하의 > 팬츠",
+    "스포츠/레저 > 등산 > 등산바지",
+    "패션의류잡화 > 남성 > 모자 > 비니",
+    "패션의류잡화 > 여성 > 모자 > 비니",
+    "패션의류잡화 > 남성 > 신발 > 스니커즈",
+    "생활 > 주방 > 컵",
+]
+
+
+def test_rule2_gender_is_enforced():
+    """남성 필터는 여성 카테고리를 고르지 않는다."""
+    cat, step = mt.find_category("아름트리-무신사-남성-모자-비니", RULE_EXCEL)
+    assert cat == "패션의류잡화 > 남성 > 모자 > 비니"
+    assert "성별=남성" in step
+
+    cat, _ = mt.find_category("아름트리-무신사-여성-모자-비니", RULE_EXCEL)
+    assert cat == "패션의류잡화 > 여성 > 모자 > 비니"
+
+
+def test_rule2_falls_back_to_genderless_when_no_same_gender():
+    cats = ["잡화 > 모자 > 비니", "패션의류잡화 > 여성 > 모자 > 비니"]
+    cat, _ = mt.find_category("아름트리-무신사-남성-모자-비니", cats)
+    assert cat == "잡화 > 모자 > 비니"   # 다른 성별 대신 무성별 경로
+
+
+def test_rule3_item_name_must_match():
+    """필터명이 '신발' 이면 신발이 들어간 카테고리에서 고른다."""
+    cat, step = mt.find_category("아름트리-무신사-남성-신발-스니커즈", RULE_EXCEL)
+    assert cat == "패션의류잡화 > 남성 > 신발 > 스니커즈"
+    assert "품목=신발" in step
+
+
+def test_rule3_priority_is_top_then_mid_then_low():
+    """같은 품목명이 여러 단계에 있으면 상위 단계 우선."""
+    cats = [
+        "패션의류 > 남성 > 하의 > 의류기타",   # '의류' 가 상위(0단계)
+        "생활 > 남성 > 의류 > 기타",           # '의류' 가 2단계
+    ]
+    ranked = mt.item_paths(cats, ["의류"])
+    assert ranked[0] == "패션의류 > 남성 > 하의 > 의류기타"
+    assert mt.item_level("생활 > 남성 > 의류 > 기타", "의류") == 2
+
+
+def test_rule4_clothing_prefers_fashion_categories():
+    """남성-팬츠: 스포츠/레저보다 패션의류를 우선."""
+    cat, step = mt.find_category("아름트리-무신사-남성-의류-팬츠", RULE_EXCEL)
+    assert cat == "패션의류 > 남성 > 하의 > 팬츠"
+    assert "품목=의류" in step
+
+
+def test_rule4_preference_order():
+    cats = ["남성의류 > 하의 > 팬츠", "패션의류잡화 > 남성 > 하의 > 팬츠"]
+    assert mt.clothing_priority(cats)[0] == "패션의류잡화 > 남성 > 하의 > 팬츠"
+
+
+def test_rules_never_leave_excel_range():
+    for name in (
+        "아름트리-무신사-남성-의류-팬츠",
+        "아름트리-무신사-여성-액세서리-귀걸이",
+        "아름트리-무신사-남성-선글라스-보잉",
+    ):
+        cat, _ = mt.find_category(name, RULE_EXCEL)
+        assert cat in RULE_EXCEL
+
+
+def test_constrain_reports_applied_rules():
+    parsed = mt.parse_filter_name("아름트리-무신사-남성-의류-팬츠")
+    pool, notes = mt.constrain(RULE_EXCEL, parsed)
+    assert all("여성" not in p for p in pool)
+    assert "성별=남성" in notes and "품목=의류" in notes

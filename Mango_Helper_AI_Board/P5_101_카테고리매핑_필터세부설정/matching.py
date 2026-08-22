@@ -47,6 +47,19 @@ GENERIC_BY_KIND: dict[str, tuple[str, ...]] = {
 }
 CLOTHING_WORDS = ("의류", "티셔츠", "셔츠", "바지", "팬츠", "아우터", "코트", "자켓", "재킷", "니트")
 SHOE_WORDS = ("신발", "슈즈", "운동화", "스니커즈", "구두", "부츠", "샌들", "슬리퍼")
+# ★규칙3: 필터명에 이 명칭이 있으면 **그 명칭이 있는 카테고리**에서만 고른다
+ITEM_RULE_WORDS: tuple[str, ...] = ("의류", "잡화", "모자", "선글라스", "액세서리", "신발")
+
+# ★규칙4: 의류는 이 상위 카테고리를 우선한다 (앞일수록 우선)
+CLOTHING_PREFERRED: tuple[str, ...] = (
+    "패션의류잡화",
+    "패션의류",
+    "남성패션의류",
+    "여성패션의류",
+    "남성의류",
+    "여성의류",
+)
+
 ACCESSORY_WORDS = ("선글라스", "안경테", "모자", "햇", "손수건", "비니", "캡", "버킷", "바라클라바")
 
 _SPLIT = re.compile(r"[\s/·,()\[\]|]+")
@@ -367,6 +380,86 @@ def ensure_from(paths: Sequence[str], category: str, name: str = "") -> str:
     return fallback
 
 
+def has_gender(path: str, gender: str) -> bool:
+    words = GENDER_WORDS.get(gender, (gender,))
+    return any(path_hit(path, w) for w in words)
+
+
+def gender_paths(paths: Sequence[str], gender: str) -> list[str]:
+    """★규칙2: 성별이 구분된 필터면 그 성별 카테고리 안에서만 고른다.
+
+    같은 성별 경로가 있으면 그것만, 없으면 **다른 성별이 아닌** 경로만 남긴다.
+    """
+    if not gender:
+        return list(paths)
+    same = [p for p in paths if has_gender(p, gender)]
+    if same:
+        return same
+    others = [g for g in GENDER_WORDS if g != gender]
+    return [p for p in paths if not any(has_gender(p, g) for g in others)]
+
+
+def item_words_of(parsed: "ParsedFilter") -> list[str]:
+    """필터명에 들어 있는 규칙 품목명 (의류·잡화·모자·선글라스·액세서리·신발)."""
+    text = normalize(parsed.raw)
+    return [w for w in ITEM_RULE_WORDS if normalize(w) in text]
+
+
+def item_level(path: str, word: str) -> int:
+    """그 품목명이 몇 단계에서 나오는지 (0=상위). 없으면 큰 수."""
+    for i, level in enumerate(split_levels(path)):
+        if level_hit(level, word):
+            return i
+    return 99
+
+
+def item_paths(paths: Sequence[str], words: Sequence[str]) -> list[str]:
+    """★규칙3: 품목명이 있는 경로만, 상위 → 중위 → 하위 순으로 정렬."""
+    if not words:
+        return list(paths)
+    hits = [p for p in paths if any(item_level(p, w) < 99 for w in words)]
+    if not hits:
+        return []
+    return sorted(hits, key=lambda p: (min(item_level(p, w) for w in words), len(p)))
+
+
+def clothing_priority(paths: Sequence[str]) -> list[str]:
+    """★규칙4: 의류는 패션의류·패션의류잡화·남/여성(패션)의류를 우선."""
+    for preferred in CLOTHING_PREFERRED:
+        hits = [p for p in paths if path_hit(p, preferred)]
+        if hits:
+            return hits
+    return list(paths)
+
+
+def constrain(paths: Sequence[str], parsed: "ParsedFilter") -> tuple[list[str], list[str]]:
+    """규칙 2·3·4 로 후보를 좁힌다. 반환: (후보, 적용된 규칙 설명)."""
+    pool = [p for p in paths if str(p or "").strip()]
+    notes: list[str] = []
+
+    gender = gender_of(parsed.raw)
+    if gender:
+        narrowed = gender_paths(pool, gender)
+        if narrowed:
+            pool = narrowed
+            notes.append(f"성별={gender}")
+
+    words = item_words_of(parsed)
+    if words:
+        narrowed = item_paths(pool, words)
+        if narrowed:
+            pool = narrowed
+            notes.append("품목=" + "·".join(words))
+
+    if "의류" in words:
+        narrowed = clothing_priority(pool)
+        if narrowed and len(narrowed) < len(pool):
+            pool = narrowed
+            notes.append("의류 우선순위")
+
+    return pool, notes
+
+
 def find_category(
     name: str,
     paths: Sequence[str],
@@ -381,16 +474,22 @@ def find_category(
     """
     parsed = parse_filter_name(name)
     skip = {normalize(e) for e in (exclude or []) if str(e or "").strip()}
-    paths = [
+    all_paths = [
         p for p in paths if str(p or "").strip() and normalize(p) not in skip
     ]
-    if not paths:
+    if not all_paths:
         return "", "자료 없음"
+
+    # ★규칙 2·3·4 — 성별·품목명·의류 우선순위로 후보를 먼저 좁힌다
+    paths, notes = constrain(all_paths, parsed)
+    tag = (" [" + " · ".join(notes) + "]") if notes else ""
+    if not paths:
+        paths, tag = all_paths, ""
 
     # 1) 단계수 동일 — 상위 → 중위 → 하위 순서 대조
     found = match_by_levels(paths, parsed)
     if found:
-        return found, "1) 단계 일치"
+        return found, "1) 단계 일치" + tag
 
     # 2-1) 상위(없으면 중위) → 중위(없으면 하위) → 하위
     scope = filter_paths(paths, parsed.tops)
@@ -409,22 +508,22 @@ def find_category(
         if narrowed:
             low_hits = filter_paths(narrowed, parsed.lows)
             if low_hits:
-                return pick_best(low_hits, parsed), step + " → 하위"
+                return pick_best(low_hits, parsed), step + " → 하위" + tag
             if not parsed.lows:
-                return pick_best(narrowed, parsed), step
+                return pick_best(narrowed, parsed), step + tag
 
     # 2-2) 중위 이름으로 전체 재검색
     mid_hits = filter_paths(paths, parsed.mids)
     if mid_hits:
         low_hits = filter_paths(mid_hits, parsed.lows)
         if low_hits:
-            return pick_best(low_hits, parsed), "2-2) 중위 전체 → 하위"
-        return pick_best(mid_hits, parsed), "2-2) 중위 전체"
+            return pick_best(low_hits, parsed), "2-2) 중위 전체 → 하위" + tag
+        return pick_best(mid_hits, parsed), "2-2) 중위 전체" + tag
 
     # 2-3) 하위 이름으로 전체 재검색
     low_hits = filter_paths(paths, parsed.lows)
     if low_hits:
-        return pick_best(low_hits, parsed), "2-3) 하위 전체"
+        return pick_best(low_hits, parsed), "2-3) 하위 전체" + tag
 
     # 2-4) 품목별 포괄 카테고리
     kind = kind_of(parsed)
@@ -432,10 +531,10 @@ def find_category(
     if generic:
         narrowed = filter_paths(generic, parsed.lows) or filter_paths(generic, parsed.mids)
         target = narrowed or generic
-        return pick_best(target, parsed), f"2-4) 포괄({kind})"
+        return pick_best(target, parsed), f"2-4) 포괄({kind})" + tag
 
     if force:
         nearest, score = nearest_category(name, paths)
         if nearest:
-            return nearest, f"3) 최근접 지정 ({score:.2f})"
+            return nearest, f"3) 최근접 지정 ({score:.2f})" + tag
     return "", "미검출"
