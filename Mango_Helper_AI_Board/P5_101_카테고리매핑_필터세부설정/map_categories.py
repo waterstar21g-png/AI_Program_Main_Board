@@ -443,25 +443,32 @@ def click_search_filter(page, *, progress: ProgressFn | None = None) -> bool:
 
 LIST_ROWS_JS = r"""
 () => {
+  // 표 구조에 기대지 않고 [설정수정] 링크에서 거꾸로 행을 찾는다
   const out = [];
-  const table = document.querySelector('table#search_category') || document;
-  const trs = Array.from(table.querySelectorAll('tr'));
-  trs.forEach((tr, idx) => {
-    const cb = tr.querySelector('input[type="checkbox"]');
-    const edit = tr.querySelector('a[onclick*="market_mapping_new"]');
-    if (!edit) return;
-    const m = (edit.getAttribute('onclick') || '').match(/market_mapping_new\(\s*'?(\d+)'?/);
+  const anchors = Array.from(document.querySelectorAll('a[onclick*="market_mapping_new"]'));
+  anchors.forEach((a, idx) => {
+    const onclick = a.getAttribute('onclick') || '';
+    const m = onclick.match(/market_mapping_new\(\s*'?(\d+)'?/);
     const ftid = m ? m[1] : '';
+    if (!ftid) return;
+
+    const tr = a.closest('tr');
     let name = '';
-    const nameInput = Array.from(tr.querySelectorAll('input[type="text"], input:not([type])'))
-      .map(i => (i.value || '').trim())
-      .filter(v => v && !/^https?:/i.test(v) && !/^\d+$/.test(v));
-    if (nameInput.length) name = nameInput[0];
-    if (!name) {
-      const td = tr.querySelector('td');
-      name = td ? (td.innerText || '').trim() : '';
+    let checked = false;
+    if (tr) {
+      const cb = tr.querySelector('input[type="checkbox"]');
+      checked = cb ? !!cb.checked : false;
+      const vals = Array.from(tr.querySelectorAll('input[type="text"], input:not([type])'))
+        .map(i => (i.value || '').trim())
+        .filter(v => v && !/^https?:/i.test(v) && !/^\d+$/.test(v));
+      if (vals.length) name = vals[0];
+      if (!name) {
+        const byUid = document.querySelector('input[attr-uid="' + ftid + '"]');
+        if (byUid) name = (byUid.value || '').trim();
+      }
+      if (!name) name = ((tr.innerText || '').trim().split('\n')[0] || '').trim();
     }
-    out.push({index: idx, ftid, filterName: name, checked: cb ? !!cb.checked : false});
+    out.push({index: idx, ftid: ftid, filterName: name, checked: checked});
   });
   return out;
 }
@@ -516,15 +523,20 @@ def diagnose_list(page, *, progress: ProgressFn | None = None) -> None:
 
 
 def list_rows(page) -> list[RowInfo]:
-    data = []
+    """모든 프레임에서 행을 모으고 ftid 중복은 제거한다."""
+    data: list[dict] = []
+    seen: set[str] = set()
     for ctx in contexts(page):
         try:
             found = ctx.evaluate(LIST_ROWS_JS) or []
         except Exception:
             found = []
-        if found:
-            data = found
-            break
+        for item in found:
+            ftid = str((item or {}).get("ftid") or "").strip()
+            if not ftid or ftid in seen:
+                continue
+            seen.add(ftid)
+            data.append(item)
     rows: list[RowInfo] = []
     for d in data:
         rows.append(

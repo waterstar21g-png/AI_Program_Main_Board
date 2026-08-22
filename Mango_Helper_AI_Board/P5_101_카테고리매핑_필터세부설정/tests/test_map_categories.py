@@ -282,6 +282,37 @@ def test_list_rows_js_reads_market_mapping_new():
     assert "checkbox" in mc.LIST_ROWS_JS
 
 
+def test_list_rows_js_does_not_depend_on_table_id():
+    """표 구조가 달라도 [설정수정] 링크로 행을 찾는다 (진단: 링크 15개인데 0행 문제)."""
+    assert "table#search_category" not in mc.LIST_ROWS_JS
+    assert "closest('tr')" in mc.LIST_ROWS_JS
+    assert "attr-uid" in mc.LIST_ROWS_JS   # 이름 폴백
+
+
+class MultiFramePage:
+    """같은 행이 두 프레임에 중복 노출되는 화면."""
+
+    def __init__(self):
+        rows = [
+            {"index": 0, "ftid": "720", "filterName": "아름트리-무신사-남성-모자-캡", "checked": False},
+            {"index": 1, "ftid": "731", "filterName": "아름트리-무신사-남성-모자-비니", "checked": True},
+        ]
+        self.inner = RowsPage(rows + [{"index": 2, "ftid": "719", "filterName": "f", "checked": False}])
+        self.rows = rows
+        self.frames = [self, self.inner]
+
+    def evaluate(self, script, *args):
+        if "location.href" in script:
+            return {"url": "u", "table": True, "rows": 35, "checkboxes": 18,
+                    "mappingLinks": 15, "sample": []}
+        return self.rows
+
+
+def test_list_rows_merges_frames_without_duplicates():
+    rows = mc.list_rows(MultiFramePage())
+    assert [r.ftid for r in rows] == ["720", "731", "719"]   # 중복 제거 + 프레임 병합
+
+
 # ── 드라이런 ─────────────────────────────────────────────────────
 
 
