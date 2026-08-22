@@ -47,9 +47,20 @@ HERE = Path(__file__).resolve().parent
 STOP_FLAG_PATH = HERE / ".p5_stop"
 OUTPUT_DIR = HERE / "output"
 
+CATEGORY_PAGE = "admin_category_set.php"
+DEFAULT_FTID = "790"
 DEFAULT_URL = (
-    "https://tmg1898.cafe24.com/mall/admin/admin_category_set.php?tm=F&ps_ftid=790"
+    f"https://tmg1898.cafe24.com/mall/admin/{CATEGORY_PAGE}?tm=F&ps_ftid={DEFAULT_FTID}"
 )
+
+
+def build_category_url(ftid: str = DEFAULT_FTID, *, base_url: str = DEFAULT_URL) -> str:
+    """검색필터 ftid 로 카테고리설정 화면 URL 을 만든다."""
+    from urllib.parse import urlencode, urlsplit, urlunsplit
+
+    parts = urlsplit(base_url or DEFAULT_URL)
+    query = urlencode({"tm": "F", "ps_ftid": str(ftid or DEFAULT_FTID)})
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, query, ""))
 
 # 마켓 코드 → 화면 표기 (admin_category_set.php 의 mapping_category_<코드>)
 MARKETS: dict[str, str] = {
@@ -382,6 +393,47 @@ def extract_one(
     return options
 
 
+def open_category_page(browser_page, url: str, *, progress: ProgressFn | None = None):
+    """카테고리설정 화면을 **전용 탭**에서 연다.
+
+    수집조건수정 팝업 등 다른 창을 재사용해 그 창을 덮어쓰지 않도록,
+    이미 열려 있는 카테고리설정 탭이 있으면 그것을 쓰고 없으면 새 탭을 만든다.
+    """
+    context = None
+    try:
+        context = browser_page.context
+    except Exception:
+        context = None
+
+    if context is not None:
+        try:
+            for pg in context.pages:
+                if CATEGORY_PAGE in (pg.url or ""):
+                    _log(progress, "카테고리설정 탭 재사용", major=True)
+                    pg.goto(url, wait_until="domcontentloaded", timeout=60_000)
+                    try:
+                        pg.bring_to_front()
+                    except Exception:
+                        pass
+                    return pg
+        except Exception:
+            pass
+        try:
+            pg = context.new_page()
+            pg.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            try:
+                pg.bring_to_front()
+            except Exception:
+                pass
+            _log(progress, "카테고리설정 새 탭 열기", major=True)
+            return pg
+        except Exception as e:  # noqa: BLE001
+            _log(progress, f"경고: 새 탭 열기 실패({e}) — 현재 탭 사용", major=True)
+
+    browser_page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+    return browser_page
+
+
 def run_extract(
     *,
     market: str = DEFAULT_MARKET,
@@ -422,8 +474,8 @@ def run_extract(
     try:
         with sync_playwright() as pw:
             _browser, page = p2.connect_browser(pw)
-            page.goto(target, wait_until="domcontentloaded", timeout=60_000)
-            _log(progress, "카테고리 매핑 화면 표시", major=True)
+            page = open_category_page(page, target, progress=progress)
+            _log(progress, f"카테고리 매핑 화면 표시 · {(page.url or '')[:110]}", major=True)
 
             for code in codes:
                 if stop_requested():
@@ -530,14 +582,21 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--url", default="", help=f"접근 URL (기본={DEFAULT_URL})")
+    parser.add_argument(
+        "--ftid", default="", help=f"검색필터 ps_ftid (기본={DEFAULT_FTID}) — --url 대신 사용"
+    )
     parser.add_argument("--out", default="", help="엑셀 저장 경로 (기본=output 폴더)")
     parser.add_argument("--from-text", default="", help="브라우저 없이 목록 텍스트 → 엑셀")
     args = parser.parse_args(argv)
 
+    url = args.url.strip()
+    if not url and args.ftid.strip():
+        url = build_category_url(args.ftid.strip())
+
     if args.from_text:
         result = run_from_text(args.from_text, market=args.market, out_path=args.out)
     else:
-        result = run_extract(market=args.market, url=args.url, out_path=args.out)
+        result = run_extract(market=args.market, url=url, out_path=args.out)
 
     for e in result.errors:
         print(f"[오류] {e}", flush=True)

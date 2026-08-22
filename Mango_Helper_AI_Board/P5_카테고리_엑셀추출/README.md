@@ -8,6 +8,13 @@
 https://tmg1898.cafe24.com/mall/admin/admin_category_set.php?tm=F&ps_ftid=790
 ```
 
+`ps_ftid` 는 검색필터마다 다릅니다. 보드 「접근 URL」 칸에 그대로 붙여넣거나
+CLI 에서 `--ftid 721` 로 지정하면 됩니다.
+
+**전용 탭에서 엽니다.** 수집조건수정 팝업(`admin_group_modify.php`) 같은 다른 창을
+재사용해 덮어쓰지 않습니다. 이미 열린 카테고리설정 탭이 있으면 그 탭을 쓰고,
+없으면 새 탭을 만들어 앞으로 가져옵니다.
+
 ## 동작 (스크린샷 순서)
 
 1. 위 화면 접속 — 마켓별 매핑 행 (`tr#mapping_category_AUC20` = 옥션2.0)

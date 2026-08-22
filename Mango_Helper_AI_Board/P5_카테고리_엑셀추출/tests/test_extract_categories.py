@@ -429,3 +429,81 @@ class _MissingPage:
 
     def wait_for_timeout(self, ms):
         return None
+
+
+# ── 카테고리설정 화면 전용 탭 (수집조건수정 팝업 침범 금지) ────────
+
+
+class TabPage:
+    def __init__(self, url=""):
+        self.url = url
+        self.goto_urls: list[str] = []
+        self.fronted = False
+
+    def goto(self, url, **kwargs):
+        self.goto_urls.append(url)
+        self.url = url
+
+    def bring_to_front(self):
+        self.fronted = True
+
+
+class TabContext:
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.created = 0
+
+    def new_page(self):
+        self.created += 1
+        pg = TabPage()
+        self.pages.append(pg)
+        return pg
+
+
+class HostPage(TabPage):
+    def __init__(self, context):
+        super().__init__("https://tmg1898.cafe24.com/mall/admin/admin_group_modify.php?ps_mode=modify_filter")
+        self.context = context
+
+
+def test_category_page_opens_new_tab_not_the_popup():
+    popup = TabPage(
+        "https://tmg1898.cafe24.com/mall/admin/admin_group_modify.php?ps_mode=modify_filter&ps_fuid=724"
+    )
+    ctx = TabContext([popup])
+    host = HostPage(ctx)
+    host.context = ctx
+
+    page = ec.open_category_page(host, ec.DEFAULT_URL)
+
+    assert ctx.created == 1              # 새 탭 생성
+    assert page is not popup            # 팝업을 쓰지 않는다
+    assert popup.goto_urls == []        # 팝업을 이동시키지 않는다
+    assert page.goto_urls == [ec.DEFAULT_URL]
+    assert page.fronted is True
+
+
+def test_category_page_reuses_existing_category_tab():
+    existing = TabPage(
+        "https://tmg1898.cafe24.com/mall/admin/admin_category_set.php?tm=F&ps_ftid=721"
+    )
+    ctx = TabContext([existing])
+    host = HostPage(ctx)
+    host.context = ctx
+
+    page = ec.open_category_page(host, ec.DEFAULT_URL)
+    assert page is existing
+    assert ctx.created == 0
+    assert existing.goto_urls == [ec.DEFAULT_URL]
+
+
+def test_build_category_url_with_ftid():
+    assert ec.build_category_url("721") == (
+        "https://tmg1898.cafe24.com/mall/admin/admin_category_set.php?tm=F&ps_ftid=721"
+    )
+    assert ec.build_category_url("") .endswith(f"ps_ftid={ec.DEFAULT_FTID}")
+
+
+def test_category_page_constant():
+    assert ec.CATEGORY_PAGE == "admin_category_set.php"
+    assert ec.CATEGORY_PAGE in ec.DEFAULT_URL
