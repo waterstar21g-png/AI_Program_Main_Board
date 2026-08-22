@@ -1088,6 +1088,56 @@ def map_one_row(
     return detail
 
 
+def format_row_list(rows: Sequence[RowInfo], *, row_from: int | str = "", row_to: int | str = "") -> list[str]:
+    """행 번호 확인용 — 1행부터 순서대로 `번호행: ftid=… · 필터=…`.
+
+    범위를 주면 그 구간에 ★ 표시를 붙여 어디부터 작업되는지 한눈에 보인다.
+    """
+    start, end = (None, None)
+    if str(row_from).strip() or str(row_to).strip():
+        start, end = row_range(row_from or DEFAULT_ROW_FROM, row_to or DEFAULT_ROW_TO)
+    lines: list[str] = []
+    for i, row in enumerate(rows, start=1):
+        mark = "★" if (start is not None and start <= i <= end) else "  "
+        lines.append(f"{mark}{i:>3}행: ftid={row.ftid or '?'} · 필터={row.filter_name or '(이름 없음)'}")
+    return lines
+
+
+def list_rows_only(
+    *,
+    site_id: str = DEFAULT_SITE,
+    list_url: str = "",
+    row_from: int | str = "",
+    row_to: int | str = "",
+    progress: ProgressFn | None = None,
+) -> list[RowInfo]:
+    """망고 목록을 열어 행 순서만 확인한다 (매핑 없음) — '몇 번째 행인지' 검증용."""
+    try:
+        import collect as p2  # noqa: WPS433
+        from playwright.sync_api import sync_playwright
+    except ImportError as e:
+        _log(progress, f"의존성 로드 실패: {e}", major=True)
+        return []
+
+    url = (list_url or "").strip() or DEFAULT_LIST_URL
+    rows: list[RowInfo] = []
+    try:
+        with sync_playwright() as pw:
+            _browser, page = p2.connect_browser(pw)
+            page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            select_site(page, site_id, progress=progress)
+            click_search_filter(page, progress=progress)
+            rows = list_rows(page)
+    except Exception as e:  # noqa: BLE001
+        _log(progress, f"실행 오류: {e}", major=True)
+        return rows
+
+    _log(progress, f"검색 결과 {len(rows)}행 (위에서부터 1행)", major=True)
+    for line in format_row_list(rows, row_from=row_from, row_to=row_to):
+        _log(progress, line)
+    return rows
+
+
 def run_mapping(
     *,
     site_id: str = DEFAULT_SITE,
@@ -1249,6 +1299,11 @@ def main(argv: list[str] | None = None) -> int:
         help="마켓별 엑셀 지정 (예: AUC20=D:\\옥션.xlsx)",
     )
     parser.add_argument("--markets", default="", help="대상 마켓 (쉼표, 기본=전체)")
+    parser.add_argument(
+        "--list-rows",
+        action="store_true",
+        help="매핑 없이 행 번호·ftid·필터명만 확인 ('몇 번째 행인지' 검증용)",
+    )
     parser.add_argument(
         "--variant",
         action="append",

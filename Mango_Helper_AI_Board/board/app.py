@@ -1531,6 +1531,16 @@ class BoardApp(tk.Tk):
         actions.pack(fill="x", pady=8)
         tk.Button(
             actions,
+            text="행 목록 확인",
+            command=self._check_p5m_rows,
+            bg="#0f766e",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left", padx=(0, 6))
+        tk.Button(
+            actions,
             text="매핑 시작",
             command=self._run_p5_101,
             bg="#2563eb",
@@ -1586,6 +1596,63 @@ class BoardApp(tk.Tk):
         if missing:
             text += f"   (없음: {' · '.join(missing)})"
         self.lbl_p5m_excels.configure(text=text, fg="#15803d" if not missing else "#b45309")
+
+    def _check_p5m_rows(self) -> None:
+        """매핑 없이 행 번호·ftid·필터명만 확인 ('몇 번째 행인지' 검증)."""
+        if self._p5_101_proc and self._p5_101_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
+            return
+        script = ROOT / "P5_101_카테고리매핑_필터세부설정" / "map_categories.py"
+        if not script.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{script}")
+            return
+
+        site = self.var_p5m_site.get().strip() or p5_mapping.DEFAULT_SITE
+        row_from = self.var_p5m_from.get().strip() or str(p5_mapping.DEFAULT_ROW_FROM)
+        row_to = self.var_p5m_to.get().strip() or str(p5_mapping.DEFAULT_ROW_TO)
+        args = [
+            sys.executable,
+            str(script),
+            "--list-rows",
+            "--site-id",
+            site,
+            "--row-from",
+            row_from,
+            "--row-to",
+            row_to,
+        ]
+        url = self.var_p5m_url.get().strip()
+        if url:
+            args.extend(["--list-url", url])
+
+        self.p5_101_log.delete("1.0", "end")
+        self.p5_101_status.configure(text="행 목록 확인 중…", fg="#0f766e")
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        try:
+            self._p5_101_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P5_101_카테고리매핑_필터세부설정"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p5_101_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p5_101_proc, args=(self._p5_101_proc,), daemon=True
+        ).start()
 
     def _p5_101_stop_flag(self) -> Path:
         return ROOT / "P5_101_카테고리매핑_필터세부설정" / ".map_stop"

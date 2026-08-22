@@ -790,3 +790,33 @@ def test_map_one_market_blocks_opposite_gender(monkeypatch):
     )
     assert "남성" not in item.category
     assert any("반대 성별" in l for l in logs)
+
+
+# ── 몇 번째 행인지 확인 (요건 2026-08-22 16:50) ────────────────────
+
+
+def test_format_row_list_numbers_from_one():
+    rows = [
+        mc.RowInfo(index=0, ftid="720", filter_name="아름트리-무신사-남성-모자-캡"),
+        mc.RowInfo(index=1, ftid="782", filter_name="아름트리-무신사-여성-신발-샌들/슬리퍼"),
+    ]
+    lines = mc.format_row_list(rows)
+    assert lines[0].startswith("    1행: ftid=720")
+    assert "782" in lines[1] and "샌들/슬리퍼" in lines[1]
+
+
+def test_format_row_list_marks_selected_range():
+    rows = [mc.RowInfo(index=i, ftid=str(700 + i), filter_name=f"f{i}") for i in range(15)]
+    lines = mc.format_row_list(rows, row_from=11, row_to=11)
+    assert lines[10].startswith("★ 11행")
+    assert not lines[9].startswith("★")   # 범위 밖은 표시 없음
+    assert "10행" in lines[9]
+
+
+def test_screenshot_row_11_is_ftid_782():
+    """스크린샷: attr-uid=782, 필터=아름트리-무신사-여성-신발-샌들/슬리퍼 가 11행."""
+    rows = [
+        mc.RowInfo(index=i, ftid=str(770 + i), filter_name=f"f{i}") for i in range(10)
+    ] + [mc.RowInfo(index=10, ftid="782", filter_name="아름트리-무신사-여성-신발-샌들/슬리퍼")]
+    lines = mc.format_row_list(rows, row_from=11, row_to=11)
+    assert "★ 11행: ftid=782" in lines[10]
