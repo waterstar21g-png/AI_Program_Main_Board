@@ -38,6 +38,9 @@ p2_count = _load_py_module("p2_update_product_count", "P2_필터단위_상품수
 p3_option = _load_py_module(
     "p3_update_collect_option", "P3_필터단위_수집조건수정", "update_collect_option.py"
 )
+p5_category = _load_py_module(
+    "p5_extract_categories", "P5_카테고리_엑셀추출", "extract_categories.py"
+)
 p3_fitcl = _load_py_module("p3_fitcl_detail", "P3_핏클상세페이지", "fitcl_detail.py")
 
 from library import (  # noqa: E402
@@ -105,6 +108,7 @@ class BoardApp(tk.Tk):
         self._p3_proc: subprocess.Popen | None = None
         self._p3_option_proc: subprocess.Popen | None = None
         self._p3_option_reload_busy = False
+        self._p5_proc: subprocess.Popen | None = None
         self._p3_fitcl_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
         self._merge_update_busy = False
@@ -197,6 +201,16 @@ class BoardApp(tk.Tk):
         )
         self.btn_p3_option.pack(fill="x", padx=6, pady=6)
 
+        self.btn_p5 = tk.Button(
+            side,
+            text="P5_카테고리\n엑셀추출",
+            command=lambda: self._show("p5"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p5.pack(fill="x", padx=6, pady=6)
+
         self.btn_p3_fitcl = tk.Button(
             side,
             text="P3_핏클\n상세페이지",
@@ -249,12 +263,14 @@ class BoardApp(tk.Tk):
         self.frame_p2 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3_option = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self.frame_p5 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3_fitcl = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self._build_p1(self.frame_p1)
         self._build_p2_count(self.frame_p2_count)
         self._build_p2(self.frame_p2)
         self._build_p3(self.frame_p3)
         self._build_p3_option(self.frame_p3_option)
+        self._build_p5(self.frame_p5)
         self._build_p3_fitcl(self.frame_p3_fitcl)
 
     def _show(self, which: str) -> None:
@@ -263,12 +279,14 @@ class BoardApp(tk.Tk):
         self.frame_p2.pack_forget()
         self.frame_p3.pack_forget()
         self.frame_p3_option.pack_forget()
+        self.frame_p5.pack_forget()
         self.frame_p3_fitcl.pack_forget()
         self.btn_p1.configure(bg="#ececec")
         self.btn_p2_count.configure(bg="#ececec")
         self.btn_p2.configure(bg="#ececec")
         self.btn_p3.configure(bg="#ececec")
         self.btn_p3_option.configure(bg="#ececec")
+        self.btn_p5.configure(bg="#ececec")
         self.btn_p3_fitcl.configure(bg="#ececec")
         if which == "p1":
             self.frame_p1.pack(fill="both", expand=True)
@@ -282,6 +300,9 @@ class BoardApp(tk.Tk):
         elif which == "p3_option":
             self.frame_p3_option.pack(fill="both", expand=True)
             self.btn_p3_option.configure(bg="#dbeafe")
+        elif which == "p5":
+            self.frame_p5.pack(fill="both", expand=True)
+            self.btn_p5.configure(bg="#dbeafe")
         elif which == "p3_fitcl":
             self.frame_p3_fitcl.pack(fill="both", expand=True)
             self.btn_p3_fitcl.configure(bg="#dbeafe")
@@ -1127,6 +1148,261 @@ class BoardApp(tk.Tk):
                 lambda: self.p3_option_status.configure(
                     text=f"종료 (exit={code})", fg="#b91c1c"
                 ),
+            )
+
+    # ── P5_카테고리_엑셀추출 ───────────────────────────────────────
+    def _build_p5(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P5_카테고리_엑셀추출 — 마켓 선택 → 전체카테고리 → 1~6단계 분류표 엑셀",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        form = tk.LabelFrame(parent, text="입력", bg="#ffffff", padx=8, pady=6)
+        form.pack(fill="x")
+
+        r0 = tk.Frame(form, bg="#ffffff")
+        r0.pack(fill="x", pady=4)
+        tk.Label(r0, text="마켓", width=10, anchor="nw", bg="#ffffff").pack(
+            side="left", anchor="n"
+        )
+        wrap = tk.Frame(r0, bg="#ffffff")
+        wrap.pack(side="left", fill="both", expand=True)
+        self.p5_market_list = tk.Listbox(
+            wrap,
+            height=5,
+            exportselection=False,
+            font=("Malgun Gothic", 9),
+            activestyle="dotbox",
+        )
+        sb = tk.Scrollbar(wrap, orient="vertical", command=self.p5_market_list.yview)
+        self.p5_market_list.configure(yscrollcommand=sb.set)
+        self.p5_market_list.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self._p5_market_codes = list(p5_category.MARKETS.keys())
+        for code in self._p5_market_codes:
+            self.p5_market_list.insert("end", f"{p5_category.MARKETS[code]}  ({code})")
+        self.p5_market_list.selection_set(0)
+
+        r1 = tk.Frame(form, bg="#ffffff")
+        r1.pack(fill="x", pady=4)
+        tk.Label(r1, text="접근 URL", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5_url = tk.StringVar(value=p5_category.DEFAULT_URL)
+        tk.Entry(r1, textvariable=self.var_p5_url).pack(side="left", fill="x", expand=True)
+
+        r2 = tk.Frame(form, bg="#ffffff")
+        r2.pack(fill="x", pady=4)
+        tk.Label(r2, text="저장 경로", width=10, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5_out = tk.StringVar(value="")
+        tk.Entry(r2, textvariable=self.var_p5_out).pack(side="left", fill="x", expand=True)
+        tk.Button(r2, text="…", width=3, command=self._pick_p5_out).pack(side="left", padx=4)
+        tk.Label(
+            form,
+            text="(비우면 P5_카테고리_엑셀추출\\output 폴더에 자동 파일명으로 저장)",
+            bg="#ffffff",
+            fg="#64748b",
+            font=("Malgun Gothic", 8),
+            anchor="w",
+        ).pack(fill="x")
+
+        actions = tk.Frame(parent, bg="#f1f5f9")
+        actions.pack(fill="x", pady=8)
+        tk.Button(
+            actions,
+            text="추출 시작",
+            command=self._run_p5,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="작업중단",
+            command=self._stop_p5,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left", padx=6)
+        tk.Button(
+            actions,
+            text="엑셀 열기",
+            command=self._open_p5_excel,
+            bg="#0f766e",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+
+        log_frame = tk.LabelFrame(parent, text="실행 로그", bg="#ffffff", padx=6, pady=4)
+        log_frame.pack(fill="both", expand=True)
+        self.p5_log = tk.Text(
+            log_frame,
+            height=16,
+            font=("Consolas", 9),
+            wrap="word",
+            bg="#0f172a",
+            fg="#e2e8f0",
+        )
+        p5_sb = tk.Scrollbar(log_frame, command=self.p5_log.yview)
+        self.p5_log.configure(yscrollcommand=p5_sb.set)
+        self.p5_log.pack(side="left", fill="both", expand=True)
+        p5_sb.pack(side="right", fill="y")
+
+        self.p5_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
+        self.p5_status.pack(fill="x", pady=4)
+        self._p5_last_excel = ""
+
+    def _selected_p5_market(self) -> str:
+        sel = self.p5_market_list.curselection()
+        if not sel:
+            return p5_category.DEFAULT_MARKET
+        return self._p5_market_codes[sel[0]]
+
+    def _pick_p5_out(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="카테고리분류표 저장",
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+        )
+        if path:
+            self.var_p5_out.set(path)
+
+    def _p5_stop_flag(self) -> Path:
+        return ROOT / "P5_카테고리_엑셀추출" / ".p5_stop"
+
+    def _append_p5_log(self, line: str) -> None:
+        text = (line or "").strip()
+        if text.startswith("##MAIN##"):
+            text = text[8:]
+        self.p5_log.insert("end", text + "\n")
+        self.p5_log.see("end")
+        if text.lower().endswith(".xlsx"):
+            self._p5_last_excel = text
+
+    def _run_p5(self) -> None:
+        if self._p5_proc and self._p5_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
+            return
+        script = ROOT / "P5_카테고리_엑셀추출" / "extract_categories.py"
+        if not script.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{script}")
+            return
+
+        try:
+            self._p5_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+        market = self._selected_p5_market()
+        args = [sys.executable, str(script), "--market", market]
+        url = self.var_p5_url.get().strip()
+        if url:
+            args.extend(["--url", url])
+        out = self.var_p5_out.get().strip()
+        if out:
+            args.extend(["--out", out])
+
+        self.p5_log.delete("1.0", "end")
+        self.p5_status.configure(
+            text=f"추출 시작 — {p5_category.MARKETS.get(market, market)}", fg="#15803d"
+        )
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        try:
+            self._p5_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P5_카테고리_엑셀추출"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p5_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p5_proc, args=(self._p5_proc,), daemon=True
+        ).start()
+
+    def _stop_p5(self) -> None:
+        proc = self._p5_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 작업이 없습니다.")
+            return
+        try:
+            self._p5_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p5_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
+            return
+        self.p5_status.configure(text="작업중단 요청 중…", fg="#b45309")
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    def _open_p5_excel(self) -> None:
+        target = self._p5_last_excel or self.var_p5_out.get().strip()
+        if not target:
+            out_dir = ROOT / "P5_카테고리_엑셀추출" / "output"
+            files = sorted(out_dir.glob("*.xlsx"), key=lambda p: p.stat().st_mtime) if out_dir.is_dir() else []
+            if not files:
+                messagebox.showinfo("안내", "저장된 엑셀이 없습니다.")
+                return
+            target = str(files[-1])
+        try:
+            if os.name == "nt":
+                os.startfile(target)  # type: ignore[attr-defined]
+            else:
+                webbrowser.open(f"file://{target}")
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("열기 실패", str(e))
+
+    def _watch_p5_proc(self, proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stdout is not None
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self.after(0, lambda t=text: self._append_p5_log(t))
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self.after(0, lambda t=text: self._append_p5_log(t))
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p5_status.configure(text=f"로그 수신 오류: {e}", fg="#b91c1c"),
+            )
+        code = proc.wait()
+        if code == 0:
+            self.after(0, lambda: self.p5_status.configure(text="추출 완료", fg="#15803d"))
+        else:
+            self.after(
+                0,
+                lambda: self.p5_status.configure(text=f"종료 (exit={code})", fg="#b91c1c"),
             )
 
     def _build_p2(self, parent: tk.Frame) -> None:

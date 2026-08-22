@@ -95,6 +95,16 @@
       "board_tab": "p3_fitcl",
       "login": "FitCL fitcl.ai (Chrome CDP 9222)",
       "description": "모델컷 10장 + 디테일컷 5장 추출"
+    },
+    {
+      "id": "p5_category",
+      "name": "P5_카테고리_엑셀추출",
+      "folder": "P5_카테고리_엑셀추출",
+      "script": "extract_categories.py",
+      "launcher": "run.bat",
+      "board_tab": "p5",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "오픈마켓 전체카테고리 → 1~6단계 분류표 엑셀"
     }
   ]
 }
