@@ -208,10 +208,15 @@ def match_by_levels(paths: Sequence[str], parsed: ParsedFilter) -> str:
     return pick_best(hits, parsed)
 
 
-def find_category(name: str, paths: Sequence[str]) -> tuple[str, str]:
-    """최적 카테고리와 그 근거 단계를 돌려준다."""
+def find_category(
+    name: str, paths: Sequence[str], *, exclude: Sequence[str] = ()
+) -> tuple[str, str]:
+    """최적 카테고리와 그 근거 단계. `exclude` 는 이미 시도한 카테고리."""
     parsed = parse_filter_name(name)
-    paths = [p for p in paths if str(p or "").strip()]
+    skip = {normalize(e) for e in (exclude or []) if str(e or "").strip()}
+    paths = [
+        p for p in paths if str(p or "").strip() and normalize(p) not in skip
+    ]
     if not paths:
         return "", "자료 없음"
 

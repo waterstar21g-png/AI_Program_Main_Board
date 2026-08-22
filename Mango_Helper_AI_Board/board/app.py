@@ -1464,6 +1464,34 @@ class BoardApp(tk.Tk):
         tk.Entry(r0, textvariable=self.var_p5m_to, width=5).pack(side="left", padx=(6, 2))
         tk.Label(r0, text="까지", bg="#ffffff").pack(side="left")
 
+        rv = tk.Frame(form, bg="#ffffff")
+        rv.pack(fill="x", pady=3)
+        tk.Label(rv, text="11번가 구분", width=13, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5m_v11 = tk.StringVar(value=p5_mapping.BOTH)
+        for label in (*p5_mapping.MARKET_VARIANTS["11ST"], p5_mapping.BOTH):
+            tk.Radiobutton(
+                rv,
+                text=label,
+                value=label,
+                variable=self.var_p5m_v11,
+                bg="#ffffff",
+                font=("Malgun Gothic", 9),
+            ).pack(side="left", padx=(0, 8))
+
+        rv2 = tk.Frame(form, bg="#ffffff")
+        rv2.pack(fill="x", pady=3)
+        tk.Label(rv2, text="롯데ON 구분", width=13, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5m_vlt = tk.StringVar(value=p5_mapping.BOTH)
+        for label in (*p5_mapping.MARKET_VARIANTS["LTON"], p5_mapping.BOTH):
+            tk.Radiobutton(
+                rv2,
+                text=label,
+                value=label,
+                variable=self.var_p5m_vlt,
+                bg="#ffffff",
+                font=("Malgun Gothic", 9),
+            ).pack(side="left", padx=(0, 8))
+
         r1 = tk.Frame(form, bg="#ffffff")
         r1.pack(fill="x", pady=3)
         tk.Label(r1, text="카테고리 엑셀 폴더", width=13, anchor="w", bg="#ffffff").pack(side="left")
@@ -1604,6 +1632,10 @@ class BoardApp(tk.Tk):
             str(start),
             "--row-to",
             str(end),
+            "--variant",
+            f"11ST={self.var_p5m_v11.get()}",
+            "--variant",
+            f"LTON={self.var_p5m_vlt.get()}",
         ]
         url = self.var_p5m_url.get().strip()
         if url:

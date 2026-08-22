@@ -93,6 +93,20 @@ MIN_SCORE = 0.34  # 이 점수 미만이면 매칭 실패로 본다
 ALLOWED_SITES = ("musinsa.com",)
 DEFAULT_SITE = "MUSINSA.com"
 
+# ★요건: 마켓별 카테고리 구분 라디오 (스크린샷 3·4)
+#   <input type="radio" name="openmarket_seller_type2_<코드>"
+#     onclick="change_category_list(...,'<코드>', this);"><span>해외직구 카테고리</span>
+VARIANT_RADIO_NAME = "openmarket_seller_type2_{market}"
+MARKET_VARIANTS: dict[str, tuple[str, ...]] = {
+    "11ST": ("해외카테고리", "국내카테고리"),
+    "LTON": ("해외직구 카테고리", "일반카테고리"),
+}
+BOTH = "둘다"  # 두 구분 모두 매핑
+
+# 상품고시정보 팝업 — show_hide('#mapping_notify_<코드>')
+NOTIFY_ID = "mapping_notify_{market}"
+NOTIFY_RETRIES = 3  # 상품고시정보 팝업이 계속 뜨면 다른 카테고리로 재시도하는 횟수
+
 # ★요건: 작업 행 범위 — <작업 시작 부터> ~ <작업 종료 까지> (1부터, 양끝 포함)
 DEFAULT_ROW_FROM = 1
 DEFAULT_ROW_TO = 5
@@ -328,13 +342,15 @@ def best_category(
 
 
 def best_category_with_step(
-    filter_name: str, categories: Sequence[str]
+    filter_name: str, categories: Sequence[str], *, exclude: Sequence[str] = ()
 ) -> tuple[str, str]:
-    """최적 카테고리 + 어느 단계에서 찾았는지."""
-    cat, step = matching.find_category(filter_name, list(categories))
+    """최적 카테고리 + 어느 단계에서 찾았는지 (exclude 는 이미 시도한 것)."""
+    cat, step = matching.find_category(filter_name, list(categories), exclude=exclude)
     if cat:
         return cat, step
-    cat, score = similarity_best(filter_name, categories)
+    skip = {matching.normalize(e) for e in exclude or []}
+    rest = [c for c in categories if matching.normalize(c) not in skip]
+    cat, score = similarity_best(filter_name, rest)
     return cat, (f"유사도 {score:.2f}" if cat else "미검출")
 
 
@@ -574,6 +590,100 @@ def click_ai_mapping(popup, *, progress: ProgressFn | None = None) -> bool:
         return False
 
 
+def variants_for(market: str, choice: str = "") -> list[str]:
+    """이 마켓에서 매핑할 구분 목록 (구분 없는 마켓은 [''])."""
+    options = MARKET_VARIANTS.get(market)
+    if not options:
+        return [""]
+    pick = str(choice or "").strip()
+    if not pick or pick == BOTH:
+        return list(options)
+    for opt in options:
+        if normalize_site(opt) == normalize_site(pick):
+            return [opt]
+    return list(options)
+
+
+def variant_radio_selectors(market: str, variant: str) -> tuple[str, ...]:
+    name = VARIANT_RADIO_NAME.format(market=market)
+    return (
+        f'xpath=//label[.//span[contains(normalize-space(.),"{variant}")]]'
+        f'//input[@type="radio" and @name="{name}"]',
+        f'xpath=//tr[@id="mapping_category_{market}"]'
+        f'//label[.//span[contains(normalize-space(.),"{variant}")]]//input[@type="radio"]',
+    )
+
+
+def select_variant(popup, market: str, variant: str, *, progress: ProgressFn | None = None) -> bool:
+    """구분 라디오를 **클릭**해 목록을 바꾼다 (이미 체크돼 있어도 클릭)."""
+    if not variant:
+        return True
+    loc = _first(popup, variant_radio_selectors(market, variant))
+    if loc is None:
+        _log(progress, f"  경고: 구분 라디오 미검출 · {variant}")
+        return False
+    try:
+        loc.click(timeout=T_CLICK, force=True)
+    except Exception:
+        try:
+            loc.check(timeout=T_CLICK)
+        except Exception:
+            return False
+    _log(progress, f"  구분 선택: {variant}")
+    try:
+        popup.wait_for_timeout(400)
+    except Exception:
+        time.sleep(0.4)
+    return True
+
+
+NOTIFY_VISIBLE_JS = """
+(id) => {
+  const el = document.getElementById(id);
+  if (!el) return false;
+  const st = window.getComputedStyle(el);
+  if (st.display === 'none' || st.visibility === 'hidden') return false;
+  return (el.innerText || '').trim().length > 0;
+}
+"""
+
+
+def notify_open(popup, market: str) -> bool:
+    """상품고시정보 팝업이 떠 있는가."""
+    try:
+        return bool(popup.evaluate(NOTIFY_VISIBLE_JS, NOTIFY_ID.format(market=market)))
+    except Exception:
+        return False
+
+
+def close_notify(popup, market: str, *, progress: ProgressFn | None = None) -> bool:
+    """상품고시정보 팝업 닫기 — show_hide 토글 또는 닫기 버튼."""
+    notify_id = NOTIFY_ID.format(market=market)
+    loc = _first(
+        popup,
+        (
+            f"a[onclick*=\"show_hide('#{notify_id}')\"]",
+            f'xpath=//div[@id="{notify_id}"]//*[contains(normalize-space(.),"닫기")]',
+        ),
+    )
+    if loc is not None:
+        try:
+            loc.click(timeout=T_CLICK)
+            _log(progress, "  상품고시정보 팝업 닫기")
+            return True
+        except Exception:
+            pass
+    try:
+        popup.evaluate(
+            "(id) => { const el = document.getElementById(id); if (el) el.style.display = 'none'; }",
+            notify_id,
+        )
+        _log(progress, "  상품고시정보 팝업 닫기(강제)")
+        return True
+    except Exception:
+        return False
+
+
 def market_search_input(popup, market: str):
     return _first(
         popup,
@@ -708,14 +818,19 @@ def map_one_market(
     filter_name: str,
     categories: Sequence[str],
     *,
+    variant: str = "",
+    exclude: Sequence[str] = (),
     progress: ProgressFn | None = None,
 ) -> MappedItem:
-    """한 마켓 매핑 — 최적 카테고리 → 검색어 입력 → 검색 → 목록 선택."""
-    label = MARKETS.get(market, market)
+    """한 마켓(+구분) 매핑 — 최적 카테고리 → 검색어 입력 → 검색 → 목록 선택."""
+    label = MARKETS.get(market, market) + (f" · {variant}" if variant else "")
     if not categories:
         return MappedItem(market, "", 0.0, False, "엑셀 자료 없음")
 
-    category, step = best_category_with_step(filter_name, categories)
+    if variant and not select_variant(popup, market, variant, progress=progress):
+        return MappedItem(market, "", 0.0, False, f"구분({variant}) 선택 실패")
+
+    category, step = best_category_with_step(filter_name, categories, exclude=exclude)
     score = 1.0 if category else 0.0
     if not category:
         _log(progress, f"  {label}: 매칭 실패 ({step})")
@@ -753,6 +868,7 @@ def map_one_row(
     *,
     list_url: str,
     markets: Sequence[str] | None = None,
+    variant_choice: dict[str, str] | None = None,
     progress: ProgressFn | None = None,
 ) -> dict:
     """한 행 — 설정수정 팝업 → AI 매핑 → 마켓별 매핑 → 설정저장 → 닫기."""
@@ -775,12 +891,51 @@ def map_one_row(
         for market in codes:
             if stop_requested():
                 break
-            item = map_one_market(
-                popup, market, row.filter_name, excels.get(market, []), progress=progress
-            )
-            detail["items"].append(item.__dict__)
-            if item.ok:
-                click_config_save(popup, progress=progress)
+            for variant in variants_for(market, (variant_choice or {}).get(market, "")):
+                if stop_requested():
+                    break
+                tried: list[str] = []
+                item = map_one_market(
+                    popup,
+                    market,
+                    row.filter_name,
+                    excels.get(market, []),
+                    variant=variant,
+                    progress=progress,
+                )
+                if item.ok:
+                    tried.append(item.category)
+                    click_config_save(popup, progress=progress)
+
+                    # 상품고시정보 팝업이 뜨면 닫고 다른 카테고리로 다시 매핑
+                    for _ in range(NOTIFY_RETRIES):
+                        if not notify_open(popup, market):
+                            break
+                        _log(
+                            progress,
+                            f"  {MARKETS.get(market, market)}: 상품고시정보 팝업 —"
+                            " 다른 카테고리로 재매핑",
+                            major=True,
+                        )
+                        close_notify(popup, market, progress=progress)
+                        item = map_one_market(
+                            popup,
+                            market,
+                            row.filter_name,
+                            excels.get(market, []),
+                            variant=variant,
+                            exclude=tried,
+                            progress=progress,
+                        )
+                        if not item.ok:
+                            break
+                        tried.append(item.category)
+                        click_config_save(popup, progress=progress)
+
+                item.reason = item.reason or ""
+                record = dict(item.__dict__)
+                record["variant"] = variant
+                detail["items"].append(record)
                 time.sleep(GAP)
         click_config_save(popup, progress=progress)
     finally:
@@ -795,6 +950,7 @@ def run_mapping(
     excel_paths: dict[str, str] | None = None,
     list_url: str = "",
     markets: Sequence[str] | None = None,
+    variant_choice: dict[str, str] | None = None,
     row_from: int | str = DEFAULT_ROW_FROM,
     row_to: int | str = DEFAULT_ROW_TO,
     progress: ProgressFn | None = None,
@@ -877,6 +1033,7 @@ def run_mapping(
                     data,
                     list_url=url,
                     markets=markets,
+                    variant_choice=variant_choice,
                     progress=progress,
                 )
                 result.details.append(detail)
@@ -947,6 +1104,13 @@ def main(argv: list[str] | None = None) -> int:
         help="마켓별 엑셀 지정 (예: AUC20=D:\\옥션.xlsx)",
     )
     parser.add_argument("--markets", default="", help="대상 마켓 (쉼표, 기본=전체)")
+    parser.add_argument(
+        "--variant",
+        action="append",
+        default=[],
+        metavar="코드=구분",
+        help="마켓 구분 선택 (예: 11ST=국내카테고리 · LTON=둘다 · 기본=둘다)",
+    )
     parser.add_argument("--dry-run", default="", help="매칭만 확인할 필터이름 (쉼표)")
     args = parser.parse_args(argv)
 
@@ -965,11 +1129,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     markets = [m.strip().upper() for m in args.markets.split(",") if m.strip()] or None
+    variant_choice: dict[str, str] = {}
+    for item in args.variant:
+        code, _, value = str(item).partition("=")
+        if code and value:
+            variant_choice[code.strip().upper()] = value.strip()
     result = run_mapping(
         site_id=args.site_id,
         excels=excels,
         list_url=args.list_url,
         markets=markets,
+        variant_choice=variant_choice,
         row_from=args.row_from,
         row_to=args.row_to,
     )

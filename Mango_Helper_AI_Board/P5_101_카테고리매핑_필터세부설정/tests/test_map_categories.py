@@ -522,3 +522,126 @@ def test_diagnose_list_logs_counts():
     logs: list[str] = []
     mc.diagnose_list(page, progress=logs.append)
     assert any("설정수정링크" in l for l in logs)
+
+
+# ── 구분 라디오 · 상품고시정보 팝업 (요건 2026-08-22 15:20) ────────
+
+
+def test_market_variants_defined():
+    assert mc.MARKET_VARIANTS["11ST"] == ("해외카테고리", "국내카테고리")
+    assert mc.MARKET_VARIANTS["LTON"] == ("해외직구 카테고리", "일반카테고리")
+
+
+def test_variants_for_choice():
+    assert mc.variants_for("11ST") == ["해외카테고리", "국내카테고리"]        # 기본 둘 다
+    assert mc.variants_for("11ST", "국내카테고리") == ["국내카테고리"]
+    assert mc.variants_for("LTON", mc.BOTH) == ["해외직구 카테고리", "일반카테고리"]
+    assert mc.variants_for("AUC20") == [""]                                   # 구분 없음
+    assert mc.variants_for("11ST", "없는값") == ["해외카테고리", "국내카테고리"]
+
+
+def test_variant_radio_selector_matches_screenshot():
+    joined = " ".join(mc.variant_radio_selectors("LTON", "해외직구 카테고리"))
+    assert "openmarket_seller_type2_LTON" in joined
+    assert "해외직구 카테고리" in joined
+    assert "mapping_category_LTON" in joined
+
+
+class VariantPopup(FakePopup):
+    """구분 라디오와 상품고시정보 팝업이 있는 화면."""
+
+    def __init__(self, options, notify_times=0):
+        super().__init__(options)
+        self.notify_times = notify_times
+        self.checked: list[str] = []
+        self.closed = 0
+
+    def locator(self, selector):
+        for variant in ("해외카테고리", "국내카테고리", "해외직구 카테고리", "일반카테고리"):
+            if variant in selector and "radio" in selector:
+                return _VariantRadio(self, variant)
+        if "mapping_notify" in selector:
+            return _NotifyClose(self)
+        return super().locator(selector)
+
+    def evaluate(self, script, *args):
+        if "innerText" in script:            # notify_open
+            if self.notify_times > 0:
+                self.notify_times -= 1
+                return True
+            return False
+        if "style.display" in script:        # close_notify 강제 숨김
+            return None
+        return super().evaluate(script, *args)
+
+    def wait_for_timeout(self, ms):
+        return None
+
+
+class _VariantRadio:
+    def __init__(self, popup, variant):
+        self.popup = popup
+        self.variant = variant
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def click(self, timeout=None, force=False):
+        self.popup.checked.append(self.variant)
+
+    def check(self, timeout=None):
+        self.popup.checked.append(self.variant)
+
+
+class _NotifyClose:
+    def __init__(self, popup):
+        self.popup = popup
+
+    @property
+    def first(self):
+        return self
+
+    def count(self):
+        return 1
+
+    def click(self, timeout=None):
+        self.popup.closed += 1
+
+
+def test_map_one_market_selects_variant_first():
+    popup = VariantPopup(["패션의류잡화 > 남성 > 모자 > 버킷햇"])
+    item = mc.map_one_market(
+        popup,
+        "LTON",
+        "아름트리-무신사-남성-모자-버킷햇",
+        ["패션의류잡화 > 남성 > 모자 > 버킷햇"],
+        variant="해외직구 카테고리",
+    )
+    assert popup.checked == ["해외직구 카테고리"]
+    assert item.ok is True
+
+
+def test_notify_open_and_close():
+    popup = VariantPopup([], notify_times=1)
+    assert mc.notify_open(popup, "LTON") is True     # 한 번 떠 있음
+    assert mc.notify_open(popup, "LTON") is False    # 그 뒤 닫힘
+    assert mc.close_notify(popup, "LTON") is True
+    assert popup.closed == 1
+
+
+def test_exclude_picks_next_category():
+    """상품고시정보 팝업 후 재매핑 — 직전 카테고리는 제외하고 고른다."""
+    cats = [
+        "패션의류잡화 > 남성 > 모자 > 버킷햇",
+        "패션의류잡화 > 남성 > 모자 > 캡모자",
+    ]
+    first, _ = mc.best_category_with_step("아름트리-무신사-남성-모자-버킷햇", cats)
+    second, _ = mc.best_category_with_step(
+        "아름트리-무신사-남성-모자-버킷햇", cats, exclude=[first]
+    )
+    assert first == "패션의류잡화 > 남성 > 모자 > 버킷햇"
+    assert second == "패션의류잡화 > 남성 > 모자 > 캡모자"
