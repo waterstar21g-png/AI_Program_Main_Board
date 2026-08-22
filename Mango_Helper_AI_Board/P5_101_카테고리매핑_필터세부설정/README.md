@@ -8,6 +8,14 @@
 https://tmg1898.cafe24.com/mall/admin/admin_group.php?pmode=filter_delete&...&ft_num=10&ft_sort=modify_asc
 ```
 
+## 적용 범위 (요건)
+
+| 항목 | 값 |
+|------|-----|
+| 수집사이트 | **musinsa.com 한정** — 다른 사이트는 검증 완료 후 개방 (선택 시 실행 거부) |
+| 작업 대상 | **[선택조건으로 검색하기] 결과 목록**의 체크된 행만 |
+| 작업 행 범위 | **[부터] ~ [까지]** (1부터, 양끝 포함 · 기본 **1 ~ 5**) |
+
 ## 초기 1회
 
 1. **상품수집사이트** 선택 — `select[name="site_id"]`
@@ -74,8 +82,9 @@ https://tmg1898.cafe24.com/mall/admin/admin_group.php?pmode=filter_delete&...&ft
 ## CLI
 
 ```powershell
-python map_categories.py --excel-dir D:\카테고리엑셀
-python map_categories.py --site-id MUSINSA.com --excel AUC20=D:\옥션.xlsx --excel 11ST=D:\11번가.xlsx
+python map_categories.py --excel-dir D:\카테고리엑셀                    # 1~5행
+python map_categories.py --excel-dir D:\카테고리엑셀 --row-from 6 --row-to 10
+python map_categories.py --site-id MUSINSA.com --excel AUC20=D:\옥션.xlsx
 python map_categories.py --markets AUC20,COUP
 python map_categories.py --excel-dir D:\카테고리엑셀 --dry-run "남성 비니,여성 캡모자"
 ```

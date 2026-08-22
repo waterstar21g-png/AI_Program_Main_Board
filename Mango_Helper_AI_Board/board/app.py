@@ -1446,15 +1446,23 @@ class BoardApp(tk.Tk):
         r0 = tk.Frame(form, bg="#ffffff")
         r0.pack(fill="x", pady=3)
         tk.Label(r0, text="상품수집사이트", width=13, anchor="w", bg="#ffffff").pack(side="left")
-        self.var_p5m_site = tk.StringVar(value="")
-        tk.Entry(r0, textvariable=self.var_p5m_site, width=28).pack(side="left")
+        self.var_p5m_site = tk.StringVar(value=p5_mapping.DEFAULT_SITE)
+        tk.Entry(r0, textvariable=self.var_p5m_site, width=20).pack(side="left")
         tk.Label(
             r0,
-            text="(비우면 현재 선택 유지 · 예: MUSINSA.com)",
+            text=f"※ 현재는 {p5_mapping.ALLOWED_SITES[0]} 만 수행 (검증 후 확대)",
             bg="#ffffff",
-            fg="#64748b",
+            fg="#b45309",
             font=("Malgun Gothic", 8),
         ).pack(side="left", padx=6)
+
+        tk.Label(r0, text="작업 행 범위", width=11, anchor="e", bg="#ffffff").pack(side="left")
+        self.var_p5m_from = tk.StringVar(value=str(p5_mapping.DEFAULT_ROW_FROM))
+        tk.Entry(r0, textvariable=self.var_p5m_from, width=5).pack(side="left", padx=(4, 2))
+        tk.Label(r0, text="부터", bg="#ffffff").pack(side="left")
+        self.var_p5m_to = tk.StringVar(value=str(p5_mapping.DEFAULT_ROW_TO))
+        tk.Entry(r0, textvariable=self.var_p5m_to, width=5).pack(side="left", padx=(6, 2))
+        tk.Label(r0, text="까지", bg="#ffffff").pack(side="left")
 
         r1 = tk.Frame(form, bg="#ffffff")
         r1.pack(fill="x", pady=3)
@@ -1569,16 +1577,42 @@ class BoardApp(tk.Tk):
         except Exception:
             pass
 
-        args = [sys.executable, str(script), "--excel-dir", folder]
-        site = self.var_p5m_site.get().strip()
-        if site:
-            args.extend(["--site-id", site])
+        site = self.var_p5m_site.get().strip() or p5_mapping.DEFAULT_SITE
+        if not p5_mapping.is_allowed_site(site):
+            messagebox.showwarning(
+                "수집사이트 제한",
+                f"현재는 {p5_mapping.ALLOWED_SITES[0]} 만 수행합니다.\n"
+                f"입력값: {site}\n\n검증이 끝나면 다른 사이트도 열겠습니다.",
+            )
+            return
+
+        row_from = self.var_p5m_from.get().strip()
+        row_to = self.var_p5m_to.get().strip()
+        if not row_from.isdigit() or not row_to.isdigit():
+            messagebox.showinfo("안내", "작업 행 범위는 1 이상의 숫자여야 합니다.")
+            return
+        start, end = p5_mapping.row_range(row_from, row_to)
+
+        args = [
+            sys.executable,
+            str(script),
+            "--excel-dir",
+            folder,
+            "--site-id",
+            site,
+            "--row-from",
+            str(start),
+            "--row-to",
+            str(end),
+        ]
         url = self.var_p5m_url.get().strip()
         if url:
             args.extend(["--list-url", url])
 
         self.p5_101_log.delete("1.0", "end")
-        self.p5_101_status.configure(text="매핑 시작", fg="#15803d")
+        self.p5_101_status.configure(
+            text=f"매핑 시작 — {site} · {start}~{end}행", fg="#15803d"
+        )
 
         creationflags = 0
         if os.name == "nt":

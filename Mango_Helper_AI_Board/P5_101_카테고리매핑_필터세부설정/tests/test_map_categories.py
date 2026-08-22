@@ -313,3 +313,137 @@ def test_read_result_options_asks_both_ids_and_prefers_visible():
     assert select_id  # 사용한 select id 반환
     js = mc.RESULT_OPTIONS_JS
     assert "getComputedStyle" in js and "offsetParent" in js
+
+
+# ── 작업 한정·범위 (요건 2026-08-22 14:46) ────────────────────────
+
+
+def test_only_musinsa_is_allowed():
+    assert mc.ALLOWED_SITES == ("musinsa.com",)
+    assert mc.DEFAULT_SITE == "MUSINSA.com"
+    assert mc.is_allowed_site("MUSINSA.com") is True
+    assert mc.is_allowed_site("www.musinsa.com") is True
+    assert mc.is_allowed_site("ABCmart.a-rt.com") is False
+    assert mc.is_allowed_site("") is False
+
+
+def test_run_rejects_other_sites():
+    logs: list[str] = []
+    result = mc.run_mapping(
+        site_id="Zara.com/de",
+        excels={"AUC20": AUCTION},
+        progress=logs.append,
+    )
+    assert result.ok is False
+    assert "musinsa.com" in result.errors[0]
+    assert any("제한" in l for l in logs)
+
+
+def test_row_range_applies(monkeypatch):
+    """체크된 행이 많아도 [부터]~[까지] 범위만 처리한다."""
+    seen: list[str] = []
+    rows = [mc.RowInfo(index=i, ftid=str(700 + i), filter_name=f"f{i}") for i in range(10)]
+
+    monkeypatch.setattr(mc, "list_rows", lambda page: rows)
+    monkeypatch.setattr(mc, "select_site", lambda *a, **k: True)
+    monkeypatch.setattr(mc, "click_search_filter", lambda *a, **k: True)
+
+    def fake_map_one_row(page, row, excels, **kwargs):
+        seen.append(row.ftid)
+        return {"ftid": row.ftid, "filter": row.filter_name, "items": [{"ok": True}]}
+
+    monkeypatch.setattr(mc, "map_one_row", fake_map_one_row)
+
+    class FakeP2:
+        @staticmethod
+        def connect_browser(pw):
+            return None, FakeBrowserPage()
+
+    class FakeBrowserPage:
+        def goto(self, *a, **k):
+            return None
+
+    class FakePW:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setitem(sys.modules, "collect", FakeP2)
+    monkeypatch.setitem(
+        sys.modules,
+        "playwright.sync_api",
+        type("M", (), {"sync_playwright": lambda: FakePW()}),
+    )
+
+    result = mc.run_mapping(
+        site_id="MUSINSA.com", excels={"AUC20": AUCTION}, row_from=2, row_to=4
+    )
+    assert seen == ["701", "702", "703"]   # 2~4행 (1부터, 양끝 포함)
+    assert result.rows == 3
+
+
+def test_invalid_row_range_falls_back_to_default(monkeypatch):
+    monkeypatch.setattr(mc, "list_rows", lambda page: [])
+    monkeypatch.setattr(mc, "select_site", lambda *a, **k: True)
+    monkeypatch.setattr(mc, "click_search_filter", lambda *a, **k: True)
+
+    class FakeP2:
+        @staticmethod
+        def connect_browser(pw):
+            return None, type("P", (), {"goto": lambda self, *a, **k: None})()
+
+    class FakePW:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setitem(sys.modules, "collect", FakeP2)
+    monkeypatch.setitem(
+        sys.modules,
+        "playwright.sync_api",
+        type("M", (), {"sync_playwright": lambda: FakePW()}),
+    )
+
+    result = mc.run_mapping(
+        site_id="MUSINSA.com", excels={"AUC20": AUCTION}, row_from=0, row_to=-2
+    )
+    assert "체크된 행이 없습니다." in result.errors[0]  # 기본값(1~5)으로 진행하다 행 없음
+
+
+# ── 작업 범위 · 수집사이트 제한 (요건 2026-08-22 14:46/14:49) ─────
+
+
+def test_site_restricted_to_musinsa():
+    assert mc.ALLOWED_SITES == ("musinsa.com",)
+    assert mc.DEFAULT_SITE == "MUSINSA.com"
+    assert mc.is_allowed_site("MUSINSA.com") is True
+    assert mc.is_allowed_site("musinsa.com") is True
+    assert mc.is_allowed_site("ABCmart.a-rt.com") is False
+    assert mc.is_allowed_site("") is False
+
+
+def test_run_mapping_blocks_other_sites():
+    result = mc.run_mapping(site_id="ABCmart.a-rt.com", excels={"AUC20": ["A > B"]})
+    assert result.ok is False
+    assert "musinsa.com" in result.errors[0]
+
+
+def test_row_range_defaults_and_normalization():
+    assert (mc.DEFAULT_ROW_FROM, mc.DEFAULT_ROW_TO) == (1, 5)
+    assert mc.row_range() == (1, 5)
+    assert mc.row_range("3", "7") == (3, 7)
+    assert mc.row_range(9, 2) == (2, 9)      # 뒤집혀 있으면 바로잡는다
+    assert mc.row_range("", "") == (1, 5)
+    assert mc.row_range(0, -3) == (1, 5)
+
+
+def test_slice_rows_is_inclusive_and_one_based():
+    rows = list("ABCDEFG")
+    assert mc.slice_rows(rows, 1, 5) == list("ABCDE")
+    assert mc.slice_rows(rows, 2, 4) == list("BCD")
+    assert mc.slice_rows(rows, 6, 99) == list("FG")
+    assert mc.slice_rows(rows, 10, 12) == []

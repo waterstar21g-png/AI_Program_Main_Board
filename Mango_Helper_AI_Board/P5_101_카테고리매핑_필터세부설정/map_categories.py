@@ -89,6 +89,14 @@ GAP = 0.15
 
 MIN_SCORE = 0.34  # 이 점수 미만이면 매칭 실패로 본다
 
+# ★요건(2026-08-22): 검증 전까지 무신사에 한해 수행
+ALLOWED_SITES = ("musinsa.com",)
+DEFAULT_SITE = "MUSINSA.com"
+
+# ★요건: 작업 행 범위 — <작업 시작 부터> ~ <작업 종료 까지> (1부터, 양끝 포함)
+DEFAULT_ROW_FROM = 1
+DEFAULT_ROW_TO = 5
+
 
 @dataclass
 class RowInfo:
@@ -115,6 +123,41 @@ class RunResult:
     failed: int = 0
     details: list[dict] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+
+
+def normalize_site(site: str) -> str:
+    return "".join(str(site or "").split()).lower()
+
+
+def is_allowed_site(site: str) -> bool:
+    """무신사만 허용 (다른 사이트는 검증 완료 후 개방)."""
+    s = normalize_site(site)
+    if not s:
+        return False
+    return any(allowed in s for allowed in ALLOWED_SITES)
+
+
+def row_range(row_from: int | str = DEFAULT_ROW_FROM, row_to: int | str = DEFAULT_ROW_TO) -> tuple[int, int]:
+    """작업 행 범위 정리 — 1 이상, 시작 ≤ 종료."""
+
+    def _int(value, default: int) -> int:
+        try:
+            n = int(str(value).strip())
+        except (TypeError, ValueError):
+            return default
+        return n if n > 0 else default
+
+    start = _int(row_from, DEFAULT_ROW_FROM)
+    end = _int(row_to, DEFAULT_ROW_TO)
+    if end < start:
+        start, end = end, start
+    return start, end
+
+
+def slice_rows(rows: Sequence, row_from: int | str, row_to: int | str) -> list:
+    """작업 범위에 해당하는 행만 (1부터 세고 양끝 포함)."""
+    start, end = row_range(row_from, row_to)
+    return list(rows)[start - 1 : end]
 
 
 def clear_stop_flag() -> None:
@@ -695,15 +738,27 @@ def map_one_row(
 
 def run_mapping(
     *,
-    site_id: str = "",
+    site_id: str = DEFAULT_SITE,
     excels: dict[str, list[str]] | None = None,
     excel_paths: dict[str, str] | None = None,
     list_url: str = "",
     markets: Sequence[str] | None = None,
+    row_from: int | str = DEFAULT_ROW_FROM,
+    row_to: int | str = DEFAULT_ROW_TO,
     progress: ProgressFn | None = None,
 ) -> RunResult:
     result = RunResult(ok=False)
     clear_stop_flag()
+
+    site_id = (site_id or DEFAULT_SITE).strip()
+    if not is_allowed_site(site_id):
+        result.errors.append(
+            f"수집사이트 제한: 현재는 {ALLOWED_SITES[0]} 만 수행합니다 (요청={site_id})."
+        )
+        _log(progress, result.errors[0], major=True)
+        return result
+
+    start, end = row_range(row_from, row_to)
 
     data = dict(excels or {})
     if not data and excel_paths:
@@ -733,19 +788,33 @@ def run_mapping(
                 result.errors.append("상품수집사이트 선택 실패")
             click_search_filter(page, progress=progress)
 
-            rows = [r for r in list_rows(page) if r.checked and r.ftid]
-            result.rows = len(rows)
-            if not rows:
+            # ★검색 결과 목록에 한해 수행 (선택조건으로 검색하기 이후 화면)
+            found = [r for r in list_rows(page) if r.checked and r.ftid]
+            if not found:
                 result.errors.append("체크된 행이 없습니다.")
                 _log(progress, result.errors[0], major=True)
                 return result
-            _log(progress, f"체크된 행 {len(rows)}건 — 순차 매핑", major=True)
+
+            rows = slice_rows(found, start, end)
+            result.rows = len(rows)
+            _log(
+                progress,
+                f"체크된 행 {len(found)}건 중 **{start}~{end}행** → {len(rows)}건 수행",
+                major=True,
+            )
+            if not rows:
+                result.errors.append(
+                    f"작업 범위({start}~{end})에 해당하는 행이 없습니다 (체크 {len(found)}건)."
+                )
+                _log(progress, result.errors[0], major=True)
+                return result
 
             for i, row in enumerate(rows, start=1):
                 if stop_requested():
                     _log(progress, "사용자 중단", major=True)
                     break
-                _log(progress, f"[{i}/{len(rows)}]", major=True)
+
+                _log(progress, f"[{i}/{len(rows)}] (전체 {start + i - 1}행)", major=True)
                 detail = map_one_row(
                     page,
                     row,
@@ -795,7 +864,23 @@ def run_dry(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="P5_101_카테고리매핑_필터세부설정")
-    parser.add_argument("--site-id", default="", help="상품수집사이트 (리스트박스 값/표기)")
+    parser.add_argument(
+        "--site-id",
+        default=DEFAULT_SITE,
+        help=f"상품수집사이트 (현재 {ALLOWED_SITES[0]} 만 허용)",
+    )
+    parser.add_argument(
+        "--row-from",
+        type=int,
+        default=DEFAULT_ROW_FROM,
+        help=f"작업 시작 행 (1부터, 기본 {DEFAULT_ROW_FROM})",
+    )
+    parser.add_argument(
+        "--row-to",
+        type=int,
+        default=DEFAULT_ROW_TO,
+        help=f"작업 종료 행 (포함, 기본 {DEFAULT_ROW_TO})",
+    )
     parser.add_argument("--list-url", default="", help=f"목록 URL (기본={DEFAULT_LIST_URL[:60]}…)")
     parser.add_argument("--excel-dir", default="", help="마켓별 엑셀 폴더 (파일명으로 자동 매칭)")
     parser.add_argument(
@@ -829,6 +914,8 @@ def main(argv: list[str] | None = None) -> int:
         excels=excels,
         list_url=args.list_url,
         markets=markets,
+        row_from=args.row_from,
+        row_to=args.row_to,
     )
     for e in result.errors:
         print(f"[오류] {e}", flush=True)
