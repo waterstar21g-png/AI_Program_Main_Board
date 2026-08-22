@@ -291,3 +291,29 @@ def test_default_excel_path_has_market_and_stamp():
     p = ec.default_excel_path("AUC20", datetime(2026, 8, 22, 11, 30, 0))
     assert p.name == "카테고리분류표_옥션2.0_20260822_113000.xlsx"
     assert p.parent == ec.OUTPUT_DIR
+
+
+# ── 구현 제외 마켓 (요건 고정) ────────────────────────────────────
+
+
+def test_excluded_markets_are_not_targets():
+    """LFMall · 머스트잇 · 쇼피 · 큐텐(일본) · 플레이오토(EMP) 는 대상 아님."""
+    assert set(ec.EXCLUDED_MARKETS) == {
+        "LFMALL",
+        "MUSTIT",
+        "SHOPEE",
+        "QOO10JP",
+        "PLAYAUTO",
+    }
+    for code in ec.EXCLUDED_MARKETS:
+        assert code not in ec.MARKETS
+
+
+def test_all_run_skips_excluded_markets():
+    codes = ec.markets_to_run("ALL")
+    assert codes == ["AUC20", "11ST", "GMK20", "SMART", "COUP", "LTON"]
+    assert not set(codes) & set(ec.EXCLUDED_MARKETS)
+
+
+def test_excluded_market_requested_directly_is_dropped():
+    assert ec.markets_to_run("SHOPEE") == []

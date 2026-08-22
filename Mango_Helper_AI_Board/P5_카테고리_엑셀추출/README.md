@@ -38,6 +38,12 @@ https://tmg1898.cafe24.com/mall/admin/admin_category_set.php?tm=F&ps_ftid=790
 | `LTON` | 롯데ON | `tr#mapping_category_LTON` |
 | `ALL` | **전체 마켓 일괄** | 위 6개를 순서대로 |
 
+### 구현 제외 (요건)
+
+화면에 행이 있어도 추출하지 않습니다 — **LFMall · 머스트잇 · 쇼피 ·
+큐텐(일본) · 플레이오토(EMP)**. `ALL` 에서도 제외되고, 코드로 직접 지정하면
+"구현 제외 마켓입니다" 로 끝냅니다.
+
 마켓마다 목록 select 이 `openmarket_category_search_list_<코드>` 와
 `openmarket_category_search_list2_<코드>` 두 벌 있고 보이는 쪽이 다릅니다
 (11번가·롯데ON). 둘 다 읽어 **항목이 많은 쪽**을 사용합니다.

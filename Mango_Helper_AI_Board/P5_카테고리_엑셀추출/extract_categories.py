@@ -63,6 +63,15 @@ MARKETS: dict[str, str] = {
 DEFAULT_MARKET = "AUC20"
 ALL_MARKETS = "ALL"  # 전체 마켓 일괄 추출
 
+# ★요건(2026-08-22): 구현 대상에서 제외 — 화면에 행이 있어도 추출하지 않는다
+EXCLUDED_MARKETS: dict[str, str] = {
+    "LFMALL": "LFMall",
+    "MUSTIT": "머스트잇",
+    "SHOPEE": "쇼피",
+    "QOO10JP": "큐텐(일본)",
+    "PLAYAUTO": "플레이오토(EMP)",
+}
+
 # 카테고리분류표 양식
 LEVELS = 6
 LEVEL_HEADERS = [f"{i}단계" for i in range(1, LEVELS + 1)]
@@ -296,11 +305,10 @@ def read_option_texts(page, market: str, *, timeout_ms: int | None = None) -> li
 
 
 def markets_to_run(market: str) -> list[str]:
-    """`ALL` 이면 전체 마켓, 아니면 하나."""
+    """`ALL` 이면 대상 마켓 전체, 아니면 하나. 제외 마켓은 걸러낸다."""
     code = (market or DEFAULT_MARKET).strip().upper()
-    if code == ALL_MARKETS:
-        return list(MARKETS.keys())
-    return [code]
+    codes = list(MARKETS.keys()) if code == ALL_MARKETS else [code]
+    return [c for c in codes if c not in EXCLUDED_MARKETS]
 
 
 def extract_one(page, market: str, *, progress: ProgressFn | None = None) -> list[str]:
@@ -325,6 +333,12 @@ def run_extract(
     codes = markets_to_run(market)
     result = RunResult(ok=False, market=market)
     clear_stop_flag()
+
+    if not codes:
+        label = EXCLUDED_MARKETS.get(market, market)
+        result.errors.append(f"구현 제외 마켓입니다: {label}")
+        _log(progress, result.errors[0], major=True)
+        return result
 
     try:
         import collect as p2  # noqa: WPS433
