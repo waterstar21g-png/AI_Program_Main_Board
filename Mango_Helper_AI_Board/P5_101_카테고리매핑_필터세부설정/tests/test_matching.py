@@ -284,3 +284,53 @@ def test_constrain_reports_applied_rules():
     pool, notes = mt.constrain(RULE_EXCEL, parsed)
     assert all("여성" not in p for p in pool)
     assert "성별=남성" in notes and "품목=의류" in notes
+
+
+# ── 반대 성별 절대 배제 (요건 2026-08-22 16:25) ───────────────────
+
+
+def test_female_filter_never_picks_male_category():
+    cats = [
+        "남성패션 > 모자 > 비니",
+        "남성신발 > 스니커즈",
+        "패션의류잡화 > 공용 > 모자 > 비니",
+    ]
+    cat, _ = mt.find_category("아름트리-무신사-여성-모자-비니", cats)
+    assert "남성" not in cat
+    assert cat == "패션의류잡화 > 공용 > 모자 > 비니"
+
+
+def test_male_filter_never_picks_female_category():
+    cats = ["여성패션 > 모자 > 비니", "잡화 > 모자 > 비니"]
+    cat, _ = mt.find_category("아름트리-무신사-남성-모자-비니", cats)
+    assert "여성" not in cat
+    assert cat == "잡화 > 모자 > 비니"
+
+
+def test_returns_none_rather_than_opposite_gender():
+    """반대 성별만 있으면 고르지 않는다 (절대 배제 우선)."""
+    cats = ["남성패션 > 모자 > 비니", "남성신발 > 스니커즈"]
+    cat, step = mt.find_category("아름트리-무신사-여성-모자-비니", cats)
+    assert cat == ""
+    assert "성별(여성)" in step
+
+
+def test_strip_opposite_gender_helper():
+    cats = ["남성패션 > 상의", "여성패션 > 상의", "공용 > 상의"]
+    assert mt.strip_opposite_gender(cats, "여성") == ["여성패션 > 상의", "공용 > 상의"]
+    assert mt.strip_opposite_gender(cats, "남성") == ["남성패션 > 상의", "공용 > 상의"]
+    assert mt.strip_opposite_gender(cats, "") == cats
+
+
+def test_violates_gender_helper():
+    assert mt.violates_gender("남성패션 > 모자", "아름트리-무신사-여성-모자-비니") is True
+    assert mt.violates_gender("공용 > 모자", "아름트리-무신사-여성-모자-비니") is False
+    assert mt.violates_gender("남성패션 > 모자", "아름트리-무신사-남성-모자-비니") is False
+
+
+def test_nearest_fallback_also_respects_gender():
+    """최근접 지정 단계에서도 반대 성별은 나오지 않는다."""
+    cats = ["남성패션 > 기타", "생활 > 주방 > 컵"]
+    cat, step = mt.find_category("아름트리-무신사-여성-소품-핸드워머", cats)
+    assert cat == "생활 > 주방 > 컵"      # 남성 경로는 제외
+    assert step.startswith("3) 최근접")

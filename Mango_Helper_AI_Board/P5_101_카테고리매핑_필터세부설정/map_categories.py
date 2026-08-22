@@ -881,6 +881,13 @@ def _map_once(
 
     category, step = best_category_with_step(filter_name, categories, exclude=exclude)
 
+    # ★절대규칙: 반대 성별 카테고리는 고르지 않는다
+    if category and matching.violates_gender(category, filter_name):
+        gender = matching.gender_of(filter_name)
+        safe = matching.strip_opposite_gender(categories, gender)
+        _log(progress, f"  {label}: 반대 성별 카테고리 배제 → 재선정", major=True)
+        category, step = best_category_with_step(filter_name, safe, exclude=exclude)
+
     # ★요건: 최적 카테고리는 **반드시 엑셀 목록 안의 값**이어야 한다
     if category and not matching.is_from(categories, category):
         fixed = matching.ensure_from(categories, category, filter_name)

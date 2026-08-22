@@ -385,6 +385,30 @@ def has_gender(path: str, gender: str) -> bool:
     return any(path_hit(path, w) for w in words)
 
 
+OPPOSITE = {"남성": ("여성",), "여성": ("남성",)}
+
+
+def opposite_of(gender: str) -> tuple[str, ...]:
+    return OPPOSITE.get(gender, ())
+
+
+def strip_opposite_gender(paths: Sequence[str], gender: str) -> list[str]:
+    """★절대규칙: 반대 성별 용어가 들어간 카테고리는 후보에서 제거한다.
+
+    (여성 필터면 남성패션·남성신발… 전부 제외, 남성 필터면 여성… 전부 제외)
+    """
+    others = opposite_of(gender)
+    if not others:
+        return list(paths)
+    return [p for p in paths if not any(path_hit(p, o) for o in others)]
+
+
+def violates_gender(path: str, filter_name: str) -> bool:
+    """고른 카테고리가 반대 성별 용어를 담고 있는가."""
+    gender = gender_of(filter_name)
+    return any(path_hit(path, o) for o in opposite_of(gender))
+
+
 def gender_paths(paths: Sequence[str], gender: str) -> list[str]:
     """★규칙2: 성별이 구분된 필터면 그 성별 카테고리 안에서만 고른다.
 
@@ -479,6 +503,14 @@ def find_category(
     ]
     if not all_paths:
         return "", "자료 없음"
+
+    # ★절대규칙: 반대 성별 카테고리는 어떤 경우에도 고르지 않는다
+    gender = gender_of(parsed.raw)
+    if gender:
+        allowed = strip_opposite_gender(all_paths, gender)
+        if not allowed:
+            return "", f"성별({gender}) 조건에 맞는 카테고리 없음"
+        all_paths = allowed
 
     # ★규칙 2·3·4 — 성별·품목명·의류 우선순위로 후보를 먼저 좁힌다
     paths, notes = constrain(all_paths, parsed)

@@ -769,3 +769,24 @@ def test_out_of_range_category_is_corrected(monkeypatch):
     )
     assert item.category in excel
     assert any("엑셀 범위 밖" in l for l in logs)
+
+
+def test_map_one_market_blocks_opposite_gender(monkeypatch):
+    """최적 선정이 반대 성별을 내놓으면 배제하고 다시 고른다."""
+    excel = ["남성패션 > 모자 > 비니", "여성패션 > 모자 > 비니"]
+    calls = {"n": 0}
+
+    def fake_best(name, cats, *, exclude=()):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return "남성패션 > 모자 > 비니", "테스트"      # 규칙 위반 값
+        return (list(cats)[0], "재선정")
+
+    monkeypatch.setattr(mc, "best_category_with_step", fake_best)
+    logs: list[str] = []
+    popup = FakePopup(["여성패션 > 모자 > 비니"])
+    item = mc._map_once(
+        popup, "AUC20", "아름트리-무신사-여성-모자-비니", excel, progress=logs.append
+    )
+    assert "남성" not in item.category
+    assert any("반대 성별" in l for l in logs)
