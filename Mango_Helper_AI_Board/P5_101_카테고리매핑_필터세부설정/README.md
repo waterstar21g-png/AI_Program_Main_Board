@@ -1,0 +1,64 @@
+# P5_101_카테고리매핑_필터세부설정
+
+검색필터 목록에서 **체크된 행**마다 마켓 카테고리를 자동 매핑합니다.
+
+## 초기 진입 URL
+
+```
+https://tmg1898.cafe24.com/mall/admin/admin_group.php?pmode=filter_delete&...&ft_num=10&ft_sort=modify_asc
+```
+
+## 초기 1회
+
+1. **상품수집사이트** 선택 — `select[name="site_id"]`
+2. **[선택조건으로 검색하기]** — `onclick="search_filter('search')"`
+3. **마켓별 카테고리 엑셀** 읽어 메모리 보관 (P5 추출 결과 양식 그대로)
+
+## 1단계 루프 (체크된 행마다)
+
+| 단계 | 동작 | 근거 |
+|------|------|------|
+| 0 | 체크된 행 정보 읽기 | `table#search_category` 의 체크박스 |
+| 1 | 필터이름(수정가능) 읽기 | 행의 텍스트 input |
+| 2·3 | 필터세부설정 → **[설정수정]** | `onclick="market_mapping_new('<ftid>')"` |
+| 4 | 팝업 | `admin_category_set.php?tm=F&ps_ftid=<ftid>` |
+| 5 | **[AI 자동 매핑 시작하기]** | `onclick="search_recommend_category_all(this)"` |
+| 6 | 2단계 루프 (마켓별 매핑) | 아래 |
+| 7 | **[검색필터 설정저장 (Alt+S)]** | `onclick="config_save()"` |
+| 8·9 | 모달 닫기 → 다음 행 | |
+
+## 2단계 루프 (마켓별)
+
+옥션2.0 → 11번가 → G마켓2.0 → 스마트스토어 → 쿠팡 → 롯데ON 순서로 반복합니다.
+
+1. 필터이름 ↔ 엑셀 카테고리 비교 → **최적 카테고리** 선정
+2. 검색필드에 입력 — `#openmarket_category_search_text_<코드>`
+3. **[검색]** — `search_category('<코드>','openmarket_category_search_list_<코드>','')`
+4. 결과 목록에서 일치 항목 선택 — `#openmarket_category_search_list_<코드>`
+   (11번가·롯데ON 은 `list2_` 도 있어 **보이는 select** 을 우선 읽고 그쪽에서 선택)
+5. **[검색필터 설정저장]** → 다음 마켓
+
+### 최적 카테고리 선정
+
+필터이름과 카테고리 경로를 토큰으로 쪼개 겹침을 봅니다. 마지막 단계(리프)에 가중치를
+두고, 부분 포함(예: `남성비니` ↔ `비니`)에 보너스를 줍니다. 점수가 `MIN_SCORE`(0.34)
+미만이면 **매칭하지 않고** 그 마켓은 건너뜁니다 (잘못된 카테고리 저장 방지).
+
+검색어는 카테고리의 **마지막 단계**만 사용하고, 결과 목록에서는
+완전일치 → 리프일치 → 최고 유사도 순으로 고릅니다.
+
+## CLI
+
+```powershell
+python map_categories.py --excel-dir D:\카테고리엑셀
+python map_categories.py --site-id MUSINSA.com --excel AUC20=D:\옥션.xlsx --excel 11ST=D:\11번가.xlsx
+python map_categories.py --markets AUC20,COUP
+python map_categories.py --excel-dir D:\카테고리엑셀 --dry-run "남성 비니,여성 캡모자"
+```
+
+`--excel-dir` 는 파일명으로 마켓을 자동 인식합니다 (P5 출력 `카테고리분류표_옥션2.0_*.xlsx`).
+`--dry-run` 은 브라우저 없이 매칭 결과만 출력합니다.
+
+## 중단
+
+`.map_stop` 플래그 (보드 [작업중단] 이 생성)

@@ -1,3 +1,20 @@
+버전 2.0.0 (Python 보드)
+업데이트: P5_101_카테고리매핑_필터세부설정 신설.
+0) 마켓별 입력필드 #openmarket_category_search_text_<코드>, 결과 리스트박스는
+   list_/list2_ 두 벌 중 보이는 select 우선 (11번가·롯데ON).
+1) 초기 1회 — 상품수집사이트 선택(select[name=site_id]) → [선택조건으로 검색하기]
+   (search_filter('search')) → 마켓별 카테고리 엑셀 로드(P5 출력 양식, 폴더 자동인식).
+2) 1단계 루프 — 체크된 행마다 필터이름 읽기 → [설정수정](market_mapping_new(ftid))
+   → 팝업(admin_category_set.php?ps_ftid=) → [AI 자동 매핑 시작하기]
+   (search_recommend_category_all) → 마켓별 매핑 → [검색필터 설정저장](config_save)
+   → 모달 닫기 → 다음 행.
+3) 2단계 루프 — 옥션2.0·11번가·G마켓2.0·스마트스토어·쿠팡·롯데ON 순서로
+   필터이름↔엑셀 카테고리 유사도 비교 → 검색필드 입력
+   (#openmarket_category_search_text_<코드>) → [검색] → 결과 목록 선택.
+4) 점수 0.34 미만이면 매칭하지 않고 건너뛴다 (오매핑 방지). --dry-run 으로
+   브라우저 없이 매칭 결과만 확인 가능.
+5) 보드 P5_101 탭 — 사이트·엑셀 폴더(인식 결과 표시)·목록 URL·시작/중단·로그.
+
 버전 1.9.3 (Python 보드)
 업데이트: 구분 라디오를 항상 클릭해 체크.
 1) 이미 체크된 라디오는 check() 가 no-op 이라 onclick=change_category_list 가

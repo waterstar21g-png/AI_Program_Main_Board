@@ -105,6 +105,16 @@
       "board_tab": "p5",
       "login": "더망고 (Chrome CDP 9222)",
       "description": "오픈마켓 전체카테고리 → 1~6단계 분류표 엑셀"
+    },
+    {
+      "id": "p5_101_mapping",
+      "name": "P5_101_카테고리매핑_필터세부설정",
+      "folder": "P5_101_카테고리매핑_필터세부설정",
+      "script": "map_categories.py",
+      "launcher": "run.bat",
+      "board_tab": "p5_101",
+      "login": "더망고 (Chrome CDP 9222)",
+      "description": "체크된 필터마다 마켓 카테고리 자동 매핑 (엑셀 기준)"
     }
   ]
 }

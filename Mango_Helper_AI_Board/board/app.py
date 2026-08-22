@@ -41,6 +41,9 @@ p3_option = _load_py_module(
 p5_category = _load_py_module(
     "p5_extract_categories", "P5_카테고리_엑셀추출", "extract_categories.py"
 )
+p5_mapping = _load_py_module(
+    "p5_101_map_categories", "P5_101_카테고리매핑_필터세부설정", "map_categories.py"
+)
 p3_fitcl = _load_py_module("p3_fitcl_detail", "P3_핏클상세페이지", "fitcl_detail.py")
 
 from library import (  # noqa: E402
@@ -109,6 +112,7 @@ class BoardApp(tk.Tk):
         self._p3_option_proc: subprocess.Popen | None = None
         self._p3_option_reload_busy = False
         self._p5_proc: subprocess.Popen | None = None
+        self._p5_101_proc: subprocess.Popen | None = None
         self._p3_fitcl_proc: subprocess.Popen | None = None
         self._last_shot_dir: Path | None = None
         self._merge_update_busy = False
@@ -211,6 +215,16 @@ class BoardApp(tk.Tk):
         )
         self.btn_p5.pack(fill="x", padx=6, pady=6)
 
+        self.btn_p5_101 = tk.Button(
+            side,
+            text="P5_101_카테고리\n매핑",
+            command=lambda: self._show("p5_101"),
+            font=("Malgun Gothic", 9, "bold"),
+            relief="groove",
+            pady=10,
+        )
+        self.btn_p5_101.pack(fill="x", padx=6, pady=6)
+
         self.btn_p3_fitcl = tk.Button(
             side,
             text="P3_핏클\n상세페이지",
@@ -264,6 +278,7 @@ class BoardApp(tk.Tk):
         self.frame_p3 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3_option = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p5 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
+        self.frame_p5_101 = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self.frame_p3_fitcl = tk.Frame(self.main, bg="#f1f5f9", padx=12, pady=10)
         self._build_p1(self.frame_p1)
         self._build_p2_count(self.frame_p2_count)
@@ -271,6 +286,7 @@ class BoardApp(tk.Tk):
         self._build_p3(self.frame_p3)
         self._build_p3_option(self.frame_p3_option)
         self._build_p5(self.frame_p5)
+        self._build_p5_101(self.frame_p5_101)
         self._build_p3_fitcl(self.frame_p3_fitcl)
 
     def _show(self, which: str) -> None:
@@ -280,6 +296,7 @@ class BoardApp(tk.Tk):
         self.frame_p3.pack_forget()
         self.frame_p3_option.pack_forget()
         self.frame_p5.pack_forget()
+        self.frame_p5_101.pack_forget()
         self.frame_p3_fitcl.pack_forget()
         self.btn_p1.configure(bg="#ececec")
         self.btn_p2_count.configure(bg="#ececec")
@@ -287,6 +304,7 @@ class BoardApp(tk.Tk):
         self.btn_p3.configure(bg="#ececec")
         self.btn_p3_option.configure(bg="#ececec")
         self.btn_p5.configure(bg="#ececec")
+        self.btn_p5_101.configure(bg="#ececec")
         self.btn_p3_fitcl.configure(bg="#ececec")
         if which == "p1":
             self.frame_p1.pack(fill="both", expand=True)
@@ -303,6 +321,9 @@ class BoardApp(tk.Tk):
         elif which == "p5":
             self.frame_p5.pack(fill="both", expand=True)
             self.btn_p5.configure(bg="#dbeafe")
+        elif which == "p5_101":
+            self.frame_p5_101.pack(fill="both", expand=True)
+            self.btn_p5_101.configure(bg="#dbeafe")
         elif which == "p3_fitcl":
             self.frame_p3_fitcl.pack(fill="both", expand=True)
             self.btn_p3_fitcl.configure(bg="#dbeafe")
@@ -1407,6 +1428,230 @@ class BoardApp(tk.Tk):
             self.after(
                 0,
                 lambda: self.p5_status.configure(text=f"종료 (exit={code})", fg="#b91c1c"),
+            )
+
+    # ── P5_101_카테고리매핑_필터세부설정 ───────────────────────────
+    def _build_p5_101(self, parent: tk.Frame) -> None:
+        tk.Label(
+            parent,
+            text="P5_101 — 체크된 필터마다 마켓 카테고리 자동 매핑 (엑셀 기준)",
+            bg="#f1f5f9",
+            font=("Malgun Gothic", 10, "bold"),
+            anchor="w",
+        ).pack(fill="x", pady=(0, 6))
+
+        form = tk.LabelFrame(parent, text="입력 (초기 1회)", bg="#ffffff", padx=8, pady=6)
+        form.pack(fill="x")
+
+        r0 = tk.Frame(form, bg="#ffffff")
+        r0.pack(fill="x", pady=3)
+        tk.Label(r0, text="상품수집사이트", width=13, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5m_site = tk.StringVar(value="")
+        tk.Entry(r0, textvariable=self.var_p5m_site, width=28).pack(side="left")
+        tk.Label(
+            r0,
+            text="(비우면 현재 선택 유지 · 예: MUSINSA.com)",
+            bg="#ffffff",
+            fg="#64748b",
+            font=("Malgun Gothic", 8),
+        ).pack(side="left", padx=6)
+
+        r1 = tk.Frame(form, bg="#ffffff")
+        r1.pack(fill="x", pady=3)
+        tk.Label(r1, text="카테고리 엑셀 폴더", width=13, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5m_dir = tk.StringVar(value=str(ROOT / "P5_카테고리_엑셀추출" / "output"))
+        tk.Entry(r1, textvariable=self.var_p5m_dir).pack(side="left", fill="x", expand=True)
+        tk.Button(r1, text="…", width=3, command=self._pick_p5m_dir).pack(side="left", padx=4)
+        tk.Button(r1, text="확인", command=self._check_p5m_excels).pack(side="left")
+
+        self.lbl_p5m_excels = tk.Label(
+            form,
+            text="엑셀: (확인 전)",
+            bg="#ffffff",
+            fg="#0f172a",
+            font=("Malgun Gothic", 9),
+            anchor="w",
+            justify="left",
+        )
+        self.lbl_p5m_excels.pack(fill="x", pady=(2, 0))
+
+        r2 = tk.Frame(form, bg="#ffffff")
+        r2.pack(fill="x", pady=3)
+        tk.Label(r2, text="목록 URL", width=13, anchor="w", bg="#ffffff").pack(side="left")
+        self.var_p5m_url = tk.StringVar(value=p5_mapping.DEFAULT_LIST_URL)
+        tk.Entry(r2, textvariable=self.var_p5m_url).pack(side="left", fill="x", expand=True)
+
+        actions = tk.Frame(parent, bg="#f1f5f9")
+        actions.pack(fill="x", pady=8)
+        tk.Button(
+            actions,
+            text="매핑 시작",
+            command=self._run_p5_101,
+            bg="#2563eb",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left")
+        tk.Button(
+            actions,
+            text="작업중단",
+            command=self._stop_p5_101,
+            bg="#b91c1c",
+            fg="white",
+            font=("Malgun Gothic", 9, "bold"),
+            padx=12,
+            pady=4,
+        ).pack(side="left", padx=6)
+
+        log_frame = tk.LabelFrame(parent, text="실행 로그", bg="#ffffff", padx=6, pady=4)
+        log_frame.pack(fill="both", expand=True)
+        self.p5_101_log = tk.Text(
+            log_frame, height=16, font=("Consolas", 9), wrap="word", bg="#0f172a", fg="#e2e8f0"
+        )
+        sb101 = tk.Scrollbar(log_frame, command=self.p5_101_log.yview)
+        self.p5_101_log.configure(yscrollcommand=sb101.set)
+        self.p5_101_log.pack(side="left", fill="both", expand=True)
+        sb101.pack(side="right", fill="y")
+
+        self.p5_101_status = tk.Label(parent, text="", bg="#f1f5f9", anchor="w")
+        self.p5_101_status.pack(fill="x", pady=4)
+
+    def _pick_p5m_dir(self) -> None:
+        path = filedialog.askdirectory(title="마켓별 카테고리 엑셀 폴더")
+        if path:
+            self.var_p5m_dir.set(path)
+            self._check_p5m_excels()
+
+    def _check_p5m_excels(self) -> None:
+        folder = self.var_p5m_dir.get().strip()
+        if not folder or not Path(folder).is_dir():
+            self.lbl_p5m_excels.configure(text="엑셀: 폴더 없음", fg="#b91c1c")
+            return
+        found = p5_mapping.discover_market_excels(folder)
+        if not found:
+            self.lbl_p5m_excels.configure(
+                text="엑셀: 인식된 파일 없음 (P5 로 먼저 추출하세요)", fg="#b91c1c"
+            )
+            return
+        names = " · ".join(p5_mapping.MARKETS.get(c, c) for c in found)
+        missing = [p5_mapping.MARKETS[c] for c in p5_mapping.MARKETS if c not in found]
+        text = f"엑셀 {len(found)}개: {names}"
+        if missing:
+            text += f"   (없음: {' · '.join(missing)})"
+        self.lbl_p5m_excels.configure(text=text, fg="#15803d" if not missing else "#b45309")
+
+    def _p5_101_stop_flag(self) -> Path:
+        return ROOT / "P5_101_카테고리매핑_필터세부설정" / ".map_stop"
+
+    def _append_p5_101_log(self, line: str) -> None:
+        text = (line or "").strip()
+        if text.startswith("##MAIN##"):
+            text = text[8:]
+        self.p5_101_log.insert("end", text + "\n")
+        self.p5_101_log.see("end")
+
+    def _run_p5_101(self) -> None:
+        if self._p5_101_proc and self._p5_101_proc.poll() is None:
+            messagebox.showwarning("실행 중", "이미 작업이 진행 중입니다.")
+            return
+        script = ROOT / "P5_101_카테고리매핑_필터세부설정" / "map_categories.py"
+        if not script.is_file():
+            messagebox.showerror("오류", f"실행 파일 없음:\n{script}")
+            return
+        folder = self.var_p5m_dir.get().strip()
+        if not folder or not Path(folder).is_dir():
+            messagebox.showinfo("안내", "카테고리 엑셀 폴더를 지정하세요.")
+            return
+
+        try:
+            self._p5_101_stop_flag().unlink(missing_ok=True)  # type: ignore[call-arg]
+        except Exception:
+            pass
+
+        args = [sys.executable, str(script), "--excel-dir", folder]
+        site = self.var_p5m_site.get().strip()
+        if site:
+            args.extend(["--site-id", site])
+        url = self.var_p5m_url.get().strip()
+        if url:
+            args.extend(["--list-url", url])
+
+        self.p5_101_log.delete("1.0", "end")
+        self.p5_101_status.configure(text="매핑 시작", fg="#15803d")
+
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
+        env["PYTHONUTF8"] = "1"
+        try:
+            self._p5_101_proc = subprocess.Popen(
+                args,
+                cwd=str(ROOT / "P5_101_카테고리매핑_필터세부설정"),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=False,
+                bufsize=0,
+                env=env,
+                creationflags=creationflags,
+            )
+        except Exception as e:
+            messagebox.showerror("실행 실패", str(e))
+            self.p5_101_status.configure(text=f"실행 실패: {e}", fg="#b91c1c")
+            return
+
+        threading.Thread(
+            target=self._watch_p5_101_proc, args=(self._p5_101_proc,), daemon=True
+        ).start()
+
+    def _stop_p5_101(self) -> None:
+        proc = self._p5_101_proc
+        if proc is None or proc.poll() is not None:
+            messagebox.showinfo("안내", "실행 중인 작업이 없습니다.")
+            return
+        try:
+            self._p5_101_stop_flag().write_text("stop\n", encoding="utf-8")
+        except OSError as e:
+            self.p5_101_status.configure(text=f"중단 플래그 실패: {e}", fg="#b91c1c")
+            return
+        self.p5_101_status.configure(text="작업중단 요청 중…", fg="#b45309")
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    def _watch_p5_101_proc(self, proc: subprocess.Popen) -> None:
+        try:
+            assert proc.stdout is not None
+            buf = b""
+            while True:
+                chunk = proc.stdout.read(256)
+                if not chunk:
+                    break
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    text = self._decode_log_bytes(line).rstrip()
+                    if text:
+                        self.after(0, lambda t=text: self._append_p5_101_log(t))
+            if buf.strip():
+                text = self._decode_log_bytes(buf).rstrip()
+                if text:
+                    self.after(0, lambda t=text: self._append_p5_101_log(t))
+        except Exception as e:  # noqa: BLE001
+            self.after(
+                0,
+                lambda: self.p5_101_status.configure(text=f"로그 수신 오류: {e}", fg="#b91c1c"),
+            )
+        code = proc.wait()
+        if code == 0:
+            self.after(0, lambda: self.p5_101_status.configure(text="매핑 완료", fg="#15803d"))
+        else:
+            self.after(
+                0,
+                lambda: self.p5_101_status.configure(text=f"종료 (exit={code})", fg="#b91c1c"),
             )
 
     def _build_p2(self, parent: tk.Frame) -> None:
